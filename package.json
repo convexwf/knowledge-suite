@@ -1,0 +1,28 @@
+{
+  "name": "knowledge-suite",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "check": "npm run check --workspaces --if-present",
+    "dev:server": "npm run dev -w @uknowledge/knowledge-ingest-server",
+    "build:extension": "npm run build -w @uknowledge/knowledge-web-clipper"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.270",
+    "@types/node": "^25.4.0",
+    "typescript": "^5.5.4"
+  },
+  "dependencies": {
+    "@fastify/cors": "^11.0.0",
+    "defuddle": "^0.18.1",
+    "fastify": "^5.2.1",
+    "linkedom": "^0.18.0",
+    "zod": "^4.1.12"
+  }
+}

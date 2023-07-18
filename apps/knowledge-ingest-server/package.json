@@ -1,0 +1,21 @@
+{
+  "name": "@uknowledge/knowledge-ingest-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "dev": "node --enable-source-maps dist/index.js",
+    "start": "node --enable-source-maps dist/index.js"
+  },
+  "dependencies": {
+    "@fastify/cors": "^11.0.0",
+    "@uknowledge/knowledge-schema": "0.1.0",
+    "defuddle": "^0.18.1",
+    "fastify": "^5.2.1",
+    "linkedom": "^0.18.0",
+    "zod": "^4.1.12"
+  }
+}

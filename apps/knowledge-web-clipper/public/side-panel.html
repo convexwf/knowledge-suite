@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Knowledge Web Clipper</title>
+    <link rel="stylesheet" href="side-panel.css" />
+  </head>
+  <body>
+    <main class="panel">
+      <header class="header">
+        <div>
+          <h1>Knowledge</h1>
+          <p id="page-url">No active page</p>
+        </div>
+        <button id="refresh-button" title="Refresh preview">Refresh</button>
+      </header>
+
+      <section class="controls">
+        <label>
+          Server
+          <input id="server-url" type="text" />
+        </label>
+        <label>
+          Token
+          <input id="server-token" type="password" />
+        </label>
+        <div class="segmented">
+          <button id="mode-browser" data-active="true">Current HTML</button>
+          <button id="mode-fetch">Server Fetch</button>
+        </div>
+      </section>
+
+      <section class="statusbar">
+        <span id="status-pill">Idle</span>
+        <button id="save-button">Save</button>
+      </section>
+
+      <section class="tabs">
+        <button id="tab-preview" data-active="true">Preview</button>
+        <button id="tab-json">JSON</button>
+      </section>
+
+      <pre id="output" class="output"></pre>
+    </main>
+    <script type="module" src="side-panel.js"></script>
+  </body>
+</html>
