@@ -23,6 +23,21 @@ npm run dev:server
 
 Load `apps/knowledge-web-clipper/dist` as an unpacked Chrome extension after building the extension.
 
+## Run The Server With Docker
+
+```bash
+docker compose up -d --build knowledge-ingest-server
+docker compose logs -f knowledge-ingest-server
+```
+
+The compose service listens on `127.0.0.1:18765` and persists server data in `./knowledge-store`.
+
+Set a non-default token before starting the service:
+
+```bash
+KNOWLEDGE_TOKEN="replace-me" docker compose up -d --build knowledge-ingest-server
+```
+
 ## MVP Scope
 
 - `browser_html`: the extension sends rendered page HTML to the local server.

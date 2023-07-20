@@ -1,0 +1,29 @@
+services:
+  knowledge-ingest-server:
+    build:
+      context: .
+      dockerfile: apps/knowledge-ingest-server/Dockerfile
+    image: knowledge-ingest-server:local
+    container_name: knowledge-ingest-server
+    restart: unless-stopped
+    environment:
+      KNOWLEDGE_HOST: 0.0.0.0
+      KNOWLEDGE_PORT: 18765
+      KNOWLEDGE_TOKEN: ${KNOWLEDGE_TOKEN:-dev-token}
+      KNOWLEDGE_STORE: /data
+    ports:
+      - "127.0.0.1:18765:18765"
+    volumes:
+      - ./knowledge-store:/data
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:18765/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
