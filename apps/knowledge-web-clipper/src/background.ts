@@ -1,3 +1,4 @@
+import { createKnowledgeApiClient } from "./api-client.js";
 import { getSettings } from "./settings.js";
 
 chrome.runtime.onInstalled.addListener(async () => {
@@ -24,18 +25,7 @@ async function refreshBadge(tabId: number): Promise<void> {
     }
 
     const settings = await getSettings();
-    const response = await fetch(`${settings.serverUrl}/api/clip/status?url=${encodeURIComponent(url)}`, {
-      headers: {
-        authorization: `Bearer ${settings.token}`
-      }
-    });
-
-    if (!response.ok) {
-      await setBadge(tabId, "OFF", "#808995");
-      return;
-    }
-
-    const status = await response.json() as { saved?: boolean };
+    const status = await createKnowledgeApiClient(settings).status(url);
     await setBadge(tabId, status.saved ? "OK" : "NEW", status.saved ? "#1f7a4d" : "#40566f");
   } catch {
     await setBadge(tabId, "OFF", "#808995");

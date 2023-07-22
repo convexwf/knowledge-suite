@@ -11,6 +11,7 @@
     "build": "npm run build --workspaces --if-present",
     "check": "npm run check --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
+    "smoke:ingest": "node scripts/smoke-ingest.mjs",
     "dev:server": "npm run dev -w @uknowledge/knowledge-ingest-server",
     "build:extension": "npm run build -w @uknowledge/knowledge-web-clipper"
   },

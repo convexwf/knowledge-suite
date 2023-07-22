@@ -17,6 +17,10 @@ export interface ExtensionSettings {
   inputMode: InputMode;
 }
 
+export type ClipRequestBody =
+  | { inputMode: "browser_html"; snapshot: PageSnapshot }
+  | { inputMode: "server_fetch"; url: string };
+
 export interface ActiveTabInfo {
   tabId: number;
   url: string;
@@ -30,5 +34,31 @@ export interface PreviewResult {
   status: {
     saved: boolean;
     title?: string;
+  };
+}
+
+export interface ClipStatusResult {
+  normalizedUrl: string;
+  urlHash: string;
+  saved: boolean;
+  savedAt?: string;
+  title?: string;
+  docId?: string;
+  markdownPath?: string;
+  documentPath?: string;
+}
+
+export interface HealthResult {
+  ok: boolean;
+  service: string;
+  version: string;
+  storeRoot: string;
+  store: {
+    type: string;
+    indexPath: string;
+  };
+  limits: {
+    fetchTimeoutMs: number;
+    maxHtmlBytes: number;
   };
 }

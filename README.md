@@ -23,6 +23,20 @@ npm run dev:server
 
 Load `apps/knowledge-web-clipper/dist` as an unpacked Chrome extension after building the extension.
 
+## Integration Smoke
+
+```bash
+npm run build
+npm run smoke:ingest
+```
+
+The smoke script starts a temporary local article server plus `knowledge-ingest-server`, then verifies:
+
+- `browser_html` preview
+- `server_fetch` preview
+- save + normalized status lookup
+- non-HTML `server_fetch` rejection
+
 ## Run The Server With Docker
 
 ```bash

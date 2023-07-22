@@ -1,9 +1,6 @@
+import { createKnowledgeApiClient } from "./api-client.js";
 import { getSettings, saveSettings } from "./settings.js";
-import { ActiveTabInfo, ExtensionSettings, InputMode, PageSnapshot, PreviewResult } from "./types.js";
-
-type ClipRequestBody =
-  | { inputMode: "browser_html"; snapshot: PageSnapshot }
-  | { inputMode: "server_fetch"; url: string };
+import { ActiveTabInfo, ClipRequestBody, ExtensionSettings, InputMode, PageSnapshot, PreviewResult } from "./types.js";
 
 const output = mustGet<HTMLPreElement>("output");
 const statusPill = mustGet<HTMLElement>("status-pill");
@@ -69,8 +66,9 @@ async function preview(): Promise<void> {
 
   setStatus("Previewing");
   try {
+    await refreshServerStatus();
     const body = await buildRequestBody();
-    lastPreview = await callServer<PreviewResult>("/api/clip/preview", body);
+    lastPreview = await createKnowledgeApiClient(settings).preview(body);
     setStatus(lastPreview.status.saved ? "Saved" : "Ready");
     renderOutput();
   } catch (error) {
@@ -86,8 +84,9 @@ async function save(): Promise<void> {
 
   setStatus("Saving");
   try {
+    await refreshServerStatus();
     const body = await buildRequestBody();
-    lastPreview = await callServer<PreviewResult>("/api/clip/save", { ...body, overwrite: true });
+    lastPreview = await createKnowledgeApiClient(settings).save(body);
     setStatus("Saved");
     renderOutput();
   } catch (error) {
@@ -116,24 +115,6 @@ async function buildRequestBody(): Promise<ClipRequestBody> {
     inputMode: "browser_html",
     snapshot
   };
-}
-
-async function callServer<T>(path: string, body: unknown): Promise<T> {
-  await persistSettings();
-  const response = await fetch(`${settings.serverUrl}${path}`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${settings.token}`
-    },
-    body: JSON.stringify(body)
-  });
-
-  if (!response.ok) {
-    throw new Error(`${response.status} ${response.statusText}: ${await response.text()}`);
-  }
-
-  return response.json() as Promise<T>;
 }
 
 function renderOutput(): void {
@@ -167,6 +148,22 @@ async function persistSettings(): Promise<void> {
     token: serverTokenInput.value
   };
   await saveSettings(settings);
+}
+
+async function refreshServerStatus(): Promise<void> {
+  await persistSettings();
+  const api = createKnowledgeApiClient(settings);
+  const health = await api.health();
+  if (!health.ok) {
+    throw new Error("Knowledge server is not healthy");
+  }
+
+  if (activeTab) {
+    const status = await api.status(activeTab.url);
+    setStatus(status.saved ? "Saved" : "Connected");
+  } else {
+    setStatus("Connected");
+  }
 }
 
 function setStatus(text: string): void {
