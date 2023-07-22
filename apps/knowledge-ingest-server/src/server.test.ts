@@ -21,13 +21,48 @@ const html = `<!doctype html>
 
 describe("knowledge ingest server", () => {
   let storeRoot: string;
+  let originalFetch: typeof globalThis.fetch;
 
   beforeEach(async () => {
     storeRoot = await mkdtemp(join(tmpdir(), "knowledge-ingest-test-"));
+    originalFetch = globalThis.fetch;
   });
 
   afterEach(async () => {
+    globalThis.fetch = originalFetch;
     await rm(storeRoot, { recursive: true, force: true });
+  });
+
+  it("reports runtime health details", async () => {
+    const app = await buildServer({
+      host: "127.0.0.1",
+      port: 0,
+      token: "test-token",
+      storeRoot,
+      fetchTimeoutMs: 1000,
+      maxHtmlBytes: 2048
+    });
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/health"
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      ok: true,
+      service: "knowledge-ingest-server",
+      store: {
+        type: "sqlite",
+        indexPath: "index.sqlite3"
+      },
+      limits: {
+        fetchTimeoutMs: 1000,
+        maxHtmlBytes: 2048
+      }
+    });
+
+    await app.close();
   });
 
   it("previews and saves browser_html clips", async () => {
@@ -35,7 +70,9 @@ describe("knowledge ingest server", () => {
       host: "127.0.0.1",
       port: 0,
       token: "test-token",
-      storeRoot
+      storeRoot,
+      fetchTimeoutMs: 1000,
+      maxHtmlBytes: 1024 * 1024
     });
 
     const body = {
@@ -87,7 +124,9 @@ describe("knowledge ingest server", () => {
       host: "127.0.0.1",
       port: 0,
       token: "test-token",
-      storeRoot
+      storeRoot,
+      fetchTimeoutMs: 1000,
+      maxHtmlBytes: 1024 * 1024
     });
 
     const response = await app.inject({
@@ -102,6 +141,70 @@ describe("knowledge ingest server", () => {
 
     expect(response.statusCode).toBe(400);
     expect(response.json().message).toContain("browser_html");
+    await app.close();
+  });
+
+  it("previews server_fetch HTML responses", async () => {
+    globalThis.fetch = async () => new Response(html, {
+      status: 200,
+      headers: {
+        "content-type": "text/html; charset=utf-8"
+      }
+    });
+
+    const app = await buildServer({
+      host: "127.0.0.1",
+      port: 0,
+      token: "test-token",
+      storeRoot,
+      fetchTimeoutMs: 1000,
+      maxHtmlBytes: 1024 * 1024
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/clip/preview",
+      headers: { authorization: "Bearer test-token" },
+      payload: {
+        inputMode: "server_fetch",
+        url: "https://example.com/a"
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().markdown).toContain("Hello knowledge suite.");
+    await app.close();
+  });
+
+  it("rejects non-HTML server_fetch responses", async () => {
+    globalThis.fetch = async () => new Response("{}", {
+      status: 200,
+      headers: {
+        "content-type": "application/json"
+      }
+    });
+
+    const app = await buildServer({
+      host: "127.0.0.1",
+      port: 0,
+      token: "test-token",
+      storeRoot,
+      fetchTimeoutMs: 1000,
+      maxHtmlBytes: 1024 * 1024
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/clip/preview",
+      headers: { authorization: "Bearer test-token" },
+      payload: {
+        inputMode: "server_fetch",
+        url: "https://example.com/api"
+      }
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json().message).toContain("Expected HTML");
     await app.close();
   });
 });

@@ -39,6 +39,12 @@ Set a non-default token before starting the service:
 KNOWLEDGE_TOKEN="replace-me" docker compose up -d --build knowledge-ingest-server
 ```
 
+Optional server fetch limits:
+
+```bash
+KNOWLEDGE_FETCH_TIMEOUT_MS=15000 KNOWLEDGE_MAX_HTML_BYTES=10485760 docker compose up -d
+```
+
 ## MVP Scope
 
 - `browser_html`: the extension sends rendered page HTML to the local server.

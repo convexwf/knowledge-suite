@@ -25,7 +25,7 @@ export async function buildServer(config: ServerConfig = loadConfig()) {
 
   app.setErrorHandler(async (error, _request, reply) => {
     const message = error instanceof Error ? error.message : String(error);
-    const statusCode = message.includes("server_fetch does not support file://") ? 400 : 500;
+    const statusCode = isClientInputError(message) ? 400 : 500;
     await reply.code(statusCode).send({
       error: statusCode === 400 ? "bad_request" : "internal_error",
       message
@@ -46,7 +46,16 @@ export async function buildServer(config: ServerConfig = loadConfig()) {
   app.get("/api/health", async () => ({
     ok: true,
     service: "knowledge-ingest-server",
-    storeRoot: config.storeRoot
+    version: "0.1.0",
+    storeRoot: config.storeRoot,
+    store: {
+      type: "sqlite",
+      indexPath: "index.sqlite3"
+    },
+    limits: {
+      fetchTimeoutMs: config.fetchTimeoutMs,
+      maxHtmlBytes: config.maxHtmlBytes
+    }
   }));
 
   app.get("/api/clip/status", async (request) => {
@@ -59,7 +68,7 @@ export async function buildServer(config: ServerConfig = loadConfig()) {
 
   app.post("/api/clip/preview", async (request) => {
     const input = ClipInputSchema.parse(request.body);
-    const resolved = await resolveClipInput(input);
+    const resolved = await resolveClipInput(input, config);
     const parsed = await parsePage(resolved);
     const markdown = documentToMarkdown(parsed.document);
     const status = await store.status(resolved.normalizedUrl);
@@ -72,7 +81,7 @@ export async function buildServer(config: ServerConfig = loadConfig()) {
 
   app.post("/api/clip/save", async (request) => {
     const input = ClipSaveRequestSchema.parse(request.body);
-    const resolved = await resolveClipInput(input);
+    const resolved = await resolveClipInput(input, config);
     const parsed = await parsePage(resolved);
     const markdown = documentToMarkdown(parsed.document);
     const paths = await store.save({
@@ -93,4 +102,13 @@ export async function buildServer(config: ServerConfig = loadConfig()) {
   });
 
   return app;
+}
+
+function isClientInputError(message: string): boolean {
+  return [
+    "server_fetch does not support file://",
+    "Expected HTML",
+    "too large",
+    "Timed out fetching"
+  ].some((needle) => message.includes(needle));
 }
