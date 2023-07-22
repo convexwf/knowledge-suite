@@ -10,13 +10,15 @@
   "scripts": {
     "build": "npm run build --workspaces --if-present",
     "check": "npm run check --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
     "dev:server": "npm run dev -w @uknowledge/knowledge-ingest-server",
     "build:extension": "npm run build -w @uknowledge/knowledge-web-clipper"
   },
   "devDependencies": {
     "@types/chrome": "^0.0.270",
     "@types/node": "^25.4.0",
-    "typescript": "^5.5.4"
+    "typescript": "^5.5.4",
+    "vitest": "^4.0.18"
   },
   "dependencies": {
     "@fastify/cors": "^11.0.0",

@@ -19,6 +19,15 @@ export async function buildServer(config: ServerConfig = loadConfig()) {
     origin: true
   });
 
+  app.setErrorHandler(async (error, _request, reply) => {
+    const message = error instanceof Error ? error.message : String(error);
+    const statusCode = message.includes("server_fetch does not support file://") ? 400 : 500;
+    await reply.code(statusCode).send({
+      error: statusCode === 400 ? "bad_request" : "internal_error",
+      message
+    });
+  });
+
   app.addHook("preHandler", async (request, reply) => {
     if (request.url === "/api/health") {
       return;

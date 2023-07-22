@@ -1,4 +1,4 @@
-FROM node:24-slim AS build
+FROM node:24-bookworm AS build
 
 WORKDIR /app
 
@@ -15,7 +15,7 @@ RUN npm run build -w @uknowledge/knowledge-schema \
   && npm run build -w @uknowledge/knowledge-ingest-server \
   && npm prune --omit=dev
 
-FROM node:24-slim AS runtime
+FROM node:24-bookworm AS runtime
 
 ENV NODE_ENV=production \
   KNOWLEDGE_HOST=0.0.0.0 \

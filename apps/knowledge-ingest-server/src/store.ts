@@ -4,6 +4,7 @@ import {
   ClipStatus,
   ClipSaveResponse,
   KnowledgeDocument,
+  normalizeUrlForKnowledge,
   RawDoc,
   slugifyTitle,
   urlHash
@@ -26,9 +27,10 @@ export class KnowledgeStore {
 
   async status(normalizedUrl: string): Promise<ClipStatus> {
     const index = await this.readIndex();
-    const hash = urlHash(normalizedUrl);
+    const normalized = normalizeUrlForKnowledge(normalizedUrl);
+    const hash = urlHash(normalized);
     return index.clips[hash] ?? {
-      normalizedUrl,
+      normalizedUrl: normalized,
       urlHash: hash,
       saved: false
     };
