@@ -31,6 +31,7 @@ docker compose logs -f knowledge-ingest-server
 ```
 
 The compose service listens on `127.0.0.1:18765` and persists server data in `./knowledge-store`.
+The store contains raw HTML, RawDoc metadata, Document JSON, Markdown, and a SQLite URL index at `knowledge-store/index.sqlite3`.
 
 Set a non-default token before starting the service:
 

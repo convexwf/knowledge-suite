@@ -15,6 +15,10 @@ export async function buildServer(config: ServerConfig = loadConfig()) {
   const store = new KnowledgeStore(config.storeRoot);
   await store.ensure();
 
+  app.addHook("onClose", async () => {
+    store.close();
+  });
+
   await app.register(cors, {
     origin: true
   });

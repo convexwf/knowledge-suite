@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { access, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -69,6 +69,7 @@ describe("knowledge ingest server", () => {
     expect(save.statusCode).toBe(200);
     expect(save.json().saved).toBe(true);
     expect(save.json().paths.markdownPath).toMatch(/\.md$/);
+    await expect(access(join(storeRoot, "index.sqlite3"))).resolves.toBeUndefined();
 
     const status = await app.inject({
       method: "GET",
