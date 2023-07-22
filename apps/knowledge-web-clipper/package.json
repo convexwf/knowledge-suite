@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc -p tsconfig.json && node scripts/copy-static.mjs",
+    "build": "tsc -p tsconfig.json && node scripts/strip-content-module.mjs && node scripts/copy-static.mjs",
     "check": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {

@@ -1,5 +1,3 @@
-import { PageSnapshot } from "./types.js";
-
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type !== "knowledge.collectSnapshot") {
     return false;
@@ -9,7 +7,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   return true;
 });
 
-function collectSnapshot(): PageSnapshot {
+function collectSnapshot() {
   return {
     pageUrl: location.href,
     canonicalUrl: document.querySelector<HTMLLinkElement>('link[rel="canonical"]')?.href,
