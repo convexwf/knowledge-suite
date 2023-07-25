@@ -1,11 +1,19 @@
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (message?.type !== "knowledge.collectSnapshot") {
-    return false;
-  }
+const knowledgeWindow = window as typeof window & {
+  __knowledgeWebClipperContentLoaded?: boolean;
+};
 
-  sendResponse(collectSnapshot());
-  return true;
-});
+if (!knowledgeWindow.__knowledgeWebClipperContentLoaded) {
+  knowledgeWindow.__knowledgeWebClipperContentLoaded = true;
+
+  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    if (message?.type !== "knowledge.collectSnapshot") {
+      return false;
+    }
+
+    sendResponse(collectSnapshot());
+    return true;
+  });
+}
 
 function collectSnapshot() {
   return {

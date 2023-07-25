@@ -22,6 +22,8 @@ npm run dev:server
 ```
 
 Load `apps/knowledge-web-clipper/dist` as an unpacked Chrome extension after building the extension.
+After rebuilding the extension, click reload in `chrome://extensions` and reload the target page once.
+If the side panel reports that the receiving end does not exist, the extension will try to inject the content script and retry.
 
 ## Integration Smoke
 

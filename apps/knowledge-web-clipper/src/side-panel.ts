@@ -109,12 +109,37 @@ async function buildRequestBody(): Promise<ClipRequestBody> {
 
   const snapshot = await chrome.tabs.sendMessage(activeTab.tabId, {
     type: "knowledge.collectSnapshot"
+  }).catch(async (error) => {
+    if (!isMissingContentScriptError(error)) {
+      throw error;
+    }
+    await injectContentScript(activeTab!.tabId);
+    return chrome.tabs.sendMessage(activeTab!.tabId, {
+      type: "knowledge.collectSnapshot"
+    });
   }) as PageSnapshot;
 
   return {
     inputMode: "browser_html",
     snapshot
   };
+}
+
+async function injectContentScript(tabId: number): Promise<void> {
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: ["content.js"]
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Cannot access this page. Try reloading the page, or use an http(s) page. Details: ${message}`);
+  }
+}
+
+function isMissingContentScriptError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("Receiving end does not exist");
 }
 
 function renderOutput(): void {
