@@ -13,12 +13,14 @@
     "check:extension": "node scripts/check-extension-build.mjs",
     "test": "npm run test --workspaces --if-present",
     "smoke:ingest": "node scripts/smoke-ingest.mjs",
+    "e2e:extension": "node scripts/e2e-extension.mjs",
     "dev:server": "npm run dev -w @uknowledge/knowledge-ingest-server",
     "build:extension": "npm run build -w @uknowledge/knowledge-web-clipper"
   },
   "devDependencies": {
     "@types/chrome": "^0.0.270",
     "@types/node": "^25.4.0",
+    "playwright": "^1.59.1",
     "typescript": "^5.5.4",
     "vitest": "^4.0.18"
   },
