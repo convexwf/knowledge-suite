@@ -1,4 +1,5 @@
 import {
+  ClipListResult,
   ClipRequestBody,
   ClipStatusResult,
   ExtensionSettings,
@@ -9,6 +10,7 @@ import {
 export interface KnowledgeApiClient {
   health(): Promise<HealthResult>;
   status(url: string): Promise<ClipStatusResult>;
+  list(limit?: number): Promise<ClipListResult>;
   preview(body: ClipRequestBody): Promise<PreviewResult>;
   save(body: ClipRequestBody): Promise<PreviewResult>;
 }
@@ -23,6 +25,12 @@ export function createKnowledgeApiClient(settings: ExtensionSettings): Knowledge
       settings.token,
       "GET",
       `/api/clip/status?url=${encodeURIComponent(url)}`
+    ),
+    list: (limit = 50) => request<ClipListResult>(
+      baseUrl,
+      settings.token,
+      "GET",
+      `/api/clips?limit=${encodeURIComponent(String(limit))}`
     ),
     preview: (body) => request<PreviewResult>(baseUrl, settings.token, "POST", "/api/clip/preview", body),
     save: (body) => request<PreviewResult>(baseUrl, settings.token, "POST", "/api/clip/save", {

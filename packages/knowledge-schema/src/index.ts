@@ -133,6 +133,20 @@ export interface ClipSaveResponse extends ClipPreviewResponse {
 
 export interface ClipStatusResponse extends ClipStatus {}
 
+export interface ClipListItem {
+  normalizedUrl: string;
+  urlHash: string;
+  savedAt: string;
+  title?: string;
+  docId?: string;
+  markdownPath?: string;
+  documentPath?: string;
+}
+
+export interface ClipListResponse {
+  clips: ClipListItem[];
+}
+
 export function makeId(): string {
   return randomUUID();
 }

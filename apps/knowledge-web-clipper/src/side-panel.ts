@@ -1,6 +1,14 @@
 import { createKnowledgeApiClient } from "./api-client.js";
 import { getSettings, saveSettings } from "./settings.js";
-import { ActiveTabInfo, ClipRequestBody, ExtensionSettings, InputMode, PageSnapshot, PreviewResult } from "./types.js";
+import {
+  ActiveTabInfo,
+  ClipListItem,
+  ClipRequestBody,
+  ExtensionSettings,
+  InputMode,
+  PageSnapshot,
+  PreviewResult
+} from "./types.js";
 
 const output = mustGet<HTMLPreElement>("output");
 const statusPill = mustGet<HTMLElement>("status-pill");
@@ -13,11 +21,14 @@ const modeBrowserButton = mustGet<HTMLButtonElement>("mode-browser");
 const modeFetchButton = mustGet<HTMLButtonElement>("mode-fetch");
 const tabPreviewButton = mustGet<HTMLButtonElement>("tab-preview");
 const tabJsonButton = mustGet<HTMLButtonElement>("tab-json");
+const tabSavedButton = mustGet<HTMLButtonElement>("tab-saved");
+const savedList = mustGet<HTMLDivElement>("saved-list");
 
 let settings: ExtensionSettings = await getSettings();
 let activeTab: ActiveTabInfo | undefined;
 let lastPreview: PreviewResult | undefined;
-let activeView: "preview" | "json" = "preview";
+let savedClips: ClipListItem[] = [];
+let activeView: "preview" | "json" | "saved" = "preview";
 
 serverUrlInput.value = settings.serverUrl;
 serverTokenInput.value = settings.token;
@@ -31,6 +42,7 @@ modeBrowserButton.addEventListener("click", () => setMode("browser_html"));
 modeFetchButton.addEventListener("click", () => setMode("server_fetch"));
 tabPreviewButton.addEventListener("click", () => setView("preview"));
 tabJsonButton.addEventListener("click", () => setView("json"));
+tabSavedButton.addEventListener("click", () => setView("saved"));
 serverUrlInput.addEventListener("change", () => persistSettings());
 serverTokenInput.addEventListener("change", () => persistSettings());
 
@@ -71,6 +83,9 @@ async function preview(): Promise<void> {
     lastPreview = await createKnowledgeApiClient(settings).preview(body);
     setStatus(lastPreview.status.saved ? "Saved" : "Ready");
     renderOutput();
+    if (lastPreview.status.saved) {
+      void loadSavedClips();
+    }
   } catch (error) {
     setStatus("Error");
     output.textContent = error instanceof Error ? error.message : String(error);
@@ -87,6 +102,7 @@ async function save(): Promise<void> {
     await refreshServerStatus();
     const body = await buildRequestBody();
     lastPreview = await createKnowledgeApiClient(settings).save(body);
+    await loadSavedClips();
     setStatus("Saved");
     renderOutput();
   } catch (error) {
@@ -143,6 +159,13 @@ function isMissingContentScriptError(error: unknown): boolean {
 }
 
 function renderOutput(): void {
+  output.hidden = activeView === "saved";
+  savedList.hidden = activeView !== "saved";
+  if (activeView === "saved") {
+    renderSavedList();
+    return;
+  }
+
   if (!lastPreview) {
     output.textContent = "";
     return;
@@ -159,11 +182,15 @@ function setMode(mode: InputMode): void {
   void saveSettings({ inputMode: mode });
 }
 
-function setView(view: "preview" | "json"): void {
+function setView(view: "preview" | "json" | "saved"): void {
   activeView = view;
   tabPreviewButton.dataset.active = String(view === "preview");
   tabJsonButton.dataset.active = String(view === "json");
+  tabSavedButton.dataset.active = String(view === "saved");
   renderOutput();
+  if (view === "saved") {
+    void loadSavedClips();
+  }
 }
 
 async function persistSettings(): Promise<void> {
@@ -189,6 +216,60 @@ async function refreshServerStatus(): Promise<void> {
   } else {
     setStatus("Connected");
   }
+}
+
+async function loadSavedClips(): Promise<void> {
+  try {
+    savedClips = (await createKnowledgeApiClient(settings).list(50)).clips;
+    if (activeView === "saved") {
+      renderSavedList();
+    }
+  } catch (error) {
+    if (activeView === "saved") {
+      savedList.replaceChildren(makeEmptyState(error instanceof Error ? error.message : String(error)));
+    }
+  }
+}
+
+function renderSavedList(): void {
+  if (savedClips.length === 0) {
+    savedList.replaceChildren(makeEmptyState("No saved clips"));
+    return;
+  }
+
+  savedList.replaceChildren(...savedClips.map((clip) => {
+    const item = document.createElement("article");
+    item.className = "saved-item";
+
+    const title = document.createElement("div");
+    title.className = "saved-title";
+    title.textContent = clip.title || clip.normalizedUrl;
+
+    const url = document.createElement("div");
+    url.className = "saved-url";
+    url.textContent = clip.normalizedUrl;
+
+    const meta = document.createElement("div");
+    meta.className = "saved-meta";
+    meta.textContent = new Date(clip.savedAt).toLocaleString();
+
+    const paths = document.createElement("div");
+    paths.className = "saved-paths";
+    paths.textContent = [clip.markdownPath, clip.documentPath].filter(Boolean).join(" | ");
+
+    item.append(title, url, meta);
+    if (paths.textContent) {
+      item.append(paths);
+    }
+    return item;
+  }));
+}
+
+function makeEmptyState(text: string): HTMLElement {
+  const element = document.createElement("div");
+  element.className = "saved-empty";
+  element.textContent = text;
+  return element;
 }
 
 function setStatus(text: string): void {

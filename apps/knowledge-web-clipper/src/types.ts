@@ -37,6 +37,20 @@ export interface PreviewResult {
   };
 }
 
+export interface ClipListItem {
+  normalizedUrl: string;
+  urlHash: string;
+  savedAt: string;
+  title?: string;
+  docId?: string;
+  markdownPath?: string;
+  documentPath?: string;
+}
+
+export interface ClipListResult {
+  clips: ClipListItem[];
+}
+
 export interface ClipStatusResult {
   normalizedUrl: string;
   urlHash: string;

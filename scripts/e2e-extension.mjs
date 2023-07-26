@@ -118,6 +118,10 @@ try {
     throw new Error(`Expected saved=true from backend status, got ${JSON.stringify(status)}`);
   }
 
+  await sidePanel.evaluate(() => document.querySelector("#tab-saved")?.click());
+  await sidePanel.locator("#saved-list").filter({ hasText: "E2E Article" }).waitFor({ timeout: 10000 });
+  await sidePanel.locator("#saved-list").filter({ hasText: ".md" }).waitFor({ timeout: 10000 });
+
   console.log("knowledge extension e2e passed");
 } finally {
   await context?.close();

@@ -2,6 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import {
+  ClipListItem,
   ClipStatus,
   ClipSaveResponse,
   KnowledgeDocument,
@@ -63,6 +64,27 @@ export class KnowledgeStore {
       markdownPath: row.markdown_path ?? undefined,
       documentPath: row.document_path ?? undefined
     };
+  }
+
+  async list(limit = 50): Promise<ClipListItem[]> {
+    await this.ensure();
+    const boundedLimit = Math.min(Math.max(Math.trunc(limit) || 50, 1), 200);
+    const rows = this.database!.prepare(`
+      SELECT normalized_url, url_hash, saved_at, title, doc_id, markdown_path, document_path
+      FROM clips
+      ORDER BY saved_at DESC
+      LIMIT ?
+    `).all(boundedLimit) as unknown as ClipRow[];
+
+    return rows.map((row) => ({
+      normalizedUrl: row.normalized_url,
+      urlHash: row.url_hash,
+      savedAt: row.saved_at,
+      title: row.title ?? undefined,
+      docId: row.doc_id ?? undefined,
+      markdownPath: row.markdown_path ?? undefined,
+      documentPath: row.document_path ?? undefined
+    }));
   }
 
   close(): void {

@@ -131,3 +131,44 @@ button[data-active="true"] {
   padding: 14px;
   white-space: pre-wrap;
 }
+
+.saved-list {
+  background: #ffffff;
+  display: grid;
+  gap: 0;
+  overflow: auto;
+}
+
+.saved-empty {
+  color: #526174;
+  font-size: 13px;
+  padding: 14px;
+}
+
+.saved-item {
+  border-bottom: 1px solid #d9e1ea;
+  display: grid;
+  gap: 6px;
+  padding: 12px 14px;
+}
+
+.saved-title {
+  color: #172033;
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.saved-url,
+.saved-meta,
+.saved-paths {
+  color: #526174;
+  font-size: 11px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.saved-paths {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}

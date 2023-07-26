@@ -37,7 +37,18 @@ The smoke script starts a temporary local article server plus `knowledge-ingest-
 - `browser_html` preview
 - `server_fetch` preview
 - save + normalized status lookup
+- saved clip listing
 - non-HTML `server_fetch` rejection
+
+## Extension E2E
+
+```bash
+npx playwright install chromium
+npm run build
+npm run e2e:extension
+```
+
+The E2E script loads the built Chrome extension in Playwright Chromium, previews the current page through `browser_html`, saves it, verifies backend status, and checks the side panel `Saved` view.
 
 ## Run The Server With Docker
 
@@ -67,3 +78,4 @@ KNOWLEDGE_FETCH_TIMEOUT_MS=15000 KNOWLEDGE_MAX_HTML_BYTES=10485760 docker compos
 - `server_fetch`: the local server fetches the URL when no HTML is provided.
 - `file://` pages are only supported through `browser_html`.
 - The server stores RawDoc metadata, Document JSON, Markdown, raw HTML, and URL status in a local `knowledge-store`.
+- The side panel includes a `Saved` view backed by `/api/clips` for recently saved pages.

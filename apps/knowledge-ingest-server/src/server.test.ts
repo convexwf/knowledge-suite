@@ -116,6 +116,19 @@ describe("knowledge ingest server", () => {
     expect(status.statusCode).toBe(200);
     expect(status.json().saved).toBe(true);
 
+    const list = await app.inject({
+      method: "GET",
+      url: "/api/clips",
+      headers: { authorization: "Bearer test-token" }
+    });
+    expect(list.statusCode).toBe(200);
+    expect(list.json().clips).toHaveLength(1);
+    expect(list.json().clips[0]).toMatchObject({
+      normalizedUrl: "https://example.com/a",
+      savedAt: expect.any(String),
+      title: "Example Article"
+    });
+
     await app.close();
   });
 

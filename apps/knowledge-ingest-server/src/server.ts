@@ -66,6 +66,13 @@ export async function buildServer(config: ServerConfig = loadConfig()) {
     return store.status(query.url);
   });
 
+  app.get("/api/clips", async (request) => {
+    const query = request.query as { limit?: string };
+    return {
+      clips: await store.list(query.limit ? Number(query.limit) : undefined)
+    };
+  });
+
   app.post("/api/clip/preview", async (request) => {
     const input = ClipInputSchema.parse(request.body);
     const resolved = await resolveClipInput(input, config);

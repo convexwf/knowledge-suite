@@ -106,6 +106,13 @@ try {
     throw new Error("Expected saved status for normalized smoke URL");
   }
 
+  const list = await get("/api/clips");
+  if (!Array.isArray(list.clips) || list.clips.length !== 1) {
+    throw new Error(`Expected one saved clip in list, got ${JSON.stringify(list)}`);
+  }
+  assertIncludes(list.clips[0].normalizedUrl, canonicalUrl, "saved clip URL");
+  assertIncludes(list.clips[0].markdownPath, ".md", "saved clip markdown path");
+
   const nonHtml = await fetch(`${baseUrl()}/api/clip/preview`, {
     method: "POST",
     headers: headers(),
