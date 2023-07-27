@@ -79,3 +79,88 @@ KNOWLEDGE_FETCH_TIMEOUT_MS=15000 KNOWLEDGE_MAX_HTML_BYTES=10485760 docker compos
 - `file://` pages are only supported through `browser_html`.
 - The server stores RawDoc metadata, Document JSON, Markdown, raw HTML, and URL status in a local `knowledge-store`.
 - The side panel includes a `Saved` view backed by `/api/clips` for recently saved pages.
+
+## Roadmap And TODO
+
+Priority labels:
+
+- `P0`: Blocks MVP reliability, safety, or daily usability.
+- `P1`: Important MVP polish or validation that should happen soon.
+- `P2`: Near-term quality, parser, or workflow improvement.
+- `P3`: Larger knowledge-base capability after the clipper loop is stable.
+- `P4`: Later automation, export, or ecosystem expansion.
+
+### MVP Completion
+
+| Priority | TODO | Notes |
+| --- | --- | --- |
+| P0 | Render Markdown preview as sanitized HTML | Current preview is plain text in a `<pre>`; use a Markdown renderer plus HTML sanitization. |
+| P0 | Add copy Markdown action | Needed for quick manual use before deeper Obsidian/export support. |
+| P0 | Add delete current clip flow | Requires backend delete API, index update, and clear badge state. |
+| P0 | Add backend delete API | Suggested shape: `DELETE /api/clip?url=...`; define whether files are deleted or only unindexed. |
+| P0 | Add path guard module and tests | Ensure all writes and future deletes stay inside `knowledge-store`. |
+| P0 | Tighten CORS | Replace broad `origin: true` with Chrome extension origin plus localhost dev origins. |
+| P1 | Add download JSON / Markdown actions | Useful for debugging and one-off export. |
+| P1 | Add `RawDoc Meta` tab | RawDoc is saved but not visible in the extension UI. |
+| P1 | Add parser logs tab | Show warnings, parser version, elapsed time, and extraction mode. |
+| P1 | Improve local server offline UX | Show startup command, configured port, and token/config guidance when server is unavailable. |
+| P1 | Refresh badge immediately after save/delete | Notify background worker after mutations instead of relying on tab events. |
+| P1 | Complete badge states | Add transient `...` for conversion and `ERR` for failed conversion/status checks. |
+| P1 | Add badge E2E assertion | Verify reload/re-enter saved URL shows `OK`. |
+| P1 | Add `server_fetch` side-panel E2E path | Current extension E2E focuses on `browser_html`. |
+| P1 | Add `file://` local HTML E2E path | Local files must force `browser_html`. |
+| P1 | Add restricted-page E2E path | Example: `chrome://extensions` should show a clear access error. |
+| P2 | Add settings page | Move server URL/token/default UI behavior out of the main clipping panel. |
+| P2 | Add first-run token/config flow | Generate or discover local token instead of relying only on manual env/config. |
+| P2 | Persist UI preferences | Default tab, auto-preview behavior, and preferred input mode. |
+| P2 | Add extension-side status cache | Reduce localhost status requests during tab switching. |
+| P2 | Add JSON Schema validation against `knowledge-core/schemas` | Current implementation has TS types and input zod validation, but not full output schema validation. |
+| P2 | Add SQLite delete/repair/orphan handling | Needed once delete and crash recovery matter. |
+| P2 | Add optional Raw HTML persistence flag | Allow privacy-conscious mode that keeps metadata/JSON/Markdown but skips raw HTML. |
+
+### Parser And Content Quality
+
+| Priority | TODO | Notes |
+| --- | --- | --- |
+| P1 | Add extraction quality scoring | Score title match, content length, section count, and content density before accepting a parser result. |
+| P1 | Add static HTML fixture snapshot tests | Use representative pages from `knowledge-core/raw_ingest/examples`. |
+| P1 | Compare against `knowledge-core/raw_ingest` outputs | Field-level checks for title, source URL, section type sequence, and Markdown body. |
+| P2 | Add hostname-based TypeScript site adapter interface | Foundation for migrating high-value site rules. |
+| P2 | Port mature `knowledge-core/raw_ingest/sites` rules to TypeScript | Start with the most valuable or frequently clipped sites. |
+| P2 | Improve table/code/figure Markdown snapshots | Current renderer coverage is still basic. |
+| P2 | Implement selection-only clipping | `selectionHtml` exists in schema but is not wired through UI or parser. |
+| P3 | Add asset pipeline | Download images, rewrite Markdown image paths, and store asset metadata. |
+| P3 | Add SQLite assets table | Track original source, local path, owning document, and captions. |
+
+### Knowledge Base Capabilities
+
+| Priority | TODO | Notes |
+| --- | --- | --- |
+| P2 | Improve Saved list into a searchable library view | Add search, sorting, filters, and current-page affordances. |
+| P3 | Add chunk generation | Stable chunks become input for retrieval and review workflows. |
+| P3 | Add embedding pipeline | Should build on Document JSON, not Markdown-only parsing. |
+| P3 | Add full-text search | SQLite FTS or a dedicated local index. |
+| P3 | Add tags | Manual and eventually rule/model-assisted tagging. |
+| P3 | Add duplicate/similar document detection | Use normalized URL, title, canonical URL, and later embeddings. |
+| P3 | Add backlinks/references | Connect saved pages and future notes. |
+
+### Obsidian And Export
+
+| Priority | TODO | Notes |
+| --- | --- | --- |
+| P2 | Add configurable frontmatter | Good first step toward Obsidian use. |
+| P3 | Add custom Markdown templates | Similar spirit to Obsidian Clipper, but backed by Document JSON. |
+| P3 | Add file naming rules | Configure slug, date, host, title, and collision behavior. |
+| P3 | Add directory structure rules | Route notes by host, tag, date, or content type. |
+| P3 | Add Obsidian vault export | Copy or sync generated Markdown/assets into a vault. |
+| P4 | Add batch JSONL export | Useful for downstream indexing, training, or migration. |
+
+### Batch And Automation
+
+| Priority | TODO | Notes |
+| --- | --- | --- |
+| P4 | Add RSS import | Batch ingest feed entries through `server_fetch`. |
+| P4 | Add reading-list import | Browser or exported reading-list source. |
+| P4 | Add URL file import | Simple newline-delimited URLs are enough for a first version. |
+| P4 | Add bookmark import | Browser bookmarks or exported HTML. |
+| P4 | Add background batch queue | Needed before recurring or large-volume ingestion. |
