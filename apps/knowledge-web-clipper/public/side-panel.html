@@ -29,11 +29,19 @@
           <button id="mode-browser" data-active="true">Current HTML</button>
           <button id="mode-fetch">Server Fetch</button>
         </div>
+        <label class="inline-control">
+          <input id="auto-refresh" type="checkbox" />
+          Auto refresh
+        </label>
       </section>
 
       <section class="statusbar">
         <span id="status-pill">Idle</span>
-        <button id="save-button">Save</button>
+        <div class="actions">
+          <button id="copy-button">Copy</button>
+          <button id="delete-button">Delete</button>
+          <button id="save-button">Save</button>
+        </div>
       </section>
 
       <section class="tabs">
@@ -42,7 +50,8 @@
         <button id="tab-saved">Saved</button>
       </section>
 
-      <pre id="output" class="output"></pre>
+      <article id="preview-output" class="preview-output"></article>
+      <pre id="code-output" class="code-output" hidden></pre>
       <div id="saved-list" class="saved-list" hidden></div>
     </main>
     <script type="module" src="side-panel.js"></script>

@@ -79,6 +79,7 @@ KNOWLEDGE_FETCH_TIMEOUT_MS=15000 KNOWLEDGE_MAX_HTML_BYTES=10485760 docker compos
 - `file://` pages are only supported through `browser_html`.
 - The server stores RawDoc metadata, Document JSON, Markdown, raw HTML, and URL status in a local `knowledge-store`.
 - The side panel includes a `Saved` view backed by `/api/clips` for recently saved pages.
+- The side panel renders Markdown as sanitized DOM, supports copying Markdown, deleting the current clip, and optional auto-refresh on tab changes.
 
 ## Roadmap And TODO
 
@@ -90,21 +91,25 @@ Priority labels:
 - `P3`: Larger knowledge-base capability after the clipper loop is stable.
 - `P4`: Later automation, export, or ecosystem expansion.
 
+### Completed P0
+
+| Priority | Done | Notes |
+| --- | --- | --- |
+| P0 | Render Markdown preview as sanitized HTML | The extension builds preview DOM nodes directly instead of injecting page-derived HTML. |
+| P0 | Add copy Markdown action | Copies the latest preview Markdown from the side panel. |
+| P0 | Add delete current clip flow | Deletes the current URL from the index and removes known generated files. |
+| P0 | Add backend delete API | `DELETE /api/clip?url=...` deletes the saved record; pass `deleteFiles=false` to keep files. |
+| P0 | Add path guard module and tests | Write/delete paths are resolved inside `knowledge-store`. |
+| P0 | Tighten CORS | CORS allows Chrome extension origins and localhost-style development origins. |
+| P0 | Add configurable auto-refresh | The side panel can auto-preview when the active tab changes or finishes loading. |
+
 ### MVP Completion
 
 | Priority | TODO | Notes |
 | --- | --- | --- |
-| P0 | Render Markdown preview as sanitized HTML | Current preview is plain text in a `<pre>`; use a Markdown renderer plus HTML sanitization. |
-| P0 | Add copy Markdown action | Needed for quick manual use before deeper Obsidian/export support. |
-| P0 | Add delete current clip flow | Requires backend delete API, index update, and clear badge state. |
-| P0 | Add backend delete API | Suggested shape: `DELETE /api/clip?url=...`; define whether files are deleted or only unindexed. |
-| P0 | Add path guard module and tests | Ensure all writes and future deletes stay inside `knowledge-store`. |
-| P0 | Tighten CORS | Replace broad `origin: true` with Chrome extension origin plus localhost dev origins. |
-| P1 | Add download JSON / Markdown actions | Useful for debugging and one-off export. |
 | P1 | Add `RawDoc Meta` tab | RawDoc is saved but not visible in the extension UI. |
 | P1 | Add parser logs tab | Show warnings, parser version, elapsed time, and extraction mode. |
 | P1 | Improve local server offline UX | Show startup command, configured port, and token/config guidance when server is unavailable. |
-| P1 | Refresh badge immediately after save/delete | Notify background worker after mutations instead of relying on tab events. |
 | P1 | Complete badge states | Add transient `...` for conversion and `ERR` for failed conversion/status checks. |
 | P1 | Add badge E2E assertion | Verify reload/re-enter saved URL shows `OK`. |
 | P1 | Add `server_fetch` side-panel E2E path | Current extension E2E focuses on `browser_html`. |

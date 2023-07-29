@@ -13,25 +13,35 @@ const browserProfile = await mkdtemp(join(tmpdir(), "knowledge-e2e-profile-"));
 const extensionPath = resolve("apps/knowledge-web-clipper/dist");
 const chromePath = process.env.CHROME_PATH;
 
-const html = `<!doctype html>
+const html = (title, paragraph) => `<!doctype html>
 <html lang="en">
   <head>
-    <title>E2E Article</title>
+    <title>${title}</title>
     <link rel="canonical" href="http://127.0.0.1:${pagePort}/article">
     <meta name="author" content="Extension Bot">
   </head>
   <body>
     <article>
-      <h1>E2E Article</h1>
-      <p>Knowledge extension E2E page with enough content to verify the side panel preview pipeline.</p>
+      <h1>${title}</h1>
+      <p>${paragraph}</p>
       <ul><li>Content script collection</li><li>Local ingest server preview</li></ul>
     </article>
   </body>
 </html>`;
 
-const pageServer = createServer((_request, response) => {
+const pageServer = createServer((request, response) => {
   response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-  response.end(html);
+  if (request.url?.startsWith("/second")) {
+    response.end(html(
+      "Second E2E Article",
+      "Knowledge extension auto refresh page with enough content to verify tab switching."
+    ));
+    return;
+  }
+  response.end(html(
+    "E2E Article",
+    "Knowledge extension E2E page with enough content to verify the side panel preview pipeline."
+  ));
 });
 
 await listen(pageServer, pagePort);
@@ -122,6 +132,28 @@ try {
   await sidePanel.locator("#saved-list").filter({ hasText: "E2E Article" }).waitFor({ timeout: 10000 });
   await sidePanel.locator("#saved-list").filter({ hasText: ".md" }).waitFor({ timeout: 10000 });
 
+  await sidePanel.evaluate(() => document.querySelector("#tab-preview")?.click());
+  const secondArticle = await context.newPage();
+  await secondArticle.goto(`http://127.0.0.1:${pagePort}/second`, {
+    waitUntil: "domcontentloaded"
+  });
+  const secondTabId = await findArticleTabId(sidePanel, `http://127.0.0.1:${pagePort}/second`);
+  await sidePanel.evaluate((tabId) => chrome.tabs.update(tabId, { active: true }), secondTabId);
+  await expectOutput(sidePanel, "Knowledge extension auto refresh page");
+
+  await sidePanel.evaluate(() => document.querySelector("#copy-button")?.click());
+  await sidePanel.locator("#status-pill").filter({ hasText: "Copied" }).waitFor({ timeout: 10000 });
+
+  await sidePanel.evaluate(async (tabId) => {
+    await chrome.tabs.update(tabId, { active: true });
+    document.querySelector("#delete-button")?.click();
+  }, articleTabId);
+  await sidePanel.locator("#status-pill").filter({ hasText: "Deleted" }).waitFor({ timeout: 10000 });
+  const deletedStatus = await get(`/api/clip/status?url=${encodeURIComponent(`http://127.0.0.1:${pagePort}/article?utm_source=e2e#top`)}`);
+  if (deletedStatus.saved !== false) {
+    throw new Error(`Expected saved=false after delete, got ${JSON.stringify(deletedStatus)}`);
+  }
+
   console.log("knowledge extension e2e passed");
 } finally {
   await context?.close();
@@ -160,10 +192,10 @@ async function resolveExtensionId(context, profileDir) {
   return match[1];
 }
 
-async function findArticleTabId(page) {
+async function findArticleTabId(page, urlPrefix = `http://127.0.0.1:${pagePort}/article`) {
   const tabs = await page.evaluate((urlPrefix) => {
     return chrome.tabs.query({ url: `${urlPrefix}*` });
-  }, `http://127.0.0.1:${pagePort}/article`);
+  }, urlPrefix);
   const [tab] = tabs;
   if (!tab?.id) {
     throw new Error(`Unable to find article tab: ${JSON.stringify(tabs)}`);
@@ -173,12 +205,12 @@ async function findArticleTabId(page) {
 
 async function expectOutput(page, text) {
   try {
-    await page.locator("#output").filter({ hasText: text }).waitFor({ timeout: 15000 });
+    await page.locator("#preview-output").filter({ hasText: text }).waitFor({ timeout: 15000 });
   } catch (error) {
     const diagnostics = await page.evaluate(() => ({
       status: document.querySelector("#status-pill")?.textContent,
       pageUrl: document.querySelector("#page-url")?.textContent,
-      output: document.querySelector("#output")?.textContent
+      output: document.querySelector("#preview-output")?.textContent || document.querySelector("#code-output")?.textContent
     }));
     throw new Error(`Expected side panel output to include "${text}". Diagnostics: ${JSON.stringify(diagnostics)}`, {
       cause: error

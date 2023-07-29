@@ -15,6 +15,7 @@ export interface ExtensionSettings {
   serverUrl: string;
   token: string;
   inputMode: InputMode;
+  autoRefresh: boolean;
 }
 
 export type ClipRequestBody =
@@ -49,6 +50,11 @@ export interface ClipListItem {
 
 export interface ClipListResult {
   clips: ClipListItem[];
+}
+
+export interface ClipDeleteResult extends ClipStatusResult {
+  deleted: boolean;
+  deletedPaths: string[];
 }
 
 export interface ClipStatusResult {

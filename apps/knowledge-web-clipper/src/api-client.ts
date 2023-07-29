@@ -1,4 +1,5 @@
 import {
+  ClipDeleteResult,
   ClipListResult,
   ClipRequestBody,
   ClipStatusResult,
@@ -11,6 +12,7 @@ export interface KnowledgeApiClient {
   health(): Promise<HealthResult>;
   status(url: string): Promise<ClipStatusResult>;
   list(limit?: number): Promise<ClipListResult>;
+  deleteClip(url: string): Promise<ClipDeleteResult>;
   preview(body: ClipRequestBody): Promise<PreviewResult>;
   save(body: ClipRequestBody): Promise<PreviewResult>;
 }
@@ -32,6 +34,12 @@ export function createKnowledgeApiClient(settings: ExtensionSettings): Knowledge
       "GET",
       `/api/clips?limit=${encodeURIComponent(String(limit))}`
     ),
+    deleteClip: (url) => request<ClipDeleteResult>(
+      baseUrl,
+      settings.token,
+      "DELETE",
+      `/api/clip?url=${encodeURIComponent(url)}`
+    ),
     preview: (body) => request<PreviewResult>(baseUrl, settings.token, "POST", "/api/clip/preview", body),
     save: (body) => request<PreviewResult>(baseUrl, settings.token, "POST", "/api/clip/save", {
       ...body,
@@ -43,7 +51,7 @@ export function createKnowledgeApiClient(settings: ExtensionSettings): Knowledge
 async function request<T>(
   baseUrl: string,
   token: string,
-  method: "GET" | "POST",
+  method: "DELETE" | "GET" | "POST",
   path: string,
   body?: unknown
 ): Promise<T> {

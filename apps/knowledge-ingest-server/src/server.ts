@@ -20,7 +20,9 @@ export async function buildServer(config: ServerConfig = loadConfig()) {
   });
 
   await app.register(cors, {
-    origin: true
+    origin: (origin, callback) => {
+      callback(null, isAllowedCorsOrigin(origin));
+    }
   });
 
   app.setErrorHandler(async (error, _request, reply) => {
@@ -73,6 +75,14 @@ export async function buildServer(config: ServerConfig = loadConfig()) {
     };
   });
 
+  app.delete("/api/clip", async (request) => {
+    const query = request.query as { url?: string; deleteFiles?: string };
+    if (!query.url) {
+      throw new Error("url is required");
+    }
+    return store.deleteByUrl(query.url, query.deleteFiles !== "false");
+  });
+
   app.post("/api/clip/preview", async (request) => {
     const input = ClipInputSchema.parse(request.body);
     const resolved = await resolveClipInput(input, config);
@@ -111,11 +121,32 @@ export async function buildServer(config: ServerConfig = loadConfig()) {
   return app;
 }
 
+function isAllowedCorsOrigin(origin: string | undefined): boolean {
+  if (!origin) {
+    return true;
+  }
+  if (origin.startsWith("chrome-extension://")) {
+    return true;
+  }
+
+  try {
+    const url = new URL(origin);
+    return (
+      (url.protocol === "http:" || url.protocol === "https:") &&
+      (url.hostname === "127.0.0.1" || url.hostname === "localhost" || url.hostname === "::1")
+    );
+  } catch {
+    return false;
+  }
+}
+
 function isClientInputError(message: string): boolean {
   return [
     "server_fetch does not support file://",
     "Expected HTML",
     "too large",
-    "Timed out fetching"
+    "Timed out fetching",
+    "Path escapes knowledge store",
+    "Unsafe relative path"
   ].some((needle) => message.includes(needle));
 }

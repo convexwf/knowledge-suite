@@ -133,6 +133,11 @@ export interface ClipSaveResponse extends ClipPreviewResponse {
 
 export interface ClipStatusResponse extends ClipStatus {}
 
+export interface ClipDeleteResponse extends ClipStatus {
+  deleted: boolean;
+  deletedPaths: string[];
+}
+
 export interface ClipListItem {
   normalizedUrl: string;
   urlHash: string;

@@ -113,6 +113,16 @@ try {
   assertIncludes(list.clips[0].normalizedUrl, canonicalUrl, "saved clip URL");
   assertIncludes(list.clips[0].markdownPath, ".md", "saved clip markdown path");
 
+  const deleted = await request("DELETE", `/api/clip?url=${encodeURIComponent(pageUrl)}`);
+  if (deleted.deleted !== true || deleted.saved !== false) {
+    throw new Error(`Expected deleted clip response, got ${JSON.stringify(deleted)}`);
+  }
+
+  const deletedStatus = await get(`/api/clip/status?url=${encodeURIComponent(pageUrl)}`);
+  if (deletedStatus.saved !== false) {
+    throw new Error("Expected deleted status for normalized smoke URL");
+  }
+
   const nonHtml = await fetch(`${baseUrl()}/api/clip/preview`, {
     method: "POST",
     headers: headers(),
@@ -158,10 +168,14 @@ async function get(path, authorize = true) {
 }
 
 async function post(path, body) {
+  return request("POST", path, body);
+}
+
+async function request(method, path, body) {
   const response = await fetch(`${baseUrl()}${path}`, {
-    method: "POST",
-    headers: headers(),
-    body: JSON.stringify(body)
+    method,
+    headers: body ? headers() : authHeaders(),
+    body: body ? JSON.stringify(body) : undefined
   });
   if (!response.ok) {
     throw new Error(`${response.status} ${response.statusText}: ${await response.text()}`);
@@ -172,6 +186,12 @@ async function post(path, body) {
 function headers() {
   return {
     "content-type": "application/json",
+    ...authHeaders()
+  };
+}
+
+function authHeaders() {
+  return {
     authorization: `Bearer ${token}`
   };
 }

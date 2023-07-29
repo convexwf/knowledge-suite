@@ -15,6 +15,12 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
   }
 });
 
+chrome.runtime.onMessage.addListener((message: unknown) => {
+  if (isRefreshBadgeMessage(message)) {
+    void refreshBadge(message.tabId);
+  }
+});
+
 async function refreshBadge(tabId: number): Promise<void> {
   try {
     const tab = await chrome.tabs.get(tabId);
@@ -26,7 +32,7 @@ async function refreshBadge(tabId: number): Promise<void> {
 
     const settings = await getSettings();
     const status = await createKnowledgeApiClient(settings).status(url);
-    await setBadge(tabId, status.saved ? "OK" : "NEW", status.saved ? "#1f7a4d" : "#40566f");
+    await setBadge(tabId, status.saved ? "OK" : "", status.saved ? "#1f7a4d" : "#808995");
   } catch {
     await setBadge(tabId, "OFF", "#808995");
   }
@@ -35,4 +41,13 @@ async function refreshBadge(tabId: number): Promise<void> {
 async function setBadge(tabId: number, text: string, color: string): Promise<void> {
   await chrome.action.setBadgeText({ tabId, text });
   await chrome.action.setBadgeBackgroundColor({ tabId, color });
+}
+
+function isRefreshBadgeMessage(message: unknown): message is { type: "knowledge.refreshBadge"; tabId: number } {
+  return Boolean(
+    message &&
+    typeof message === "object" &&
+    (message as { type?: unknown }).type === "knowledge.refreshBadge" &&
+    typeof (message as { tabId?: unknown }).tabId === "number"
+  );
 }

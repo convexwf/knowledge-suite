@@ -5,6 +5,7 @@
   "version": "0.1.0",
   "permissions": [
     "activeTab",
+    "clipboardWrite",
     "scripting",
     "sidePanel",
     "storage",

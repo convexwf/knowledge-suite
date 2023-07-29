@@ -71,6 +71,19 @@ input {
   padding: 8px;
 }
 
+.inline-control {
+  align-items: center;
+  display: flex;
+  flex-direction: row;
+  font-size: 13px;
+  gap: 8px;
+}
+
+.inline-control input {
+  height: 16px;
+  width: 16px;
+}
+
 button {
   background: #ffffff;
   border: 1px solid #c9d4e2;
@@ -86,7 +99,8 @@ button:hover {
 
 .segmented,
 .tabs,
-.statusbar {
+.statusbar,
+.actions {
   display: flex;
   gap: 8px;
 }
@@ -116,20 +130,81 @@ button[data-active="true"] {
   padding: 5px 9px;
 }
 
-#save-button {
+#save-button,
+#copy-button,
+#delete-button {
   min-width: 72px;
 }
 
-.output {
+.code-output,
+.preview-output {
   background: #ffffff;
   color: #172033;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 12px;
-  line-height: 1.55;
   margin: 0;
   overflow: auto;
   padding: 14px;
+}
+
+.code-output {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.55;
   white-space: pre-wrap;
+}
+
+.preview-output {
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.preview-output h1,
+.preview-output h2,
+.preview-output h3 {
+  line-height: 1.25;
+  margin: 12px 0 8px;
+}
+
+.preview-output h1 {
+  font-size: 20px;
+}
+
+.preview-output h2 {
+  font-size: 17px;
+}
+
+.preview-output h3 {
+  font-size: 15px;
+}
+
+.preview-output p,
+.preview-output ul,
+.preview-output ol,
+.preview-output pre,
+.preview-output blockquote {
+  margin: 0 0 10px;
+}
+
+.preview-output code,
+.preview-output pre {
+  background: #eef3f8;
+  border-radius: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+.preview-output code {
+  padding: 1px 4px;
+}
+
+.preview-output pre {
+  overflow: auto;
+  padding: 10px;
+}
+
+.preview-output blockquote {
+  border-left: 3px solid #b8c6d8;
+  color: #42526a;
+  padding-left: 10px;
 }
 
 .saved-list {

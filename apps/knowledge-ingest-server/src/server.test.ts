@@ -2,6 +2,7 @@ import { access, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { resolveInsideRoot } from "./path-guard.js";
 import { buildServer } from "./server.js";
 
 const html = `<!doctype html>
@@ -129,7 +130,71 @@ describe("knowledge ingest server", () => {
       title: "Example Article"
     });
 
+    const markdownPath = save.json().paths.markdownPath;
+    await expect(access(join(storeRoot, markdownPath))).resolves.toBeUndefined();
+
+    const deleted = await app.inject({
+      method: "DELETE",
+      url: "/api/clip?url=https%3A%2F%2Fexample.com%2Fa%3Futm_source%3Dx%23top",
+      headers: { authorization: "Bearer test-token" }
+    });
+    expect(deleted.statusCode).toBe(200);
+    expect(deleted.json()).toMatchObject({
+      deleted: true,
+      saved: false
+    });
+    expect(deleted.json().deletedPaths).toContain(markdownPath);
+    await expect(access(join(storeRoot, markdownPath))).rejects.toThrow();
+
+    const deletedStatus = await app.inject({
+      method: "GET",
+      url: "/api/clip/status?url=https%3A%2F%2Fexample.com%2Fa",
+      headers: { authorization: "Bearer test-token" }
+    });
+    expect(deletedStatus.statusCode).toBe(200);
+    expect(deletedStatus.json().saved).toBe(false);
+
     await app.close();
+  });
+
+  it("restricts CORS to extension and localhost origins", async () => {
+    const app = await buildServer({
+      host: "127.0.0.1",
+      port: 0,
+      token: "test-token",
+      storeRoot,
+      fetchTimeoutMs: 1000,
+      maxHtmlBytes: 1024 * 1024
+    });
+
+    const extensionOrigin = await app.inject({
+      method: "GET",
+      url: "/api/health",
+      headers: { origin: "chrome-extension://abc123" }
+    });
+    expect(extensionOrigin.headers["access-control-allow-origin"]).toBe("chrome-extension://abc123");
+
+    const localhostOrigin = await app.inject({
+      method: "GET",
+      url: "/api/health",
+      headers: { origin: "http://127.0.0.1:3000" }
+    });
+    expect(localhostOrigin.headers["access-control-allow-origin"]).toBe("http://127.0.0.1:3000");
+
+    const blockedOrigin = await app.inject({
+      method: "GET",
+      url: "/api/health",
+      headers: { origin: "https://example.com" }
+    });
+    expect(blockedOrigin.headers["access-control-allow-origin"]).toBeUndefined();
+
+    await app.close();
+  });
+
+  it("guards knowledge-store file paths", () => {
+    expect(resolveInsideRoot(storeRoot, "docs/example.md")).toBe(join(storeRoot, "docs/example.md"));
+    expect(() => resolveInsideRoot(storeRoot, "../escape.md")).toThrow("escapes");
+    expect(() => resolveInsideRoot(storeRoot, "/tmp/escape.md")).toThrow("Unsafe");
   });
 
   it("rejects server_fetch for file URLs", async () => {

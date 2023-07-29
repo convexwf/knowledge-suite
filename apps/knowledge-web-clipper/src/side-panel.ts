@@ -10,13 +10,17 @@ import {
   PreviewResult
 } from "./types.js";
 
-const output = mustGet<HTMLPreElement>("output");
+const previewOutput = mustGet<HTMLElement>("preview-output");
+const codeOutput = mustGet<HTMLPreElement>("code-output");
 const statusPill = mustGet<HTMLElement>("status-pill");
 const pageUrlEl = mustGet<HTMLElement>("page-url");
 const serverUrlInput = mustGet<HTMLInputElement>("server-url");
 const serverTokenInput = mustGet<HTMLInputElement>("server-token");
+const autoRefreshInput = mustGet<HTMLInputElement>("auto-refresh");
 const refreshButton = mustGet<HTMLButtonElement>("refresh-button");
 const saveButton = mustGet<HTMLButtonElement>("save-button");
+const copyButton = mustGet<HTMLButtonElement>("copy-button");
+const deleteButton = mustGet<HTMLButtonElement>("delete-button");
 const modeBrowserButton = mustGet<HTMLButtonElement>("mode-browser");
 const modeFetchButton = mustGet<HTMLButtonElement>("mode-fetch");
 const tabPreviewButton = mustGet<HTMLButtonElement>("tab-preview");
@@ -29,15 +33,19 @@ let activeTab: ActiveTabInfo | undefined;
 let lastPreview: PreviewResult | undefined;
 let savedClips: ClipListItem[] = [];
 let activeView: "preview" | "json" | "saved" = "preview";
+let autoRefreshTimer: number | undefined;
 
 serverUrlInput.value = settings.serverUrl;
 serverTokenInput.value = settings.token;
+autoRefreshInput.checked = settings.autoRefresh;
 setMode(settings.inputMode);
 await refreshActiveTab();
 await preview();
 
 refreshButton.addEventListener("click", () => preview());
 saveButton.addEventListener("click", () => save());
+copyButton.addEventListener("click", () => copyMarkdown());
+deleteButton.addEventListener("click", () => deleteCurrentClip());
 modeBrowserButton.addEventListener("click", () => setMode("browser_html"));
 modeFetchButton.addEventListener("click", () => setMode("server_fetch"));
 tabPreviewButton.addEventListener("click", () => setView("preview"));
@@ -45,6 +53,13 @@ tabJsonButton.addEventListener("click", () => setView("json"));
 tabSavedButton.addEventListener("click", () => setView("saved"));
 serverUrlInput.addEventListener("change", () => persistSettings());
 serverTokenInput.addEventListener("change", () => persistSettings());
+autoRefreshInput.addEventListener("change", () => persistSettings());
+chrome.tabs.onActivated.addListener(() => scheduleAutoRefresh());
+chrome.tabs.onUpdated.addListener((_tabId, changeInfo) => {
+  if (changeInfo.status === "complete" || changeInfo.url) {
+    scheduleAutoRefresh();
+  }
+});
 
 async function refreshActiveTab(): Promise<void> {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -88,7 +103,7 @@ async function preview(): Promise<void> {
     }
   } catch (error) {
     setStatus("Error");
-    output.textContent = error instanceof Error ? error.message : String(error);
+    renderError(error);
   }
 }
 
@@ -103,11 +118,44 @@ async function save(): Promise<void> {
     const body = await buildRequestBody();
     lastPreview = await createKnowledgeApiClient(settings).save(body);
     await loadSavedClips();
+    await notifyBadgeRefresh();
     setStatus("Saved");
     renderOutput();
   } catch (error) {
     setStatus("Error");
-    output.textContent = error instanceof Error ? error.message : String(error);
+    renderError(error);
+  }
+}
+
+async function copyMarkdown(): Promise<void> {
+  if (!lastPreview?.markdown) {
+    setStatus("Nothing to copy");
+    return;
+  }
+
+  await navigator.clipboard.writeText(lastPreview.markdown);
+  setStatus("Copied");
+}
+
+async function deleteCurrentClip(): Promise<void> {
+  await refreshActiveTab();
+  if (!activeTab) {
+    return;
+  }
+
+  setStatus("Deleting");
+  try {
+    const deleted = await createKnowledgeApiClient(settings).deleteClip(activeTab.url);
+    lastPreview = lastPreview
+      ? { ...lastPreview, status: { ...lastPreview.status, saved: false } }
+      : undefined;
+    await loadSavedClips();
+    await notifyBadgeRefresh();
+    setStatus(deleted.deleted ? "Deleted" : "Not saved");
+    renderOutput();
+  } catch (error) {
+    setStatus("Error");
+    renderError(error);
   }
 }
 
@@ -159,7 +207,8 @@ function isMissingContentScriptError(error: unknown): boolean {
 }
 
 function renderOutput(): void {
-  output.hidden = activeView === "saved";
+  previewOutput.hidden = activeView !== "preview";
+  codeOutput.hidden = activeView !== "json";
   savedList.hidden = activeView !== "saved";
   if (activeView === "saved") {
     renderSavedList();
@@ -167,12 +216,12 @@ function renderOutput(): void {
   }
 
   if (!lastPreview) {
-    output.textContent = "";
+    previewOutput.replaceChildren();
+    codeOutput.textContent = "";
     return;
   }
-  output.textContent = activeView === "preview"
-    ? lastPreview.markdown
-    : JSON.stringify(lastPreview.document, null, 2);
+  previewOutput.replaceChildren(renderMarkdown(lastPreview.markdown));
+  codeOutput.textContent = JSON.stringify(lastPreview.document, null, 2);
 }
 
 function setMode(mode: InputMode): void {
@@ -180,6 +229,7 @@ function setMode(mode: InputMode): void {
   modeBrowserButton.dataset.active = String(mode === "browser_html");
   modeFetchButton.dataset.active = String(mode === "server_fetch");
   void saveSettings({ inputMode: mode });
+  scheduleAutoRefresh();
 }
 
 function setView(view: "preview" | "json" | "saved"): void {
@@ -197,7 +247,8 @@ async function persistSettings(): Promise<void> {
   settings = {
     ...settings,
     serverUrl: serverUrlInput.value.replace(/\/+$/, ""),
-    token: serverTokenInput.value
+    token: serverTokenInput.value,
+    autoRefresh: autoRefreshInput.checked
   };
   await saveSettings(settings);
 }
@@ -274,6 +325,150 @@ function makeEmptyState(text: string): HTMLElement {
 
 function setStatus(text: string): void {
   statusPill.textContent = text;
+}
+
+function renderError(error: unknown): void {
+  previewOutput.hidden = false;
+  codeOutput.hidden = true;
+  savedList.hidden = true;
+  activeView = "preview";
+  tabPreviewButton.dataset.active = "true";
+  tabJsonButton.dataset.active = "false";
+  tabSavedButton.dataset.active = "false";
+  const message = error instanceof Error ? error.message : String(error);
+  const pre = document.createElement("pre");
+  pre.textContent = message;
+  previewOutput.replaceChildren(pre);
+}
+
+function scheduleAutoRefresh(): void {
+  if (!settings.autoRefresh) {
+    return;
+  }
+  window.clearTimeout(autoRefreshTimer);
+  autoRefreshTimer = window.setTimeout(() => {
+    void preview();
+  }, 350);
+}
+
+async function notifyBadgeRefresh(): Promise<void> {
+  if (!activeTab) {
+    return;
+  }
+  await chrome.runtime.sendMessage({
+    type: "knowledge.refreshBadge",
+    tabId: activeTab.tabId
+  }).catch(() => undefined);
+}
+
+function renderMarkdown(markdown: string): DocumentFragment {
+  const fragment = document.createDocumentFragment();
+  const lines = markdown.split(/\r?\n/);
+  let paragraph: string[] = [];
+  let list: HTMLUListElement | undefined;
+  let codeBlock: string[] | undefined;
+
+  const flushParagraph = () => {
+    if (paragraph.length === 0) {
+      return;
+    }
+    const p = document.createElement("p");
+    appendInlineMarkdown(p, paragraph.join(" "));
+    fragment.append(p);
+    paragraph = [];
+  };
+
+  const flushList = () => {
+    if (list) {
+      fragment.append(list);
+      list = undefined;
+    }
+  };
+
+  for (const line of lines) {
+    if (line.startsWith("```")) {
+      if (codeBlock) {
+        const pre = document.createElement("pre");
+        const code = document.createElement("code");
+        code.textContent = codeBlock.join("\n");
+        pre.append(code);
+        fragment.append(pre);
+        codeBlock = undefined;
+      } else {
+        flushParagraph();
+        flushList();
+        codeBlock = [];
+      }
+      continue;
+    }
+
+    if (codeBlock) {
+      codeBlock.push(line);
+      continue;
+    }
+
+    if (!line.trim()) {
+      flushParagraph();
+      flushList();
+      continue;
+    }
+
+    const heading = line.match(/^(#{1,3})\s+(.+)$/);
+    if (heading) {
+      flushParagraph();
+      flushList();
+      const level = heading[1].length;
+      const h = document.createElement(`h${level}`);
+      appendInlineMarkdown(h, heading[2]);
+      fragment.append(h);
+      continue;
+    }
+
+    const bullet = line.match(/^\s*[-*]\s+(.+)$/);
+    if (bullet) {
+      flushParagraph();
+      list ??= document.createElement("ul");
+      const li = document.createElement("li");
+      appendInlineMarkdown(li, bullet[1]);
+      list.append(li);
+      continue;
+    }
+
+    if (line.startsWith("> ")) {
+      flushParagraph();
+      flushList();
+      const blockquote = document.createElement("blockquote");
+      appendInlineMarkdown(blockquote, line.slice(2));
+      fragment.append(blockquote);
+      continue;
+    }
+
+    paragraph.push(line.trim());
+  }
+
+  if (codeBlock) {
+    const pre = document.createElement("pre");
+    const code = document.createElement("code");
+    code.textContent = codeBlock.join("\n");
+    pre.append(code);
+    fragment.append(pre);
+  }
+  flushParagraph();
+  flushList();
+  return fragment;
+}
+
+function appendInlineMarkdown(parent: HTMLElement, text: string): void {
+  const parts = text.split(/(`[^`]+`)/g);
+  for (const part of parts) {
+    if (part.startsWith("`") && part.endsWith("`") && part.length > 1) {
+      const code = document.createElement("code");
+      code.textContent = part.slice(1, -1);
+      parent.append(code);
+    } else if (part) {
+      parent.append(document.createTextNode(part));
+    }
+  }
 }
 
 function mustGet<T extends HTMLElement>(id: string): T {
