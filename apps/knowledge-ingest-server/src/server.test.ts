@@ -157,6 +157,55 @@ describe("knowledge ingest server", () => {
     await app.close();
   });
 
+  it("removes common page chrome before extraction", async () => {
+    const app = await buildServer({
+      host: "127.0.0.1",
+      port: 0,
+      token: "test-token",
+      storeRoot,
+      fetchTimeoutMs: 1000,
+      maxHtmlBytes: 1024 * 1024
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/clip/preview",
+      headers: { authorization: "Bearer test-token" },
+      payload: {
+        inputMode: "browser_html",
+        snapshot: {
+          pageUrl: "https://example.com/noisy",
+          title: "Noisy Article",
+          html: `<!doctype html>
+            <html>
+              <head><title>Noisy Article</title></head>
+              <body>
+                <nav>Global navigation should be removed</nav>
+                <div class="cookie banner">Accept cookies should be removed</div>
+                <div class="modal overlay">Subscribe modal should be removed</div>
+                <article>
+                  <h1>Noisy Article</h1>
+                  <h4>Useful fourth-level heading</h4>
+                  <p>Useful article body that should remain after noisy page chrome is removed from the extraction tree.</p>
+                </article>
+              </body>
+            </html>`,
+          capturedAt: "2026-05-11T02:00:00.000Z",
+          meta: {}
+        }
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().markdown).toContain("#### Useful fourth-level heading");
+    expect(response.json().markdown).toContain("Useful article body");
+    expect(response.json().markdown).not.toContain("Global navigation");
+    expect(response.json().markdown).not.toContain("Accept cookies");
+    expect(response.json().markdown).not.toContain("Subscribe modal");
+
+    await app.close();
+  });
+
   it("restricts CORS to extension and localhost origins", async () => {
     const app = await buildServer({
       host: "127.0.0.1",

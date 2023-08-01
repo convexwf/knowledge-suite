@@ -159,7 +159,10 @@ button[data-active="true"] {
 
 .preview-output h1,
 .preview-output h2,
-.preview-output h3 {
+.preview-output h3,
+.preview-output h4,
+.preview-output h5,
+.preview-output h6 {
   line-height: 1.25;
   margin: 12px 0 8px;
 }
@@ -174,6 +177,12 @@ button[data-active="true"] {
 
 .preview-output h3 {
   font-size: 15px;
+}
+
+.preview-output h4,
+.preview-output h5,
+.preview-output h6 {
+  font-size: 14px;
 }
 
 .preview-output p,

@@ -363,7 +363,7 @@ async function notifyBadgeRefresh(): Promise<void> {
 
 function renderMarkdown(markdown: string): DocumentFragment {
   const fragment = document.createDocumentFragment();
-  const lines = markdown.split(/\r?\n/);
+  const lines = stripFrontmatter(markdown).split(/\r?\n/);
   let paragraph: string[] = [];
   let list: HTMLUListElement | undefined;
   let codeBlock: string[] | undefined;
@@ -413,7 +413,7 @@ function renderMarkdown(markdown: string): DocumentFragment {
       continue;
     }
 
-    const heading = line.match(/^(#{1,3})\s+(.+)$/);
+    const heading = line.match(/^(#{1,6})\s+(.+)$/);
     if (heading) {
       flushParagraph();
       flushList();
@@ -456,6 +456,19 @@ function renderMarkdown(markdown: string): DocumentFragment {
   flushParagraph();
   flushList();
   return fragment;
+}
+
+function stripFrontmatter(markdown: string): string {
+  const lines = markdown.split(/\r?\n/);
+  if (lines[0]?.trim() !== "---") {
+    return markdown;
+  }
+
+  const endIndex = lines.slice(1).findIndex((line) => line.trim() === "---");
+  if (endIndex === -1) {
+    return markdown;
+  }
+  return lines.slice(endIndex + 2).join("\n").trimStart();
 }
 
 function appendInlineMarkdown(parent: HTMLElement, text: string): void {

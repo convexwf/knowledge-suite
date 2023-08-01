@@ -23,10 +23,12 @@ export async function parsePage(input: ResolvedInput): Promise<ParsedPage> {
   const docId = makeId();
   const fetchTime = nowIso();
   const { document } = parseHTML(input.html);
+  cleanDocumentForExtraction(document);
   const defuddleResult = runDefuddle(document, input);
   const title = input.title || defuddleResult?.title || readTitle(document) || input.normalizedUrl;
   const contentHtml = defuddleResult?.content;
   const contentDocument = contentHtml ? parseHTML(contentHtml).document : document;
+  cleanDocumentForExtraction(contentDocument);
   const bodyRoot = contentHtml ? contentDocument.body || contentDocument.documentElement : pickReadableRoot(document);
   const sections = extractSections(bodyRoot, title);
   const parserMethod = defuddleResult && isUsefulExtraction(defuddleResult)
@@ -142,6 +144,81 @@ function pickReadableRoot(document: Document): Element {
     document.body ||
     document.documentElement
   );
+}
+
+function cleanDocumentForExtraction(document: Document): void {
+  const selectors = [
+    "script",
+    "style",
+    "noscript",
+    "template",
+    "iframe",
+    "svg",
+    "canvas",
+    "form",
+    "input",
+    "button",
+    "select",
+    "textarea",
+    "nav",
+    "header",
+    "footer",
+    "aside",
+    "dialog",
+    "[role='navigation']",
+    "[role='banner']",
+    "[role='complementary']",
+    "[role='contentinfo']",
+    "[role='dialog']",
+    "[role='alertdialog']",
+    "[role='menu']",
+    "[aria-hidden='true']",
+    "[hidden]",
+    "[popover]",
+    ".modal",
+    ".overlay",
+    ".popup",
+    ".popover",
+    ".tooltip",
+    ".toast",
+    ".drawer",
+    ".sidebar",
+    ".navbar",
+    ".navigation",
+    ".menu",
+    ".cookie",
+    ".cookies",
+    ".consent",
+    ".banner",
+    ".ad",
+    ".ads",
+    ".advertisement",
+    ".share",
+    ".social",
+    ".subscribe",
+    ".newsletter",
+    "#modal",
+    "#overlay",
+    "#popup",
+    "#cookie",
+    "#cookies",
+    "#consent",
+    "#banner"
+  ];
+
+  document.querySelectorAll(selectors.join(",")).forEach((node) => node.remove());
+  document.querySelectorAll("*").forEach((node) => {
+    node.removeAttribute("style");
+    const className = node.getAttribute("class") ?? "";
+    const id = node.getAttribute("id") ?? "";
+    if (isLikelyNoise(`${className} ${id}`)) {
+      node.remove();
+    }
+  });
+}
+
+function isLikelyNoise(value: string): boolean {
+  return /\b(nav|navbar|navigation|menu|sidebar|modal|overlay|popup|popover|tooltip|toast|drawer|cookie|cookies|consent|banner|advert|advertisement|ads?|share|social|subscribe|newsletter|promo|recommend|related|breadcrumb|footer|header|floating|sticky|fixed)\b/i.test(value);
 }
 
 function extractSections(root: Element, title: string): KnowledgeDocument["sections"] {
