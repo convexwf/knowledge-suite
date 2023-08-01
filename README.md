@@ -91,6 +91,25 @@ Priority labels:
 - `P3`: Larger knowledge-base capability after the clipper loop is stable.
 - `P4`: Later automation, export, or ecosystem expansion.
 
+### Obsidian Clipper Parser Gaps
+
+This project intentionally started with a smaller parser surface than Obsidian Clipper. The table below tracks known gaps to close when improving extraction quality and Obsidian-style workflows.
+
+| Priority | Gap | Obsidian Clipper capability | Knowledge Suite status |
+| --- | --- | --- | --- |
+| P1 | Async Defuddle parsing | Uses `Defuddle.parseAsync()` with a timeout fallback to sync `parse()` for richer async variables. | Uses sync Defuddle parse only. |
+| P1 | Mature HTML-to-Markdown conversion | Uses `defuddle/full` `createMarkdownContent()` for a battle-tested Markdown conversion path. | Converts Defuddle output into `KnowledgeDocument.sections`, then renders Markdown with a local renderer. |
+| P1 | Shadow DOM flattening | Runs a main-world script that stamps shadow root HTML into attributes readable by the content script. | Not implemented; shadow DOM content may be missed. |
+| P1 | Relative URL normalization | Rewrites `src`, `href`, and `srcset` values to absolute URLs before downstream use. | Not implemented comprehensively. |
+| P1 | Extraction quality metadata | Exposes parse time, word count, site, favicon, image, schema.org data, meta tags, and Defuddle variables. | Stores a small subset in RawDoc metadata. |
+| P2 | Selector extraction | Supports `selector:` and `selectorHtml:` variables for targeted extraction. | Not implemented. |
+| P2 | Template and filter pipeline | Compiles note names, properties, frontmatter, note body templates, and many filters. | Not implemented; output format is fixed. |
+| P2 | Selection capture | Captures selected HTML and can use it in templates. | Schema has `selectionHtml`, but UI/parser flow does not use it. |
+| P2 | Highlighter integration | Stores and reuses page highlights, highlighter overlays, and highlight metadata. | Not implemented. |
+| P2 | Full HTML cleanup for templates | Removes scripts/styles, strips inline styles, and prepares a cleaned full HTML variant for template variables. | Parser now has first-pass noise cleanup, but no cleaned full-HTML template variable. |
+| P3 | Rich variable API | Builds reusable variables like `content`, `contentHtml`, `description`, `published`, `site`, `wordCount`, `schemaOrgData`, and selector-derived values. | No public variable API yet. |
+| P3 | Obsidian frontmatter generation | Generates frontmatter from typed template properties. | Only fixed frontmatter in generated Markdown. |
+
 ### Completed P0
 
 | Priority | Done | Notes |
