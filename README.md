@@ -59,6 +59,23 @@ docker compose logs -f knowledge-ingest-server
 
 The compose service listens on `127.0.0.1:18765` and persists server data in `./knowledge-store`.
 The store contains raw HTML, RawDoc metadata, Document JSON, Markdown, and a SQLite URL index at `knowledge-store/index.sqlite3`.
+Object files use UUID names:
+
+```text
+knowledge-store/
+├── index.sqlite3
+├── rawdocs/
+│   ├── {rawdoc_id}.html
+│   └── {rawdoc_id}.json
+├── documents/
+│   └── {doc_id}.json
+├── markdown/
+│   └── {doc_id}.md
+└── assets/
+```
+
+SQLite stores URL/title/parser mappings, not object paths. Paths are derived from `doc_id` and `rawdoc_id`.
+If the server detects the early MVP path-based schema, it deletes the old local store data and rebuilds the new schema instead of migrating old documents.
 
 Set a non-default token before starting the service:
 
@@ -78,6 +95,7 @@ KNOWLEDGE_FETCH_TIMEOUT_MS=15000 KNOWLEDGE_MAX_HTML_BYTES=10485760 docker compos
 - `server_fetch`: the local server fetches the URL when no HTML is provided.
 - `file://` pages are only supported through `browser_html`.
 - The server stores RawDoc metadata, Document JSON, Markdown, raw HTML, and URL status in a local `knowledge-store`.
+- Saved files are UUID-named. `clips` maps each normalized URL to the current `doc_id` / `rawdoc_id`; re-saving the same URL creates new objects and moves the URL mapping to the newest result.
 - The side panel includes a `Saved` view backed by `/api/clips` for recently saved pages.
 - The side panel renders Markdown as sanitized DOM, supports copying Markdown, deleting the current clip, and optional auto-refresh on tab changes.
 
@@ -121,6 +139,9 @@ This project intentionally started with a smaller parser surface than Obsidian C
 | P0 | Add path guard module and tests | Write/delete paths are resolved inside `knowledge-store`. |
 | P0 | Tighten CORS | CORS allows Chrome extension origins and localhost-style development origins. |
 | P0 | Add configurable auto-refresh | The side panel can auto-preview when the active tab changes or finishes loading. |
+| P0 | Switch store to UUID object paths | Raw HTML, RawDoc JSON, Document JSON, and Markdown paths are derived from `rawdoc_id` / `doc_id`; SQLite no longer stores object paths. |
+| P0 | Add current-result reparse semantics | Re-saving a URL upserts `clips.url_hash` to the newest `doc_id` / `rawdoc_id` and removes the previous object files. |
+| P0 | Reset legacy MVP store schema | Old path-based local stores are deleted and recreated instead of migrated. |
 
 ### MVP Completion
 

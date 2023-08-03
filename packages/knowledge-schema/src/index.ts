@@ -108,8 +108,12 @@ export interface ClipStatus {
   urlHash: string;
   saved: boolean;
   savedAt?: string;
+  updatedAt?: string;
   title?: string;
   docId?: string;
+  rawdocId?: string;
+  parserVersion?: string;
+  parserMethod?: string;
   markdownPath?: string;
   documentPath?: string;
 }
@@ -142,8 +146,12 @@ export interface ClipListItem {
   normalizedUrl: string;
   urlHash: string;
   savedAt: string;
+  updatedAt?: string;
   title?: string;
   docId?: string;
+  rawdocId?: string;
+  parserVersion?: string;
+  parserMethod?: string;
   markdownPath?: string;
   documentPath?: string;
 }
