@@ -3,6 +3,7 @@ services:
     build:
       context: .
       dockerfile: apps/knowledge-ingest-server/Dockerfile
+      target: runtime
     image: knowledge-ingest-server:local
     container_name: knowledge-ingest-server
     restart: unless-stopped

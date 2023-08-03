@@ -30,12 +30,52 @@ export interface ActiveTabInfo {
 }
 
 export interface PreviewResult {
+  rawdoc: RawDoc;
   markdown: string;
-  document: unknown;
+  document: KnowledgeDocument;
   status: {
     saved: boolean;
     title?: string;
   };
+}
+
+export interface RawDoc {
+  rawdoc_id: string;
+  source_type: string;
+  source_uri: string;
+  fetch_time: string;
+  storage_path: string;
+  content_type?: string;
+  content_length?: number;
+  metadata?: {
+    inputMode?: InputMode;
+    normalizedUrl?: string;
+    title?: string;
+    parserMethod?: string;
+    defuddle?: Record<string, unknown>;
+    meta?: Record<string, string>;
+    [key: string]: unknown;
+  };
+}
+
+export interface KnowledgeDocument {
+  doc_id: string;
+  meta: {
+    title: string;
+    source?: Record<string, unknown>;
+    authors?: string[];
+    published_at?: string | null;
+    ingested_at?: string;
+    language?: string;
+    tags?: string[];
+    parser_version?: string;
+  };
+  sections: Array<{
+    type: string;
+    content?: string;
+    items?: unknown[];
+    [key: string]: unknown;
+  }>;
 }
 
 export interface ClipListItem {

@@ -12,6 +12,8 @@ import {
 
 const previewOutput = mustGet<HTMLElement>("preview-output");
 const codeOutput = mustGet<HTMLPreElement>("code-output");
+const rawdocOutput = mustGet<HTMLPreElement>("rawdoc-output");
+const parserOutput = mustGet<HTMLDivElement>("parser-output");
 const statusPill = mustGet<HTMLElement>("status-pill");
 const pageUrlEl = mustGet<HTMLElement>("page-url");
 const serverUrlInput = mustGet<HTMLInputElement>("server-url");
@@ -25,6 +27,8 @@ const modeBrowserButton = mustGet<HTMLButtonElement>("mode-browser");
 const modeFetchButton = mustGet<HTMLButtonElement>("mode-fetch");
 const tabPreviewButton = mustGet<HTMLButtonElement>("tab-preview");
 const tabJsonButton = mustGet<HTMLButtonElement>("tab-json");
+const tabRawdocButton = mustGet<HTMLButtonElement>("tab-rawdoc");
+const tabParserButton = mustGet<HTMLButtonElement>("tab-parser");
 const tabSavedButton = mustGet<HTMLButtonElement>("tab-saved");
 const savedList = mustGet<HTMLDivElement>("saved-list");
 
@@ -32,7 +36,9 @@ let settings: ExtensionSettings = await getSettings();
 let activeTab: ActiveTabInfo | undefined;
 let lastPreview: PreviewResult | undefined;
 let savedClips: ClipListItem[] = [];
-let activeView: "preview" | "json" | "saved" = "preview";
+type PanelView = "preview" | "json" | "rawdoc" | "parser" | "saved";
+
+let activeView: PanelView = "preview";
 let autoRefreshTimer: number | undefined;
 
 serverUrlInput.value = settings.serverUrl;
@@ -50,6 +56,8 @@ modeBrowserButton.addEventListener("click", () => setMode("browser_html"));
 modeFetchButton.addEventListener("click", () => setMode("server_fetch"));
 tabPreviewButton.addEventListener("click", () => setView("preview"));
 tabJsonButton.addEventListener("click", () => setView("json"));
+tabRawdocButton.addEventListener("click", () => setView("rawdoc"));
+tabParserButton.addEventListener("click", () => setView("parser"));
 tabSavedButton.addEventListener("click", () => setView("saved"));
 serverUrlInput.addEventListener("change", () => persistSettings());
 serverTokenInput.addEventListener("change", () => persistSettings());
@@ -209,6 +217,8 @@ function isMissingContentScriptError(error: unknown): boolean {
 function renderOutput(): void {
   previewOutput.hidden = activeView !== "preview";
   codeOutput.hidden = activeView !== "json";
+  rawdocOutput.hidden = activeView !== "rawdoc";
+  parserOutput.hidden = activeView !== "parser";
   savedList.hidden = activeView !== "saved";
   if (activeView === "saved") {
     renderSavedList();
@@ -218,10 +228,14 @@ function renderOutput(): void {
   if (!lastPreview) {
     previewOutput.replaceChildren();
     codeOutput.textContent = "";
+    rawdocOutput.textContent = "";
+    parserOutput.replaceChildren();
     return;
   }
   previewOutput.replaceChildren(renderMarkdown(lastPreview.markdown));
   codeOutput.textContent = JSON.stringify(lastPreview.document, null, 2);
+  rawdocOutput.textContent = JSON.stringify(lastPreview.rawdoc, null, 2);
+  parserOutput.replaceChildren(renderParserDiagnostics(lastPreview));
 }
 
 function setMode(mode: InputMode): void {
@@ -232,10 +246,12 @@ function setMode(mode: InputMode): void {
   scheduleAutoRefresh();
 }
 
-function setView(view: "preview" | "json" | "saved"): void {
+function setView(view: PanelView): void {
   activeView = view;
   tabPreviewButton.dataset.active = String(view === "preview");
   tabJsonButton.dataset.active = String(view === "json");
+  tabRawdocButton.dataset.active = String(view === "rawdoc");
+  tabParserButton.dataset.active = String(view === "parser");
   tabSavedButton.dataset.active = String(view === "saved");
   renderOutput();
   if (view === "saved") {
@@ -330,15 +346,136 @@ function setStatus(text: string): void {
 function renderError(error: unknown): void {
   previewOutput.hidden = false;
   codeOutput.hidden = true;
+  rawdocOutput.hidden = true;
+  parserOutput.hidden = true;
   savedList.hidden = true;
   activeView = "preview";
   tabPreviewButton.dataset.active = "true";
   tabJsonButton.dataset.active = "false";
+  tabRawdocButton.dataset.active = "false";
+  tabParserButton.dataset.active = "false";
   tabSavedButton.dataset.active = "false";
   const message = error instanceof Error ? error.message : String(error);
   const pre = document.createElement("pre");
   pre.textContent = message;
   previewOutput.replaceChildren(pre);
+}
+
+function renderParserDiagnostics(preview: PreviewResult): DocumentFragment {
+  const fragment = document.createDocumentFragment();
+  const metadata = preview.rawdoc.metadata ?? {};
+  const defuddle = metadata.defuddle ?? {};
+  const warnings = collectParserWarnings(preview);
+
+  fragment.append(
+    makeParserGroup("Extraction", [
+      ["parser_version", preview.document.meta.parser_version],
+      ["parser_method", metadata.parserMethod],
+      ["input_mode", metadata.inputMode],
+      ["source_type", preview.rawdoc.source_type],
+      ["source_uri", preview.rawdoc.source_uri],
+      ["normalized_url", metadata.normalizedUrl],
+      ["fetch_time", preview.rawdoc.fetch_time],
+      ["content_length", preview.rawdoc.content_length]
+    ])
+  );
+
+  fragment.append(
+    makeParserGroup("Document", [
+      ["doc_id", preview.document.doc_id],
+      ["title", preview.document.meta.title],
+      ["authors", preview.document.meta.authors?.join(", ")],
+      ["published_at", preview.document.meta.published_at],
+      ["language", preview.document.meta.language],
+      ["section_count", preview.document.sections.length],
+      ["markdown_chars", preview.markdown.length],
+      ["saved", preview.status.saved]
+    ])
+  );
+
+  fragment.append(
+    makeParserGroup("Defuddle", Object.entries(defuddle).map(([key, value]) => [key, value]))
+  );
+
+  if (warnings.length > 0) {
+    const group = makeParserGroup("Warnings", []);
+    for (const warning of warnings) {
+      const row = document.createElement("div");
+      row.className = "parser-warning";
+      row.textContent = warning;
+      group.append(row);
+    }
+    fragment.append(group);
+  }
+
+  return fragment;
+}
+
+function collectParserWarnings(preview: PreviewResult): string[] {
+  const warnings: string[] = [];
+  const metadata = preview.rawdoc.metadata ?? {};
+
+  if (metadata.parserMethod === "dom_fallback") {
+    warnings.push("Defuddle did not produce enough content; DOM fallback was used.");
+  }
+  if (preview.document.sections.length <= 1) {
+    warnings.push("Only one content section was extracted.");
+  }
+  if (preview.markdown.trim().length < 300) {
+    warnings.push("Markdown output is short; check whether the page needs a site adapter or selector extraction.");
+  }
+  if (!preview.document.meta.title || preview.document.meta.title === metadata.normalizedUrl) {
+    warnings.push("The parser could not find a strong title.");
+  }
+
+  return warnings;
+}
+
+function makeParserGroup(title: string, rows: Array<[string, unknown]>): HTMLElement {
+  const group = document.createElement("section");
+  group.className = "parser-group";
+
+  const heading = document.createElement("div");
+  heading.className = "parser-heading";
+  heading.textContent = title;
+  group.append(heading);
+
+  const visibleRows = rows.filter(([, value]) => value !== undefined && value !== null && value !== "");
+  if (visibleRows.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "parser-value";
+    empty.textContent = "No data";
+    group.append(empty);
+    return group;
+  }
+
+  for (const [key, value] of visibleRows) {
+    const row = document.createElement("div");
+    row.className = "parser-row";
+
+    const keyEl = document.createElement("div");
+    keyEl.className = "parser-key";
+    keyEl.textContent = key;
+
+    const valueEl = document.createElement("div");
+    valueEl.className = "parser-value";
+    valueEl.textContent = formatDiagnosticValue(value);
+
+    row.append(keyEl, valueEl);
+    group.append(row);
+  }
+
+  return group;
+}
+
+function formatDiagnosticValue(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  return JSON.stringify(value);
 }
 
 function scheduleAutoRefresh(): void {
@@ -367,6 +504,7 @@ function renderMarkdown(markdown: string): DocumentFragment {
   let paragraph: string[] = [];
   let list: HTMLUListElement | undefined;
   let codeBlock: string[] | undefined;
+  let tableRows: string[][] = [];
 
   const flushParagraph = () => {
     if (paragraph.length === 0) {
@@ -385,6 +523,17 @@ function renderMarkdown(markdown: string): DocumentFragment {
     }
   };
 
+  const flushTable = () => {
+    if (tableRows.length === 0) {
+      return;
+    }
+    const table = tableRowsToElement(tableRows);
+    if (table) {
+      fragment.append(table);
+    }
+    tableRows = [];
+  };
+
   for (const line of lines) {
     if (line.startsWith("```")) {
       if (codeBlock) {
@@ -397,6 +546,7 @@ function renderMarkdown(markdown: string): DocumentFragment {
       } else {
         flushParagraph();
         flushList();
+        flushTable();
         codeBlock = [];
       }
       continue;
@@ -410,8 +560,18 @@ function renderMarkdown(markdown: string): DocumentFragment {
     if (!line.trim()) {
       flushParagraph();
       flushList();
+      flushTable();
       continue;
     }
+
+    const tableRow = parseMarkdownTableRow(line);
+    if (tableRow) {
+      flushParagraph();
+      flushList();
+      tableRows.push(tableRow);
+      continue;
+    }
+    flushTable();
 
     const heading = line.match(/^(#{1,6})\s+(.+)$/);
     if (heading) {
@@ -455,6 +615,7 @@ function renderMarkdown(markdown: string): DocumentFragment {
   }
   flushParagraph();
   flushList();
+  flushTable();
   return fragment;
 }
 
@@ -472,15 +633,101 @@ function stripFrontmatter(markdown: string): string {
 }
 
 function appendInlineMarkdown(parent: HTMLElement, text: string): void {
-  const parts = text.split(/(`[^`]+`)/g);
+  const parts = text.split(/(!?\[[^\]]*]\([^)]+\)|`[^`]+`)/g);
   for (const part of parts) {
     if (part.startsWith("`") && part.endsWith("`") && part.length > 1) {
       const code = document.createElement("code");
       code.textContent = part.slice(1, -1);
       parent.append(code);
+    } else if (part.startsWith("![")) {
+      const image = part.match(/^!\[([^\]]*)]\(([^)]+)\)$/);
+      if (image && isSafeMarkdownUrl(image[2], "image")) {
+        const img = document.createElement("img");
+        img.alt = image[1];
+        img.src = image[2];
+        img.loading = "lazy";
+        img.referrerPolicy = "no-referrer";
+        parent.append(img);
+      } else if (part) {
+        parent.append(document.createTextNode(part));
+      }
+    } else if (part.startsWith("[")) {
+      const link = part.match(/^\[([^\]]+)]\(([^)]+)\)$/);
+      if (link && isSafeMarkdownUrl(link[2], "link")) {
+        const a = document.createElement("a");
+        a.href = link[2];
+        a.textContent = link[1];
+        a.target = "_blank";
+        a.rel = "noreferrer";
+        parent.append(a);
+      } else if (part) {
+        parent.append(document.createTextNode(part));
+      }
     } else if (part) {
       parent.append(document.createTextNode(part));
     }
+  }
+}
+
+function parseMarkdownTableRow(line: string): string[] | undefined {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith("|") || !trimmed.endsWith("|")) {
+    return undefined;
+  }
+  return trimmed
+    .slice(1, -1)
+    .split(/(?<!\\)\|/)
+    .map((cell) => cell.trim().replace(/\\\|/g, "|"));
+}
+
+function tableRowsToElement(rows: string[][]): HTMLTableElement | undefined {
+  const dataRows = rows.filter((row) => !isMarkdownTableSeparator(row));
+  if (dataRows.length === 0) {
+    return undefined;
+  }
+
+  const table = document.createElement("table");
+  const [header, ...body] = dataRows;
+  const thead = document.createElement("thead");
+  const headerRow = document.createElement("tr");
+  for (const cell of header) {
+    const th = document.createElement("th");
+    appendInlineMarkdown(th, cell);
+    headerRow.append(th);
+  }
+  thead.append(headerRow);
+  table.append(thead);
+
+  if (body.length > 0) {
+    const tbody = document.createElement("tbody");
+    for (const row of body) {
+      const tr = document.createElement("tr");
+      for (const cell of row) {
+        const td = document.createElement("td");
+        appendInlineMarkdown(td, cell);
+        tr.append(td);
+      }
+      tbody.append(tr);
+    }
+    table.append(tbody);
+  }
+
+  return table;
+}
+
+function isMarkdownTableSeparator(row: string[]): boolean {
+  return row.every((cell) => /^:?-{3,}:?$/.test(cell));
+}
+
+function isSafeMarkdownUrl(value: string, kind: "image" | "link"): boolean {
+  try {
+    const url = new URL(value);
+    if (kind === "image") {
+      return ["http:", "https:", "data:"].includes(url.protocol);
+    }
+    return ["http:", "https:", "file:", "mailto:"].includes(url.protocol);
+  } catch {
+    return false;
   }
 }
 

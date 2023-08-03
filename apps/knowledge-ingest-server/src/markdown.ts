@@ -31,12 +31,69 @@ function sectionToMarkdown(section: DocumentSection): string[] {
     case "code":
       return ["```", section.content ?? "", "```", ""];
     case "figure":
-      return [section.content ?? "", ""];
+      return figureToMarkdown(section);
     case "table":
-      return [section.content ?? "", ""];
+      return tableToMarkdown(section);
     default:
       return [];
   }
+}
+
+function figureToMarkdown(section: DocumentSection): string[] {
+  const lines: string[] = [];
+  for (const asset of section.assets ?? []) {
+    const src = asset.path || asset.source_url;
+    if (src) {
+      lines.push(`![${escapeMarkdownLinkText(asset.alt || asset.caption || "")}](${src})`);
+    }
+  }
+  if (section.content) {
+    lines.push(section.content);
+  }
+  return [...lines, ""];
+}
+
+function tableToMarkdown(section: DocumentSection): string[] {
+  const rows = normalizeTableRows(section.rows);
+  if (rows.length === 0) {
+    return [section.content ?? "", ""].filter(Boolean);
+  }
+
+  const width = Math.max(...rows.map((row) => row.length));
+  const normalized = rows.map((row) => padRow(row, width));
+  const [header, ...body] = normalized;
+  const separator = Array.from({ length: width }, () => "---");
+  return [
+    markdownTableRow(header),
+    markdownTableRow(separator),
+    ...body.map(markdownTableRow),
+    ""
+  ];
+}
+
+function normalizeTableRows(rows: unknown[] | undefined): string[][] {
+  if (!rows) {
+    return [];
+  }
+  return rows
+    .filter((row): row is unknown[] => Array.isArray(row))
+    .map((row) => row.map((cell) => String(cell ?? "")));
+}
+
+function padRow(row: string[], width: number): string[] {
+  return [...row, ...Array.from({ length: width - row.length }, () => "")];
+}
+
+function markdownTableRow(row: string[]): string {
+  return `| ${row.map(escapeMarkdownTableCell).join(" | ")} |`;
+}
+
+function escapeMarkdownTableCell(value: string): string {
+  return value.replace(/\|/g, "\\|").replace(/\r?\n/g, "<br>");
+}
+
+function escapeMarkdownLinkText(value: string): string {
+  return value.replace(/[[\]]/g, "\\$&");
 }
 
 function yamlString(value: string): string {

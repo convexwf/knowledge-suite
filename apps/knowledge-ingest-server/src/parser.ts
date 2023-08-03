@@ -26,14 +26,11 @@ export async function parsePage(input: ResolvedInput): Promise<ParsedPage> {
   cleanDocumentForExtraction(document);
   const defuddleResult = runDefuddle(document, input);
   const title = input.title || defuddleResult?.title || readTitle(document) || input.normalizedUrl;
-  const contentHtml = defuddleResult?.content;
-  const contentDocument = contentHtml ? parseHTML(contentHtml).document : document;
-  cleanDocumentForExtraction(contentDocument);
-  const bodyRoot = contentHtml ? contentDocument.body || contentDocument.documentElement : pickReadableRoot(document);
-  const sections = extractSections(bodyRoot, title);
-  const parserMethod = defuddleResult && isUsefulExtraction(defuddleResult)
-    ? "defuddle"
-    : "dom_fallback";
+  const fallbackSections = extractSections(pickReadableRoot(document), title);
+  const defuddleSections = defuddleResult ? extractDefuddleSections(defuddleResult.content, title) : [];
+  const useDefuddleSections = shouldUseDefuddleSections(defuddleResult, defuddleSections, fallbackSections);
+  const sections = useDefuddleSections ? defuddleSections : fallbackSections;
+  const parserMethod = useDefuddleSections ? "defuddle" : "dom_fallback";
 
   const rawdoc: RawDoc = {
     rawdoc_id: rawdocId,
@@ -86,8 +83,7 @@ export async function parsePage(input: ResolvedInput): Promise<ParsedPage> {
 
 function runDefuddle(document: Document, input: ResolvedInput): DefuddleResponse | undefined {
   try {
-    const root = document.documentElement || document;
-    const defuddle = new DefuddleClass(root as unknown as Document, {
+    const defuddle = new DefuddleClass(document, {
       url: input.url,
       language: input.meta.language,
       useAsync: false
@@ -101,6 +97,36 @@ function runDefuddle(document: Document, input: ResolvedInput): DefuddleResponse
 
 function isUsefulExtraction(result: DefuddleResponse): boolean {
   return normalizeText(result.content).length >= 80 || (result.wordCount ?? 0) >= 20;
+}
+
+function extractDefuddleSections(contentHtml: string, title: string): KnowledgeDocument["sections"] {
+  const contentDocument = parseHTML(contentHtml).document;
+  cleanDocumentForExtraction(contentDocument);
+  const bodyRoot = pickParsedContentRoot(contentDocument);
+  return bodyRoot ? extractSections(bodyRoot, title) : [];
+}
+
+function pickParsedContentRoot(document: Document): Element | undefined {
+  if (document.body && normalizeText(document.body.textContent ?? "")) {
+    return document.body;
+  }
+  return document.documentElement || document.body || undefined;
+}
+
+function shouldUseDefuddleSections(
+  defuddleResult: DefuddleResponse | undefined,
+  defuddleSections: KnowledgeDocument["sections"],
+  fallbackSections: KnowledgeDocument["sections"]
+): boolean {
+  if (!defuddleResult || !isUsefulExtraction(defuddleResult) || defuddleSections.length === 0) {
+    return false;
+  }
+
+  if (defuddleSections.length <= 1 && fallbackSections.length > defuddleSections.length) {
+    return false;
+  }
+
+  return true;
 }
 
 function readTitle(document: Document): string | undefined {
@@ -226,7 +252,8 @@ function extractSections(root: Element, title: string): KnowledgeDocument["secti
   for (const node of nodes) {
     const tagName = node.tagName.toLowerCase();
     const text = normalizeText(node.textContent ?? "");
-    if (!text || text === title) {
+    const hasMedia = Boolean(node.querySelector("img"));
+    if ((!text && !hasMedia && tagName !== "table") || (text === title && !hasMedia)) {
       continue;
     }
 
@@ -235,14 +262,14 @@ function extractSections(root: Element, title: string): KnowledgeDocument["secti
         section_id: makeId(),
         type: "heading",
         level: Number(tagName.slice(1)),
-        content: text
+        content: inlineToMarkdown(node)
       });
       continue;
     }
 
     if (tagName === "ul" || tagName === "ol") {
       const items = [...node.querySelectorAll(":scope > li")]
-        .map((li) => normalizeText(li.textContent ?? ""))
+        .map((li) => inlineToMarkdown(li))
         .filter(Boolean);
       if (items.length > 0) {
         sections.push({ section_id: makeId(), type: "list", items });
@@ -255,14 +282,110 @@ function extractSections(root: Element, title: string): KnowledgeDocument["secti
       continue;
     }
 
+    if (tagName === "figure") {
+      const assets = [...node.querySelectorAll("img")]
+        .map((img) => ({
+          asset_id: makeId(),
+          source_url: img.getAttribute("src") || undefined,
+          alt: normalizeText(img.getAttribute("alt") ?? "") || undefined,
+          caption: normalizeText(
+            node.querySelector("figcaption")?.textContent ??
+            img.getAttribute("alt") ??
+            ""
+          ) || null
+        }))
+        .filter((asset) => asset.source_url);
+      const caption = normalizeText(node.querySelector("figcaption")?.textContent ?? "");
+      sections.push({
+        section_id: makeId(),
+        type: "figure",
+        content: caption,
+        assets
+      });
+      continue;
+    }
+
+    if (tagName === "table") {
+      const rows = [...node.querySelectorAll("tr")]
+        .map((row) => [...row.querySelectorAll("th,td")].map((cell) => inlineToMarkdown(cell)))
+        .filter((row) => row.length > 0);
+      if (rows.length > 0) {
+        sections.push({ section_id: makeId(), type: "table", rows });
+      }
+      continue;
+    }
+
     sections.push({
       section_id: makeId(),
-      type: tagName === "figure" ? "figure" : tagName === "table" ? "table" : "paragraph",
-      content: text
+      type: "paragraph",
+      content: inlineToMarkdown(node)
     });
   }
 
   return dedupeAdjacent(sections);
+}
+
+function inlineToMarkdown(node: Element): string {
+  return normalizeMarkdown(renderInlineChildren(node));
+}
+
+function renderInlineChildren(node: Element): string {
+  return [...node.childNodes].map(renderInlineNode).join("");
+}
+
+function renderInlineNode(node: ChildNode): string {
+  if (node.nodeType === 3) {
+    return node.textContent ?? "";
+  }
+
+  if (node.nodeType !== 1) {
+    return "";
+  }
+
+  const element = node as Element;
+  const tagName = element.tagName.toLowerCase();
+  const content = renderInlineChildren(element);
+
+  if (tagName === "a") {
+    const href = element.getAttribute("href");
+    const label = normalizeMarkdown(content || href || "");
+    return href && label ? `[${escapeMarkdownLinkText(label)}](${href})` : label;
+  }
+
+  if (tagName === "img") {
+    const src = element.getAttribute("src");
+    const alt = normalizeMarkdown(element.getAttribute("alt") ?? "");
+    return src ? `![${escapeMarkdownLinkText(alt)}](${src})` : alt;
+  }
+
+  if (tagName === "code") {
+    return `\`${content.replace(/`/g, "\\`")}\``;
+  }
+
+  if (tagName === "strong" || tagName === "b") {
+    return content ? `**${content}**` : "";
+  }
+
+  if (tagName === "em" || tagName === "i") {
+    return content ? `_${content}_` : "";
+  }
+
+  if (tagName === "br") {
+    return "\n";
+  }
+
+  return content;
+}
+
+function normalizeMarkdown(value: string): string {
+  return value
+    .replace(/[ \t]*\n[ \t]*/g, "\n")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+}
+
+function escapeMarkdownLinkText(value: string): string {
+  return value.replace(/[[\]]/g, "\\$&");
 }
 
 function dedupeAdjacent(sections: KnowledgeDocument["sections"]): KnowledgeDocument["sections"] {

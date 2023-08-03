@@ -70,6 +70,8 @@ export interface DocumentSection {
   assets?: Array<{
     asset_id?: string;
     path?: string;
+    source_url?: string;
+    alt?: string;
     caption?: string | null;
   }>;
   annotations?: Record<string, unknown>;

@@ -76,6 +76,11 @@ knowledge-store/
 
 SQLite stores URL/title/parser mappings, not object paths. Paths are derived from `doc_id` and `rawdoc_id`.
 If the server detects the early MVP path-based schema, it deletes the old local store data and rebuilds the new schema instead of migrating old documents.
+The compose file builds the `runtime` Dockerfile target explicitly. After changing server or schema code, restart with `--build` so the running container does not keep an older compiled parser:
+
+```bash
+docker compose up -d --build knowledge-ingest-server
+```
 
 Set a non-default token before starting the service:
 
@@ -98,6 +103,7 @@ KNOWLEDGE_FETCH_TIMEOUT_MS=15000 KNOWLEDGE_MAX_HTML_BYTES=10485760 docker compos
 - Saved files are UUID-named. `clips` maps each normalized URL to the current `doc_id` / `rawdoc_id`; re-saving the same URL creates new objects and moves the URL mapping to the newest result.
 - The side panel includes a `Saved` view backed by `/api/clips` for recently saved pages.
 - The side panel renders Markdown as sanitized DOM, supports copying Markdown, deleting the current clip, and optional auto-refresh on tab changes.
+- Markdown output preserves inline links, inline images, figure images/captions, and basic HTML tables.
 
 ## Roadmap And TODO
 
@@ -142,13 +148,13 @@ This project intentionally started with a smaller parser surface than Obsidian C
 | P0 | Switch store to UUID object paths | Raw HTML, RawDoc JSON, Document JSON, and Markdown paths are derived from `rawdoc_id` / `doc_id`; SQLite no longer stores object paths. |
 | P0 | Add current-result reparse semantics | Re-saving a URL upserts `clips.url_hash` to the newest `doc_id` / `rawdoc_id` and removes the previous object files. |
 | P0 | Reset legacy MVP store schema | Old path-based local stores are deleted and recreated instead of migrated. |
+| P1 | Add `RawDoc Meta` tab | The side panel now exposes the RawDoc returned by preview/save for parser and storage debugging. |
+| P1 | Add parser logs tab | The side panel now summarizes parser method, parser version, source details, section count, Defuddle metadata, and extraction warnings. |
 
 ### MVP Completion
 
 | Priority | TODO | Notes |
 | --- | --- | --- |
-| P1 | Add `RawDoc Meta` tab | RawDoc is saved but not visible in the extension UI. |
-| P1 | Add parser logs tab | Show warnings, parser version, elapsed time, and extraction mode. |
 | P1 | Improve local server offline UX | Show startup command, configured port, and token/config guidance when server is unavailable. |
 | P1 | Complete badge states | Add transient `...` for conversion and `ERR` for failed conversion/status checks. |
 | P1 | Add badge E2E assertion | Verify reload/re-enter saved URL shows `OK`. |

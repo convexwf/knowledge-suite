@@ -96,6 +96,7 @@ describe("knowledge ingest server", () => {
     });
     expect(preview.statusCode).toBe(200);
     expect(preview.json().markdown).toContain("Hello knowledge suite.");
+    expect(preview.json().rawdoc.metadata.defuddle.wordCount).toBeGreaterThan(0);
     expect(preview.json().status.saved).toBe(false);
 
     const save = await app.inject({
@@ -153,6 +154,106 @@ describe("knowledge ingest server", () => {
     });
     expect(deletedStatus.statusCode).toBe(200);
     expect(deletedStatus.json().saved).toBe(false);
+
+    await app.close();
+  });
+
+  it("extracts Defuddle metadata for body-only article pages without semantic article wrappers", async () => {
+    const app = await buildServer({
+      host: "127.0.0.1",
+      port: 0,
+      token: "test-token",
+      storeRoot,
+      fetchTimeoutMs: 1000,
+      maxHtmlBytes: 1024 * 1024
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/clip/preview",
+      headers: { authorization: "Bearer test-token" },
+      payload: {
+        inputMode: "browser_html",
+        snapshot: {
+          pageUrl: "https://example.com/body-only",
+          title: "Body Only Article",
+          html: `<!doctype html>
+            <html>
+              <head><title>Body Only Article</title></head>
+              <body>
+                <div class="container">
+                  <h1>Body Only Article</h1>
+                  <div class="main-content">
+                    <p>First paragraph with enough prose to look like a real article sentence for extraction.</p>
+                    <p>Second paragraph with enough prose to confirm Defuddle is reading the full document body.</p>
+                    <p>Third paragraph with enough prose to keep the extracted content above the usefulness threshold.</p>
+                  </div>
+                </div>
+              </body>
+            </html>`,
+          capturedAt: "2026-05-11T02:00:00.000Z",
+          meta: {}
+        }
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().rawdoc.metadata.defuddle.wordCount).toBeGreaterThan(20);
+    expect(response.json().markdown).toContain("Second paragraph");
+
+    await app.close();
+  });
+
+  it("renders links, images, and tables into Markdown", async () => {
+    const app = await buildServer({
+      host: "127.0.0.1",
+      port: 0,
+      token: "test-token",
+      storeRoot,
+      fetchTimeoutMs: 1000,
+      maxHtmlBytes: 1024 * 1024
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/clip/preview",
+      headers: { authorization: "Bearer test-token" },
+      payload: {
+        inputMode: "browser_html",
+        snapshot: {
+          pageUrl: "https://example.com/rich-markdown",
+          title: "Rich Markdown Article",
+          html: `<!doctype html>
+            <html>
+              <head><title>Rich Markdown Article</title></head>
+              <body>
+                <article>
+                  <h1>Rich Markdown Article</h1>
+                  <p>Read the <a href="https://example.com/source">source article</a> and inspect the inline <img src="https://example.com/chart.png" alt="progress chart">.</p>
+                  <figure>
+                    <img src="https://example.com/photo.jpg" alt="Body composition photo">
+                    <figcaption>Body composition trend.</figcaption>
+                  </figure>
+                  <table>
+                    <tr><th>Metric</th><th>Value</th></tr>
+                    <tr><td>Body fat</td><td>8%</td></tr>
+                    <tr><td>Period</td><td>4 months</td></tr>
+                  </table>
+                </article>
+              </body>
+            </html>`,
+          capturedAt: "2026-05-11T02:00:00.000Z",
+          meta: {}
+        }
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().markdown).toContain("[source article](https://example.com/source)");
+    expect(response.json().markdown).toContain("![progress chart](https://example.com/chart.png)");
+    expect(response.json().markdown).toContain("![Body composition photo](https://example.com/photo.jpg)");
+    expect(response.json().markdown).toContain("| Metric | Value |");
+    expect(response.json().markdown).toContain("| Body fat | 8% |");
 
     await app.close();
   });

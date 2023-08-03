@@ -23,7 +23,12 @@ const html = (title, paragraph) => `<!doctype html>
   <body>
     <article>
       <h1>${title}</h1>
-      <p>${paragraph}</p>
+      <p>${paragraph} Read the <a href="http://127.0.0.1:${pagePort}/source">source article</a>.</p>
+      <p><img src="http://127.0.0.1:${pagePort}/chart.png" alt="progress chart"></p>
+      <table>
+        <tr><th>Metric</th><th>Value</th></tr>
+        <tr><td>Body fat</td><td>8%</td></tr>
+      </table>
       <ul><li>Content script collection</li><li>Local ingest server preview</li></ul>
     </article>
   </body>
@@ -119,6 +124,9 @@ try {
   await sidePanel.evaluate(() => document.querySelector("#refresh-button")?.click());
   await expectOutput(sidePanel, "Knowledge extension E2E page");
   await expectOutput(sidePanel, "Content script collection");
+  await sidePanel.locator('#preview-output a[href^="http://127.0.0.1:"]').filter({ hasText: "source article" }).waitFor({ timeout: 10000 });
+  await sidePanel.locator('#preview-output img[alt="progress chart"]').waitFor({ timeout: 10000 });
+  await sidePanel.locator("#preview-output table").filter({ hasText: "Body fat" }).waitFor({ timeout: 10000 });
 
   await sidePanel.evaluate(() => document.querySelector("#save-button")?.click());
   await sidePanel.locator("#status-pill").filter({ hasText: "Saved" }).waitFor({ timeout: 10000 });

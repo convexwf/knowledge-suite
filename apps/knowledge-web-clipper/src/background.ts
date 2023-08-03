@@ -5,13 +5,13 @@ chrome.runtime.onInstalled.addListener(async () => {
   await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
 });
 
-chrome.tabs.onActivated.addListener(async ({ tabId }) => {
-  await refreshBadge(tabId);
+chrome.tabs.onActivated.addListener(({ tabId }) => {
+  void refreshBadge(tabId);
 });
 
-chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   if (changeInfo.status === "complete" || changeInfo.url) {
-    await refreshBadge(tabId);
+    void refreshBadge(tabId);
   }
 });
 
@@ -21,7 +21,7 @@ chrome.runtime.onMessage.addListener((message: unknown) => {
   }
 });
 
-async function refreshBadge(tabId: number): Promise<void> {
+export async function refreshBadge(tabId: number): Promise<void> {
   try {
     const tab = await chrome.tabs.get(tabId);
     const url = tab.url;
@@ -33,8 +33,15 @@ async function refreshBadge(tabId: number): Promise<void> {
     const settings = await getSettings();
     const status = await createKnowledgeApiClient(settings).status(url);
     await setBadge(tabId, status.saved ? "OK" : "", status.saved ? "#1f7a4d" : "#808995");
-  } catch {
-    await setBadge(tabId, "OFF", "#808995");
+  } catch (error) {
+    if (isMissingTabError(error)) {
+      return;
+    }
+    await setBadge(tabId, "OFF", "#808995").catch((badgeError) => {
+      if (!isMissingTabError(badgeError)) {
+        console.warn("Failed to update Knowledge Web Clipper badge", badgeError);
+      }
+    });
   }
 }
 
@@ -50,4 +57,9 @@ function isRefreshBadgeMessage(message: unknown): message is { type: "knowledge.
     (message as { type?: unknown }).type === "knowledge.refreshBadge" &&
     typeof (message as { tabId?: unknown }).tabId === "number"
   );
+}
+
+export function isMissingTabError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("No tab with id") || message.includes("Tabs cannot be edited right now");
 }
