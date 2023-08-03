@@ -1,5 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
-import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -30,6 +30,10 @@ describe("KnowledgeStore", () => {
       markdownPath: "markdown/11111111-1111-4111-8111-111111111111.md"
     });
     await expect(access(join(storeRoot, firstPaths.documentPath))).resolves.toBeUndefined();
+    const rawdocJson = JSON.parse(await readFile(join(storeRoot, firstPaths.rawdocPath), "utf8"));
+    const documentJson = JSON.parse(await readFile(join(storeRoot, firstPaths.documentPath), "utf8"));
+    expect(rawdocJson).not.toHaveProperty("storage_path");
+    expect(documentJson.meta.source).not.toHaveProperty("path");
 
     const secondPaths = await store.save(second);
     await expect(access(join(storeRoot, firstPaths.documentPath))).rejects.toThrow();
@@ -106,7 +110,6 @@ function fixture(docId: string, rawdocId: string, title: string): {
       source_type: "url",
       source_uri: normalizedUrl,
       fetch_time: "2026-05-12T00:00:00.000Z",
-      storage_path: `rawdocs/${rawdocId}.html`,
       content_type: "text/html",
       content_length: Buffer.byteLength(html),
       metadata: {
@@ -120,7 +123,6 @@ function fixture(docId: string, rawdocId: string, title: string): {
         title,
         source: {
           type: "html",
-          path: `rawdocs/${rawdocId}.html`,
           url: normalizedUrl,
           rawdoc_id: rawdocId
         },

@@ -47,7 +47,6 @@ export interface RawDoc {
   source_type: "url" | "singlefile_html" | "pdf" | "epub";
   source_uri: string;
   fetch_time: string;
-  storage_path: string;
   content_type?: string;
   content_length?: number;
   metadata?: Record<string, unknown>;
@@ -82,7 +81,6 @@ export interface KnowledgeDocument {
     title: string;
     source: {
       type: "html" | "pdf" | "epub";
-      path: string;
       url?: string | null;
       rawdoc_id?: string;
     };

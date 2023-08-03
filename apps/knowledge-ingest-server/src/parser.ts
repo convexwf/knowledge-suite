@@ -40,7 +40,6 @@ export async function parsePage(input: ResolvedInput): Promise<ParsedPage> {
     source_type: input.inputMode === "browser_html" && input.url.startsWith("file://") ? "singlefile_html" : "url",
     source_uri: input.url,
     fetch_time: fetchTime,
-    storage_path: `rawdocs/${rawdocId}.html`,
     content_type: "text/html",
     content_length: Buffer.byteLength(input.html),
     metadata: {
@@ -69,7 +68,6 @@ export async function parsePage(input: ResolvedInput): Promise<ParsedPage> {
       title,
       source: {
         type: "html",
-        path: rawdoc.storage_path,
         url: input.url,
         rawdoc_id: rawdocId
       },
