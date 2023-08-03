@@ -23,6 +23,7 @@ describe("KnowledgeStore", () => {
     const second = fixture("22222222-2222-4222-8222-222222222222", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "Second Title");
 
     const firstPaths = await store.save(first);
+    expectStoreSchema(storeRoot);
     expect(firstPaths).toEqual({
       rawHtmlPath: "rawdocs/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.html",
       rawdocPath: "rawdocs/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.json",
@@ -53,6 +54,15 @@ describe("KnowledgeStore", () => {
       documentPath: secondPaths.documentPath,
       markdownPath: secondPaths.markdownPath
     });
+
+    store.close();
+  });
+
+  it("creates all database tables with no stored path columns", async () => {
+    const store = new KnowledgeStore(storeRoot);
+    await store.ensure();
+
+    expectStoreSchema(storeRoot);
 
     store.close();
   });
@@ -91,6 +101,77 @@ describe("KnowledgeStore", () => {
     store.close();
   });
 });
+
+function expectStoreSchema(root: string): void {
+  const database = new DatabaseSync(join(root, "index.sqlite3"));
+  try {
+    const tables = database
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
+      .all()
+      .map((row) => (row as { name: string }).name);
+
+    expect(tables).toEqual(["clips", "documents", "rawdocs"]);
+
+    const columnsByTable = Object.fromEntries(
+      tables.map((table) => [
+        table,
+        database
+          .prepare(`PRAGMA table_info(${table})`)
+          .all()
+          .map((column) => (column as { name: string }).name)
+      ])
+    );
+
+    expect(columnsByTable.clips).toEqual([
+      "url_hash",
+      "normalized_url",
+      "original_url",
+      "canonical_url",
+      "doc_id",
+      "rawdoc_id",
+      "page_title",
+      "parser_version",
+      "parser_method",
+      "content_hash",
+      "saved_at",
+      "updated_at"
+    ]);
+    expect(columnsByTable.documents).toEqual([
+      "doc_id",
+      "rawdoc_id",
+      "title",
+      "source_url",
+      "normalized_url",
+      "language",
+      "authors_json",
+      "published_at",
+      "parser_version",
+      "parser_method",
+      "parser_profile",
+      "content_hash",
+      "created_at",
+      "updated_at"
+    ]);
+    expect(columnsByTable.rawdocs).toEqual([
+      "rawdoc_id",
+      "source_uri",
+      "normalized_url",
+      "input_mode",
+      "content_type",
+      "content_length",
+      "html_hash",
+      "captured_at",
+      "fetched_at",
+      "created_at"
+    ]);
+
+    for (const columns of Object.values(columnsByTable)) {
+      expect(columns.filter((column) => column.includes("path"))).toEqual([]);
+    }
+  } finally {
+    database.close();
+  }
+}
 
 function fixture(docId: string, rawdocId: string, title: string): {
   normalizedUrl: string;
