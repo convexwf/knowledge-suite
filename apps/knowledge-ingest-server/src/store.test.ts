@@ -58,6 +58,34 @@ describe("KnowledgeStore", () => {
     store.close();
   });
 
+  it("deletes the current URL row, object rows, and object files", async () => {
+    const store = new KnowledgeStore(storeRoot);
+    const clip = fixture("33333333-3333-4333-8333-333333333333", "cccccccc-cccc-4ccc-8ccc-cccccccccccc", "Deleted Title");
+
+    const paths = await store.save(clip);
+    expect(tableCount(storeRoot, "clips")).toBe(1);
+    expect(tableCount(storeRoot, "documents")).toBe(1);
+    expect(tableCount(storeRoot, "rawdocs")).toBe(1);
+
+    const result = await store.deleteByUrl(clip.normalizedUrl);
+
+    expect(result).toMatchObject({
+      deleted: true,
+      saved: false,
+      docId: clip.document.doc_id,
+      rawdocId: clip.rawdoc.rawdoc_id
+    });
+    expect(tableCount(storeRoot, "clips")).toBe(0);
+    expect(tableCount(storeRoot, "documents")).toBe(0);
+    expect(tableCount(storeRoot, "rawdocs")).toBe(0);
+    await expect(access(join(storeRoot, paths.documentPath))).rejects.toThrow();
+    await expect(access(join(storeRoot, paths.markdownPath))).rejects.toThrow();
+    await expect(access(join(storeRoot, paths.rawHtmlPath))).rejects.toThrow();
+    await expect(access(join(storeRoot, paths.rawdocPath))).rejects.toThrow();
+
+    store.close();
+  });
+
   it("creates all database tables with no stored path columns", async () => {
     const store = new KnowledgeStore(storeRoot);
     await store.ensure();
@@ -168,6 +196,15 @@ function expectStoreSchema(root: string): void {
     for (const columns of Object.values(columnsByTable)) {
       expect(columns.filter((column) => column.includes("path"))).toEqual([]);
     }
+  } finally {
+    database.close();
+  }
+}
+
+function tableCount(root: string, table: string): number {
+  const database = new DatabaseSync(join(root, "index.sqlite3"));
+  try {
+    return (database.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get() as { count: number }).count;
   } finally {
     database.close();
   }

@@ -125,7 +125,16 @@ export class KnowledgeStore {
       };
     }
 
-    this.database!.prepare("DELETE FROM clips WHERE url_hash = ?").run(hash);
+    try {
+      this.database!.exec("BEGIN");
+      this.database!.prepare("DELETE FROM clips WHERE url_hash = ?").run(hash);
+      this.database!.prepare("DELETE FROM documents WHERE doc_id = ?").run(row.doc_id);
+      this.database!.prepare("DELETE FROM rawdocs WHERE rawdoc_id = ?").run(row.rawdoc_id);
+      this.database!.exec("COMMIT");
+    } catch (error) {
+      this.database!.exec("ROLLBACK");
+      throw error;
+    }
 
     const deletedPaths: string[] = [];
     if (deleteFiles) {
