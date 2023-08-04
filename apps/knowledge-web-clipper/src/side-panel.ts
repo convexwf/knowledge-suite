@@ -365,6 +365,8 @@ function renderParserDiagnostics(preview: PreviewResult): DocumentFragment {
   const fragment = document.createDocumentFragment();
   const metadata = preview.rawdoc.metadata ?? {};
   const defuddle = metadata.defuddle ?? {};
+  const matchedAdapters = Array.isArray(metadata.matchedAdapters) ? metadata.matchedAdapters : [];
+  const parserCandidates = Array.isArray(metadata.parserCandidates) ? metadata.parserCandidates : [];
   const warnings = collectParserWarnings(preview);
 
   fragment.append(
@@ -397,6 +399,31 @@ function renderParserDiagnostics(preview: PreviewResult): DocumentFragment {
     makeParserGroup("Defuddle", Object.entries(defuddle).map(([key, value]) => [key, value]))
   );
 
+  fragment.append(
+    makeParserGroup("Adapters", matchedAdapters.flatMap((adapter, index) => {
+      const adapterRecord = adapter as Record<string, unknown>;
+      return [
+        [`${index + 1}.id`, adapterRecord.id],
+        [`${index + 1}.score`, adapterRecord.matchScore],
+        [`${index + 1}.reason`, adapterRecord.matchReason]
+      ];
+    }))
+  );
+
+  fragment.append(
+    makeParserGroup("Candidates", parserCandidates.flatMap((candidate, index) => {
+      const candidateRecord = candidate as Record<string, unknown>;
+      return [
+        [`${index + 1}.method`, candidateRecord.method],
+        [`${index + 1}.adapter`, candidateRecord.adapterId],
+        [`${index + 1}.selected`, candidateRecord.selected],
+        [`${index + 1}.score`, candidateRecord.score],
+        [`${index + 1}.metrics`, candidateRecord.metrics],
+        [`${index + 1}.reason`, candidateRecord.reason]
+      ];
+    }))
+  );
+
   if (warnings.length > 0) {
     const group = makeParserGroup("Warnings", []);
     for (const warning of warnings) {
@@ -415,8 +442,11 @@ function collectParserWarnings(preview: PreviewResult): string[] {
   const warnings: string[] = [];
   const metadata = preview.rawdoc.metadata ?? {};
 
-  if (metadata.parserMethod === "dom_fallback") {
-    warnings.push("Defuddle did not produce enough content; DOM fallback was used.");
+  if (Array.isArray(metadata.parserWarnings)) {
+    warnings.push(...metadata.parserWarnings.map((warning) => String(warning)));
+  }
+  if (metadata.parserMethod === "dom_fallback" && warnings.length === 0) {
+    warnings.push("Generic DOM fallback was selected.");
   }
   if (preview.document.sections.length <= 1) {
     warnings.push("Only one content section was extracted.");

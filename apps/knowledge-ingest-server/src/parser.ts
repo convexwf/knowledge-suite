@@ -6,6 +6,7 @@ import {
   nowIso,
   RawDoc
 } from "@uknowledge/knowledge-schema";
+import { matchSiteAdapters, type MatchedAdapter, type SiteAdapter } from "./adapters.js";
 import { ResolvedInput } from "./input.js";
 
 export interface ParsedPage {
@@ -13,7 +14,38 @@ export interface ParsedPage {
   document: KnowledgeDocument;
 }
 
-const PARSER_VERSION = "knowledge-ingest-server/0.1";
+type ParserMethod = "defuddle" | "site_adapter" | "dom_fallback";
+
+interface CandidateMetrics {
+  textLength: number;
+  sectionCount: number;
+  headingCount: number;
+  linkCount: number;
+  imageCount: number;
+  tableCount: number;
+  codeCount: number;
+  linkDensity: number;
+}
+
+interface ParserCandidate {
+  id: string;
+  method: ParserMethod;
+  adapterId?: string;
+  title?: string;
+  sections: KnowledgeDocument["sections"];
+  metadata: {
+    authors?: string[];
+    publishedAt?: string | null;
+    language?: string;
+    image?: string;
+  };
+  metrics: CandidateMetrics;
+  score: number;
+  warnings: string[];
+  reason: string;
+}
+
+const PARSER_VERSION = "knowledge-ingest-server/0.2";
 const DefuddleClass = DefuddleDefault as unknown as {
   new (doc: Document, options?: DefuddleOptions): { parse(): DefuddleResponse };
 };
@@ -22,15 +54,18 @@ export async function parsePage(input: ResolvedInput): Promise<ParsedPage> {
   const rawdocId = makeId();
   const docId = makeId();
   const fetchTime = nowIso();
-  const { document } = parseHTML(input.html);
-  cleanDocumentForExtraction(document);
-  const defuddleResult = runDefuddle(document, input);
-  const title = input.title || defuddleResult?.title || readTitle(document) || input.normalizedUrl;
-  const fallbackSections = extractSections(pickReadableRoot(document), title);
-  const defuddleSections = defuddleResult ? extractDefuddleSections(defuddleResult.content, title) : [];
-  const useDefuddleSections = shouldUseDefuddleSections(defuddleResult, defuddleSections, fallbackSections);
-  const sections = useDefuddleSections ? defuddleSections : fallbackSections;
-  const parserMethod = useDefuddleSections ? "defuddle" : "dom_fallback";
+  const baseDocument = parseCleanDocument(input.html);
+  const matchedAdapters = matchSiteAdapters(input);
+  const defuddleResult = runDefuddle(baseDocument, input);
+  const title = input.title || defuddleResult?.title || readTitle(baseDocument) || input.normalizedUrl;
+  const candidates = buildCandidates(input, title, defuddleResult, matchedAdapters);
+  const selected = selectCandidate(candidates);
+  const fallbackText = baseDocument.body?.textContent?.trim() ?? "";
+  const sections = selected.sections.length > 0
+    ? selected.sections
+    : [{ section_id: makeId(), type: "paragraph" as const, content: fallbackText }];
+  const parserWarnings = collectParserWarnings(selected, candidates);
+  const selectedTitle = selected.title || title;
 
   const rawdoc: RawDoc = {
     rawdoc_id: rawdocId,
@@ -42,8 +77,26 @@ export async function parsePage(input: ResolvedInput): Promise<ParsedPage> {
     metadata: {
       inputMode: input.inputMode,
       normalizedUrl: input.normalizedUrl,
-      title,
-      parserMethod,
+      title: selectedTitle,
+      parserMethod: selected.method,
+      parserProfile: selected.adapterId ?? selected.method,
+      parserWarnings,
+      matchedAdapters: matchedAdapters.map((match) => ({
+        id: match.adapter.id,
+        priority: match.adapter.priority,
+        matchScore: round(match.matchScore),
+        matchReason: match.matchReason
+      })),
+      parserCandidates: candidates.map((candidate) => ({
+        id: candidate.id,
+        method: candidate.method,
+        adapterId: candidate.adapterId,
+        selected: candidate.id === selected.id,
+        score: round(candidate.score),
+        metrics: candidate.metrics,
+        warnings: candidate.warnings,
+        reason: candidate.reason
+      })),
       defuddle: defuddleResult
         ? {
             author: defuddleResult.author,
@@ -62,23 +115,152 @@ export async function parsePage(input: ResolvedInput): Promise<ParsedPage> {
   const knowledgeDocument: KnowledgeDocument = {
     doc_id: docId,
     meta: {
-      title,
+      title: selectedTitle,
       source: {
         type: "html",
         url: input.url,
         rawdoc_id: rawdocId
       },
-      authors: readAuthors(document, input.meta, defuddleResult),
-      published_at: readPublishedAt(document, input.meta, defuddleResult),
+      authors: selected.metadata.authors?.length
+        ? selected.metadata.authors
+        : readAuthors(baseDocument, input.meta, defuddleResult),
+      published_at: selected.metadata.publishedAt ?? readPublishedAt(baseDocument, input.meta, defuddleResult),
       ingested_at: fetchTime,
-      language: defuddleResult?.language || document.documentElement?.getAttribute("lang") || input.meta.language,
+      language: selected.metadata.language ||
+        defuddleResult?.language ||
+        baseDocument.documentElement?.getAttribute("lang") ||
+        input.meta.language,
       tags: [],
-      parser_version: `${PARSER_VERSION}:${parserMethod}`
+      parser_version: `${PARSER_VERSION}:${selected.method}`
     },
-    sections: sections.length > 0 ? sections : [{ type: "paragraph", content: document.body?.textContent?.trim() ?? "" }]
+    sections
   };
 
   return { rawdoc, document: knowledgeDocument };
+}
+
+function buildCandidates(
+  input: ResolvedInput,
+  title: string,
+  defuddleResult: DefuddleResponse | undefined,
+  matchedAdapters: MatchedAdapter[]
+): ParserCandidate[] {
+  const candidates: ParserCandidate[] = [];
+
+  if (defuddleResult) {
+    const sections = extractDefuddleSections(defuddleResult.content, title, input.url);
+    candidates.push(makeCandidate({
+      id: "defuddle",
+      method: "defuddle",
+      title: defuddleResult.title || title,
+      sections,
+      metadata: {
+        authors: defuddleResult.author ? [defuddleResult.author] : undefined,
+        publishedAt: normalizeDate(defuddleResult.published),
+        language: defuddleResult.language,
+        image: defuddleResult.image
+      },
+      reason: "Defuddle universal article extraction",
+      baseScore: 20,
+      warnings: defuddleResult.wordCount && defuddleResult.wordCount < 20
+        ? [`Low Defuddle word count: ${defuddleResult.wordCount}`]
+        : []
+    }));
+  }
+
+  for (const match of matchedAdapters) {
+    candidates.push(...buildAdapterCandidates(input, title, match));
+  }
+
+  const fallbackDocument = parseCleanDocument(input.html);
+  const fallbackRoot = pickReadableRoot(fallbackDocument);
+  normalizeUrls(fallbackRoot, input.url);
+  candidates.push(makeCandidate({
+    id: "dom_fallback",
+    method: "dom_fallback",
+    title,
+    sections: extractSections(fallbackRoot, title),
+    metadata: {},
+    reason: "Generic DOM readable-root fallback",
+    baseScore: 0,
+    warnings: []
+  }));
+
+  return candidates;
+}
+
+function buildAdapterCandidates(input: ResolvedInput, title: string, match: MatchedAdapter): ParserCandidate[] {
+  const document = parseCleanDocument(input.html);
+  applyAdapterCleanup(document, match.adapter, input.url);
+  const candidates: ParserCandidate[] = [];
+
+  for (const selector of match.adapter.content.selectors) {
+    const roots = [...document.querySelectorAll(selector)];
+    for (const [index, root] of roots.entries()) {
+      applyScopedExcludes(root, match.adapter.content.excludeSelectors ?? []);
+      normalizeUrls(root, input.url);
+      const rootTextLength = normalizeText(root.textContent ?? "").length;
+      if (rootTextLength < (match.adapter.content.requireTextLength ?? 0) && !root.querySelector("img,table")) {
+        continue;
+      }
+      const sections = extractSections(root, title);
+      candidates.push(makeCandidate({
+        id: `adapter:${match.adapter.id}:${selector}:${index}`,
+        method: "site_adapter",
+        adapterId: match.adapter.id,
+        title: readAdapterMetadata(document, match.adapter, "title") || title,
+        sections,
+        metadata: {
+          authors: unique([readAdapterMetadata(document, match.adapter, "author")].filter(Boolean) as string[]),
+          publishedAt: normalizeDate(readAdapterMetadata(document, match.adapter, "publishedAt")),
+          image: readAdapterMetadata(document, match.adapter, "image")
+        },
+        reason: `Matched ${match.adapter.id} (${match.matchReason}); content selector ${selector}`,
+        baseScore: match.adapter.priority / 2 + match.matchScore / 10 + (match.adapter.quality?.minScoreBonus ?? 0),
+        warnings: []
+      }));
+    }
+  }
+
+  return candidates;
+}
+
+function makeCandidate(params: {
+  id: string;
+  method: ParserMethod;
+  adapterId?: string;
+  title?: string;
+  sections: KnowledgeDocument["sections"];
+  metadata: ParserCandidate["metadata"];
+  reason: string;
+  baseScore: number;
+  warnings: string[];
+}): ParserCandidate {
+  const metrics = measureSections(params.sections);
+  const warnings = [...params.warnings, ...qualityWarnings(metrics)];
+  const score = scoreCandidate(params.method, metrics, params.baseScore, warnings);
+  return {
+    ...params,
+    metrics,
+    warnings,
+    score
+  };
+}
+
+function selectCandidate(candidates: ParserCandidate[]): ParserCandidate {
+  const viable = candidates.filter((candidate) => candidate.sections.length > 0 && candidate.metrics.textLength > 0);
+  const pool = viable.length > 0 ? viable : candidates;
+  const selected = [...pool].sort((left, right) => right.score - left.score)[0];
+  return selected ?? {
+    id: "empty",
+    method: "dom_fallback",
+    sections: [],
+    metadata: {},
+    metrics: emptyMetrics(),
+    score: 0,
+    warnings: ["No parser candidate produced content."],
+    reason: "Empty parser result"
+  };
 }
 
 function runDefuddle(document: Document, input: ResolvedInput): DefuddleResponse | undefined {
@@ -99,11 +281,15 @@ function isUsefulExtraction(result: DefuddleResponse): boolean {
   return normalizeText(result.content).length >= 80 || (result.wordCount ?? 0) >= 20;
 }
 
-function extractDefuddleSections(contentHtml: string, title: string): KnowledgeDocument["sections"] {
+function extractDefuddleSections(contentHtml: string, title: string, baseUrl: string): KnowledgeDocument["sections"] {
   const contentDocument = parseHTML(contentHtml).document;
   cleanDocumentForExtraction(contentDocument);
   const bodyRoot = pickParsedContentRoot(contentDocument);
-  return bodyRoot ? extractSections(bodyRoot, title) : [];
+  if (!bodyRoot) {
+    return [];
+  }
+  normalizeUrls(bodyRoot, baseUrl);
+  return extractSections(bodyRoot, title);
 }
 
 function pickParsedContentRoot(document: Document): Element | undefined {
@@ -113,25 +299,9 @@ function pickParsedContentRoot(document: Document): Element | undefined {
   return document.documentElement || document.body || undefined;
 }
 
-function shouldUseDefuddleSections(
-  defuddleResult: DefuddleResponse | undefined,
-  defuddleSections: KnowledgeDocument["sections"],
-  fallbackSections: KnowledgeDocument["sections"]
-): boolean {
-  if (!defuddleResult || !isUsefulExtraction(defuddleResult) || defuddleSections.length === 0) {
-    return false;
-  }
-
-  if (defuddleSections.length <= 1 && fallbackSections.length > defuddleSections.length) {
-    return false;
-  }
-
-  return true;
-}
-
 function readTitle(document: Document): string | undefined {
-  const title = document.querySelector("title")?.textContent?.trim();
   const ogTitle = document.querySelector('meta[property="og:title"]')?.getAttribute("content")?.trim();
+  const title = document.querySelector("title")?.textContent?.trim();
   return ogTitle || title || undefined;
 }
 
@@ -151,11 +321,31 @@ function readPublishedAt(document: Document, meta: Record<string, string>, defud
     meta.published ||
     document.querySelector('meta[property="article:published_time"]')?.getAttribute("content") ||
     document.querySelector("time[datetime]")?.getAttribute("datetime");
+  return normalizeDate(value ?? undefined);
+}
 
+function readAdapterMetadata(document: Document, adapter: SiteAdapter, key: keyof NonNullable<SiteAdapter["metadata"]>): string | undefined {
+  for (const selector of adapter.metadata?.[key] ?? []) {
+    const node = document.querySelector(selector);
+    if (!node) {
+      continue;
+    }
+    const content = node.getAttribute("content") ||
+      node.getAttribute("datetime") ||
+      node.getAttribute("src") ||
+      node.textContent;
+    const normalized = normalizeText(content ?? "");
+    if (normalized) {
+      return normalized;
+    }
+  }
+  return undefined;
+}
+
+function normalizeDate(value: string | undefined): string | null {
   if (!value) {
     return null;
   }
-
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
@@ -168,6 +358,12 @@ function pickReadableRoot(document: Document): Element {
     document.body ||
     document.documentElement
   );
+}
+
+function parseCleanDocument(html: string): Document {
+  const { document } = parseHTML(html);
+  cleanDocumentForExtraction(document);
+  return document;
 }
 
 function cleanDocumentForExtraction(document: Document): void {
@@ -239,6 +435,85 @@ function cleanDocumentForExtraction(document: Document): void {
       node.remove();
     }
   });
+}
+
+function applyAdapterCleanup(document: Document, adapter: SiteAdapter, baseUrl: string): void {
+  for (const selector of adapter.cleanup?.removeSelectors ?? []) {
+    document.querySelectorAll(selector).forEach((node) => node.remove());
+  }
+
+  for (const selector of adapter.cleanup?.unwrapSelectors ?? []) {
+    document.querySelectorAll(selector).forEach((node) => unwrap(node));
+  }
+
+  if (adapter.cleanup?.normalizeImageAttributes) {
+    normalizeImageAttributes(document);
+  }
+
+  if (adapter.cleanup?.normalizeRelativeUrls) {
+    normalizeUrls(document.documentElement, baseUrl);
+  }
+}
+
+function applyScopedExcludes(root: Element, selectors: string[]): void {
+  for (const selector of selectors) {
+    root.querySelectorAll(selector).forEach((node) => node.remove());
+  }
+}
+
+function unwrap(node: Element): void {
+  const parent = node.parentNode;
+  if (!parent) {
+    return;
+  }
+  while (node.firstChild) {
+    parent.insertBefore(node.firstChild, node);
+  }
+  node.remove();
+}
+
+function normalizeImageAttributes(root: ParentNode): void {
+  root.querySelectorAll("img").forEach((img) => {
+    const src = img.getAttribute("src") ||
+      img.getAttribute("data-src") ||
+      img.getAttribute("data-original") ||
+      img.getAttribute("data-testid-src") ||
+      firstSrcsetUrl(img.getAttribute("srcset") || img.getAttribute("data-srcset"));
+    if (src) {
+      img.setAttribute("src", src);
+    }
+  });
+}
+
+function firstSrcsetUrl(srcset: string | null): string | undefined {
+  return srcset?.split(",")[0]?.trim().split(/\s+/)[0];
+}
+
+function normalizeUrls(root: ParentNode, baseUrl: string): void {
+  root.querySelectorAll("a[href]").forEach((link) => {
+    const href = toAbsoluteUrl(link.getAttribute("href"), baseUrl);
+    if (href) {
+      link.setAttribute("href", href);
+    }
+  });
+
+  root.querySelectorAll("img[src]").forEach((img) => {
+    const src = toAbsoluteUrl(img.getAttribute("src"), baseUrl);
+    if (src) {
+      img.setAttribute("src", src);
+    }
+  });
+}
+
+function toAbsoluteUrl(value: string | null, baseUrl: string): string | undefined {
+  if (!value || value.startsWith("data:")) {
+    return value || undefined;
+  }
+  try {
+    return new URL(value, baseUrl).toString();
+  } catch {
+    return value;
+  }
 }
 
 function isLikelyNoise(value: string): boolean {
@@ -377,6 +652,93 @@ function renderInlineNode(node: ChildNode): string {
   return content;
 }
 
+function measureSections(sections: KnowledgeDocument["sections"]): CandidateMetrics {
+  const text = sections.map(sectionText).join(" ");
+  const textLength = normalizeText(text).length;
+  const linkCount = countMatches(text, /\]\(/g);
+  return {
+    textLength,
+    sectionCount: sections.length,
+    headingCount: sections.filter((section) => section.type === "heading").length,
+    linkCount,
+    imageCount: sections.filter((section) => section.type === "figure").length + countMatches(text, /!\[/g),
+    tableCount: sections.filter((section) => section.type === "table").length,
+    codeCount: sections.filter((section) => section.type === "code").length,
+    linkDensity: textLength > 0 ? round(linkCount / Math.max(textLength / 1000, 1)) : 0
+  };
+}
+
+function sectionText(section: KnowledgeDocument["sections"][number]): string {
+  return [
+    section.content,
+    ...(section.items ?? []).map((item) => typeof item === "string" ? item : item.text),
+    ...(section.rows ?? []).flatMap((row) => Array.isArray(row) ? row.map(String) : [String(row)])
+  ].filter(Boolean).join(" ");
+}
+
+function scoreCandidate(method: ParserMethod, metrics: CandidateMetrics, baseScore: number, warnings: string[]): number {
+  if (metrics.textLength === 0) {
+    return -100;
+  }
+
+  const methodBoost = method === "defuddle" ? 20 : method === "site_adapter" ? 35 : 0;
+  const lengthScore = Math.min(metrics.textLength / 20, 80);
+  const structureScore = Math.min(metrics.sectionCount * 5, 40) +
+    metrics.headingCount * 4 +
+    metrics.imageCount * 8 +
+    metrics.tableCount * 8 +
+    metrics.codeCount * 4;
+  const linkPenalty = metrics.linkDensity > 12 ? (metrics.linkDensity - 12) * 3 : 0;
+  const shortPenalty = metrics.textLength < 120 && metrics.imageCount === 0 && metrics.tableCount === 0 ? 45 : 0;
+  const warningPenalty = warnings.length * 5;
+  return baseScore + methodBoost + lengthScore + structureScore - linkPenalty - shortPenalty - warningPenalty;
+}
+
+function qualityWarnings(metrics: CandidateMetrics): string[] {
+  const warnings: string[] = [];
+  if (metrics.sectionCount === 0) {
+    warnings.push("No sections extracted.");
+  }
+  if (metrics.textLength > 0 && metrics.textLength < 120 && metrics.imageCount === 0 && metrics.tableCount === 0) {
+    warnings.push("Extracted text is short.");
+  }
+  if (metrics.linkDensity > 12) {
+    warnings.push(`High link density: ${metrics.linkDensity}`);
+  }
+  return warnings;
+}
+
+function collectParserWarnings(selected: ParserCandidate, candidates: ParserCandidate[]): string[] {
+  const warnings = [...selected.warnings];
+  if (selected.method === "dom_fallback") {
+    warnings.push("Generic DOM fallback selected after candidate scoring.");
+  }
+  if (candidates.some((candidate) => candidate.method === "defuddle") && selected.method !== "defuddle") {
+    warnings.push("Defuddle was available but another candidate scored higher.");
+  }
+  if (candidates.length <= 1) {
+    warnings.push("Only one parser candidate was available.");
+  }
+  return unique(warnings);
+}
+
+function emptyMetrics(): CandidateMetrics {
+  return {
+    textLength: 0,
+    sectionCount: 0,
+    headingCount: 0,
+    linkCount: 0,
+    imageCount: 0,
+    tableCount: 0,
+    codeCount: 0,
+    linkDensity: 0
+  };
+}
+
+function countMatches(value: string, pattern: RegExp): number {
+  return value.match(pattern)?.length ?? 0;
+}
+
 function normalizeMarkdown(value: string): string {
   return value
     .replace(/[ \t]*\n[ \t]*/g, "\n")
@@ -404,6 +766,14 @@ function dedupeAdjacent(sections: KnowledgeDocument["sections"]): KnowledgeDocum
     result.push(section);
   }
   return result;
+}
+
+function unique(values: string[]): string[] {
+  return [...new Set(values.filter(Boolean))];
+}
+
+function round(value: number): number {
+  return Math.round(value * 100) / 100;
 }
 
 function normalizeText(value: string): string {

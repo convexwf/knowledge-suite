@@ -258,6 +258,79 @@ describe("knowledge ingest server", () => {
     await app.close();
   });
 
+  it("uses a matched site adapter as a scored parser candidate", async () => {
+    const app = await buildServer({
+      host: "127.0.0.1",
+      port: 0,
+      token: "test-token",
+      storeRoot,
+      fetchTimeoutMs: 1000,
+      maxHtmlBytes: 1024 * 1024
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/clip/preview",
+      headers: { authorization: "Bearer test-token" },
+      payload: {
+        inputMode: "browser_html",
+        snapshot: {
+          pageUrl: "https://freedium-mirror.cfd/https://medium.com/in-fitness-and-in-health/example-a875f21bed2d",
+          title: "How I Lowered My Body Fat Percentage",
+          html: `<!doctype html>
+            <html>
+              <head>
+                <title>How I Lowered My Body Fat Percentage</title>
+                <meta property="og:title" content="How I Lowered My Body Fat Percentage">
+              </head>
+              <body>
+                <div class="storage-notification-container">Local storage warning should be removed.</div>
+                <div class="container">
+                  <h1>How I Lowered My Body Fat Percentage</h1>
+                  <div class="main-content">
+                    <div>
+                      <p>This Freedium article paragraph contains enough concrete prose to be considered useful by the parser scoring model.</p>
+                      <p>The second paragraph confirms the adapter-selected content root keeps the article body without the storage notification chrome.</p>
+                      <figure>
+                        <img data-src="/images/progress.jpg" alt="Progress chart">
+                        <figcaption>Progress chart.</figcaption>
+                      </figure>
+                    </div>
+                  </div>
+                </div>
+              </body>
+            </html>`,
+          capturedAt: "2026-05-11T02:00:00.000Z",
+          meta: {}
+        }
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().rawdoc.metadata.parserMethod).toBe("site_adapter");
+    expect(response.json().rawdoc.metadata.parserProfile).toBe("freedium");
+    expect(response.json().rawdoc.metadata.matchedAdapters[0]).toMatchObject({
+      id: "freedium"
+    });
+    expect(response.json().rawdoc.metadata.parserCandidates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          method: "site_adapter",
+          adapterId: "freedium",
+          selected: true
+        }),
+        expect.objectContaining({
+          method: "dom_fallback"
+        })
+      ])
+    );
+    expect(response.json().markdown).toContain("The second paragraph confirms");
+    expect(response.json().markdown).toContain("![Progress chart](https://freedium-mirror.cfd/images/progress.jpg)");
+    expect(response.json().markdown).not.toContain("Local storage warning");
+
+    await app.close();
+  });
+
   it("removes common page chrome before extraction", async () => {
     const app = await buildServer({
       host: "127.0.0.1",

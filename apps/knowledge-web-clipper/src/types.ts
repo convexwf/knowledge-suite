@@ -52,6 +52,10 @@ export interface RawDoc {
     normalizedUrl?: string;
     title?: string;
     parserMethod?: string;
+    parserProfile?: string;
+    parserWarnings?: string[];
+    matchedAdapters?: Array<Record<string, unknown>>;
+    parserCandidates?: Array<Record<string, unknown>>;
     defuddle?: Record<string, unknown>;
     meta?: Record<string, string>;
     [key: string]: unknown;
