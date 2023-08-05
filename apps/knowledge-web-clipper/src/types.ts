@@ -1,4 +1,5 @@
 export type InputMode = "browser_html" | "server_fetch";
+export type PanelView = "preview" | "json" | "rawdoc" | "parser" | "saved";
 
 export interface PageSnapshot {
   pageUrl: string;
@@ -14,8 +15,15 @@ export interface PageSnapshot {
 export interface ExtensionSettings {
   serverUrl: string;
   token: string;
-  inputMode: InputMode;
+  defaultInputMode: InputMode;
+  allowServerFetch: boolean;
   autoRefresh: boolean;
+  healthCheckOnOpen: boolean;
+  requestTimeoutMs: number;
+  deleteFilesByDefault: boolean;
+  showParserDiagnostics: boolean;
+  savedListLimit: number;
+  defaultPanelTab: PanelView;
 }
 
 export type ClipRequestBody =
@@ -44,7 +52,6 @@ export interface RawDoc {
   source_type: string;
   source_uri: string;
   fetch_time: string;
-  storage_path: string;
   content_type?: string;
   content_length?: number;
   metadata?: {
@@ -86,10 +93,12 @@ export interface ClipListItem {
   normalizedUrl: string;
   urlHash: string;
   savedAt: string;
+  updatedAt?: string;
   title?: string;
   docId?: string;
-  markdownPath?: string;
-  documentPath?: string;
+  rawdocId?: string;
+  parserVersion?: string;
+  parserMethod?: string;
 }
 
 export interface ClipListResult {
@@ -98,7 +107,7 @@ export interface ClipListResult {
 
 export interface ClipDeleteResult extends ClipStatusResult {
   deleted: boolean;
-  deletedPaths: string[];
+  deletedFiles?: string[];
 }
 
 export interface ClipStatusResult {
@@ -106,10 +115,12 @@ export interface ClipStatusResult {
   urlHash: string;
   saved: boolean;
   savedAt?: string;
+  updatedAt?: string;
   title?: string;
   docId?: string;
-  markdownPath?: string;
-  documentPath?: string;
+  rawdocId?: string;
+  parserVersion?: string;
+  parserMethod?: string;
 }
 
 export interface HealthResult {

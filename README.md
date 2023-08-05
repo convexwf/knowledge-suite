@@ -148,6 +148,7 @@ This project intentionally started with a smaller parser surface than Obsidian C
 | P0 | Switch store to UUID object paths | Raw HTML, RawDoc JSON, Document JSON, and Markdown paths are derived from `rawdoc_id` / `doc_id`; SQLite no longer stores object paths. |
 | P0 | Add current-result reparse semantics | Re-saving a URL upserts `clips.url_hash` to the newest `doc_id` / `rawdoc_id` and removes the previous object files. |
 | P0 | Reset legacy MVP store schema | Old path-based local stores are deleted and recreated instead of migrated. |
+| P0 | Add settings page | Server URL, token, default input mode, auto-refresh, delete behavior, diagnostics visibility, timeout, and saved-list limit live in the extension options page. |
 | P1 | Add `RawDoc Meta` tab | The side panel now exposes the RawDoc returned by preview/save for parser and storage debugging. |
 | P1 | Add parser logs tab | The side panel now summarizes parser method, parser version, source details, section count, Defuddle metadata, and extraction warnings. |
 
@@ -161,9 +162,7 @@ This project intentionally started with a smaller parser surface than Obsidian C
 | P1 | Add `server_fetch` side-panel E2E path | Current extension E2E focuses on `browser_html`. |
 | P1 | Add `file://` local HTML E2E path | Local files must force `browser_html`. |
 | P1 | Add restricted-page E2E path | Example: `chrome://extensions` should show a clear access error. |
-| P2 | Add settings page | Move server URL/token/default UI behavior out of the main clipping panel. |
 | P2 | Add first-run token/config flow | Generate or discover local token instead of relying only on manual env/config. |
-| P2 | Persist UI preferences | Default tab, auto-preview behavior, and preferred input mode. |
 | P2 | Add extension-side status cache | Reduce localhost status requests during tab switching. |
 | P2 | Add JSON Schema validation against `knowledge-core/schemas` | Current implementation has TS types and input zod validation, but not full output schema validation. |
 | P2 | Add SQLite delete/repair/orphan handling | Needed once delete and crash recovery matter. |

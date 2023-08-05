@@ -32,5 +32,6 @@
   },
   "side_panel": {
     "default_path": "side-panel.html"
-  }
+  },
+  "options_page": "options.html"
 }

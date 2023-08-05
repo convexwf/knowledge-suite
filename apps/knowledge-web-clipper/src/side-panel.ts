@@ -6,6 +6,7 @@ import {
   ClipRequestBody,
   ExtensionSettings,
   InputMode,
+  PanelView,
   PageSnapshot,
   PreviewResult
 } from "./types.js";
@@ -16,9 +17,8 @@ const rawdocOutput = mustGet<HTMLPreElement>("rawdoc-output");
 const parserOutput = mustGet<HTMLDivElement>("parser-output");
 const statusPill = mustGet<HTMLElement>("status-pill");
 const pageUrlEl = mustGet<HTMLElement>("page-url");
-const serverUrlInput = mustGet<HTMLInputElement>("server-url");
-const serverTokenInput = mustGet<HTMLInputElement>("server-token");
 const autoRefreshInput = mustGet<HTMLInputElement>("auto-refresh");
+const settingsButton = mustGet<HTMLButtonElement>("settings-button");
 const refreshButton = mustGet<HTMLButtonElement>("refresh-button");
 const saveButton = mustGet<HTMLButtonElement>("save-button");
 const copyButton = mustGet<HTMLButtonElement>("copy-button");
@@ -36,32 +36,36 @@ let settings: ExtensionSettings = await getSettings();
 let activeTab: ActiveTabInfo | undefined;
 let lastPreview: PreviewResult | undefined;
 let savedClips: ClipListItem[] = [];
-type PanelView = "preview" | "json" | "rawdoc" | "parser" | "saved";
 
-let activeView: PanelView = "preview";
+let currentInputMode: InputMode = settings.defaultInputMode;
+let activeView: PanelView = settings.defaultPanelTab;
 let autoRefreshTimer: number | undefined;
 
-serverUrlInput.value = settings.serverUrl;
-serverTokenInput.value = settings.token;
 autoRefreshInput.checked = settings.autoRefresh;
-setMode(settings.inputMode);
+applySettingsToUi();
+setMode(currentInputMode, false);
+setView(activeView, false);
 await refreshActiveTab();
 await preview();
 
 refreshButton.addEventListener("click", () => preview());
+settingsButton.addEventListener("click", () => chrome.runtime.openOptionsPage());
 saveButton.addEventListener("click", () => save());
 copyButton.addEventListener("click", () => copyMarkdown());
 deleteButton.addEventListener("click", () => deleteCurrentClip());
 modeBrowserButton.addEventListener("click", () => setMode("browser_html"));
 modeFetchButton.addEventListener("click", () => setMode("server_fetch"));
-tabPreviewButton.addEventListener("click", () => setView("preview"));
-tabJsonButton.addEventListener("click", () => setView("json"));
-tabRawdocButton.addEventListener("click", () => setView("rawdoc"));
-tabParserButton.addEventListener("click", () => setView("parser"));
-tabSavedButton.addEventListener("click", () => setView("saved"));
-serverUrlInput.addEventListener("change", () => persistSettings());
-serverTokenInput.addEventListener("change", () => persistSettings());
-autoRefreshInput.addEventListener("change", () => persistSettings());
+tabPreviewButton.addEventListener("click", () => setView("preview", true));
+tabJsonButton.addEventListener("click", () => setView("json", true));
+tabRawdocButton.addEventListener("click", () => setView("rawdoc", true));
+tabParserButton.addEventListener("click", () => setView("parser", true));
+tabSavedButton.addEventListener("click", () => setView("saved", true));
+autoRefreshInput.addEventListener("change", () => persistPanelSettings());
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName === "local" && hasSettingsChange(changes)) {
+    void reloadSettings();
+  }
+});
 chrome.tabs.onActivated.addListener(() => scheduleAutoRefresh());
 chrome.tabs.onUpdated.addListener((_tabId, changeInfo) => {
   if (changeInfo.status === "complete" || changeInfo.url) {
@@ -86,10 +90,10 @@ async function refreshActiveTab(): Promise<void> {
   pageUrlEl.textContent = tab.url;
 
   if (activeTab.isFileUrl) {
-    setMode("browser_html");
+    setMode("browser_html", false);
     modeFetchButton.disabled = true;
   } else {
-    modeFetchButton.disabled = false;
+    modeFetchButton.disabled = !settings.allowServerFetch;
   }
 }
 
@@ -153,7 +157,7 @@ async function deleteCurrentClip(): Promise<void> {
 
   setStatus("Deleting");
   try {
-    const deleted = await createKnowledgeApiClient(settings).deleteClip(activeTab.url);
+    const deleted = await createKnowledgeApiClient(settings).deleteClip(activeTab.url, settings.deleteFilesByDefault);
     lastPreview = lastPreview
       ? { ...lastPreview, status: { ...lastPreview.status, saved: false } }
       : undefined;
@@ -172,7 +176,7 @@ async function buildRequestBody(): Promise<ClipRequestBody> {
     throw new Error("No active tab");
   }
 
-  if (settings.inputMode === "server_fetch") {
+  if (currentInputMode === "server_fetch" && settings.allowServerFetch && !activeTab.isFileUrl) {
     return {
       inputMode: "server_fetch",
       url: activeTab.url
@@ -238,39 +242,50 @@ function renderOutput(): void {
   parserOutput.replaceChildren(renderParserDiagnostics(lastPreview));
 }
 
-function setMode(mode: InputMode): void {
-  settings = { ...settings, inputMode: mode };
+function setMode(mode: InputMode, persist = true): void {
+  currentInputMode = mode;
   modeBrowserButton.dataset.active = String(mode === "browser_html");
   modeFetchButton.dataset.active = String(mode === "server_fetch");
-  void saveSettings({ inputMode: mode });
-  scheduleAutoRefresh();
+  if (persist) {
+    settings = { ...settings, defaultInputMode: mode };
+    void saveSettings({ defaultInputMode: mode });
+    scheduleAutoRefresh();
+  }
 }
 
-function setView(view: PanelView): void {
+function setView(view: PanelView, persist = false): void {
+  if (view === "parser" && !settings.showParserDiagnostics) {
+    view = "preview";
+  }
   activeView = view;
   tabPreviewButton.dataset.active = String(view === "preview");
   tabJsonButton.dataset.active = String(view === "json");
   tabRawdocButton.dataset.active = String(view === "rawdoc");
   tabParserButton.dataset.active = String(view === "parser");
   tabSavedButton.dataset.active = String(view === "saved");
+  if (persist) {
+    settings = { ...settings, defaultPanelTab: view };
+    void saveSettings({ defaultPanelTab: view });
+  }
   renderOutput();
   if (view === "saved") {
     void loadSavedClips();
   }
 }
 
-async function persistSettings(): Promise<void> {
+async function persistPanelSettings(): Promise<void> {
   settings = {
     ...settings,
-    serverUrl: serverUrlInput.value.replace(/\/+$/, ""),
-    token: serverTokenInput.value,
     autoRefresh: autoRefreshInput.checked
   };
-  await saveSettings(settings);
+  await saveSettings({ autoRefresh: settings.autoRefresh });
 }
 
 async function refreshServerStatus(): Promise<void> {
-  await persistSettings();
+  if (settings.healthCheckOnOpen) {
+    settings = await getSettings();
+    applySettingsToUi();
+  }
   const api = createKnowledgeApiClient(settings);
   const health = await api.health();
   if (!health.ok) {
@@ -287,7 +302,7 @@ async function refreshServerStatus(): Promise<void> {
 
 async function loadSavedClips(): Promise<void> {
   try {
-    savedClips = (await createKnowledgeApiClient(settings).list(50)).clips;
+    savedClips = (await createKnowledgeApiClient(settings).list(settings.savedListLimit)).clips;
     if (activeView === "saved") {
       renderSavedList();
     }
@@ -320,16 +335,55 @@ function renderSavedList(): void {
     meta.className = "saved-meta";
     meta.textContent = new Date(clip.savedAt).toLocaleString();
 
-    const paths = document.createElement("div");
-    paths.className = "saved-paths";
-    paths.textContent = [clip.markdownPath, clip.documentPath].filter(Boolean).join(" | ");
+    const details = document.createElement("div");
+    details.className = "saved-details";
+    details.textContent = [clip.docId, clip.parserVersion, clip.parserMethod].filter(Boolean).join(" | ");
 
     item.append(title, url, meta);
-    if (paths.textContent) {
-      item.append(paths);
+    if (details.textContent) {
+      item.append(details);
     }
     return item;
   }));
+}
+
+async function reloadSettings(): Promise<void> {
+  const previousMode = currentInputMode;
+  settings = await getSettings();
+  currentInputMode = settings.defaultInputMode;
+  applySettingsToUi();
+  if (activeTab?.isFileUrl) {
+    currentInputMode = "browser_html";
+  } else if (!settings.allowServerFetch && previousMode === "server_fetch") {
+    currentInputMode = "browser_html";
+  }
+  setMode(currentInputMode, false);
+  setView(settings.defaultPanelTab, false);
+}
+
+function applySettingsToUi(): void {
+  autoRefreshInput.checked = settings.autoRefresh;
+  tabParserButton.hidden = !settings.showParserDiagnostics;
+  if (!settings.showParserDiagnostics && activeView === "parser") {
+    activeView = "preview";
+  }
+  modeFetchButton.hidden = !settings.allowServerFetch;
+}
+
+function hasSettingsChange(changes: Record<string, chrome.storage.StorageChange>): boolean {
+  return [
+    "serverUrl",
+    "token",
+    "defaultInputMode",
+    "allowServerFetch",
+    "autoRefresh",
+    "healthCheckOnOpen",
+    "requestTimeoutMs",
+    "deleteFilesByDefault",
+    "showParserDiagnostics",
+    "savedListLimit",
+    "defaultPanelTab"
+  ].some((key) => key in changes);
 }
 
 function makeEmptyState(text: string): HTMLElement {

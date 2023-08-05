@@ -13,18 +13,13 @@
           <h1>Knowledge</h1>
           <p id="page-url">No active page</p>
         </div>
-        <button id="refresh-button" title="Refresh preview">Refresh</button>
+        <div class="header-actions">
+          <button id="settings-button" title="Open settings">Settings</button>
+          <button id="refresh-button" title="Refresh preview">Refresh</button>
+        </div>
       </header>
 
       <section class="controls">
-        <label>
-          Server
-          <input id="server-url" type="text" />
-        </label>
-        <label>
-          Token
-          <input id="server-token" type="password" />
-        </label>
         <div class="segmented">
           <button id="mode-browser" data-active="true">Current HTML</button>
           <button id="mode-fetch">Server Fetch</button>

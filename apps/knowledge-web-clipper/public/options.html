@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Knowledge Web Clipper Settings</title>
+    <link rel="stylesheet" href="options.css" />
+  </head>
+  <body>
+    <main class="options-shell">
+      <header class="page-header">
+        <div>
+          <h1>Knowledge Web Clipper Settings</h1>
+          <p>Extension version <span id="extension-version">0.1.0</span></p>
+        </div>
+        <button id="test-connection" type="button">Test Connection</button>
+      </header>
+
+      <form id="settings-form" class="settings-form">
+        <section class="settings-section">
+          <h2>Server</h2>
+          <div class="field-grid">
+            <label>
+              Server URL
+              <input id="server-url" type="url" placeholder="http://127.0.0.1:18765" />
+            </label>
+            <label>
+              Server Token
+              <input id="server-token" type="password" autocomplete="off" />
+            </label>
+            <label>
+              Request Timeout
+              <input id="request-timeout-ms" type="number" min="3000" max="60000" step="1000" />
+            </label>
+          </div>
+        </section>
+
+        <section class="settings-section">
+          <h2>Clipping</h2>
+          <div class="field-grid">
+            <label>
+              Default Input Mode
+              <select id="default-input-mode">
+                <option value="browser_html">Current HTML</option>
+                <option value="server_fetch">Server Fetch</option>
+              </select>
+            </label>
+            <label>
+              Saved List Limit
+              <input id="saved-list-limit" type="number" min="10" max="200" step="10" />
+            </label>
+            <label>
+              Default Panel Tab
+              <select id="default-panel-tab">
+                <option value="preview">Preview</option>
+                <option value="json">JSON</option>
+                <option value="rawdoc">RawDoc</option>
+                <option value="parser">Parser</option>
+                <option value="saved">Saved</option>
+              </select>
+            </label>
+          </div>
+          <div class="toggle-grid">
+            <label><input id="allow-server-fetch" type="checkbox" /> Allow server fetch mode</label>
+            <label><input id="auto-refresh" type="checkbox" /> Auto refresh on tab changes</label>
+            <label><input id="health-check-on-open" type="checkbox" /> Health check before parsing</label>
+            <label><input id="delete-files-by-default" type="checkbox" /> Delete saved files with clip records</label>
+            <label><input id="show-parser-diagnostics" type="checkbox" /> Show parser diagnostics tab</label>
+          </div>
+        </section>
+
+        <section class="settings-section">
+          <h2>Status</h2>
+          <div id="status-output" class="status-output"></div>
+        </section>
+
+        <footer class="form-actions">
+          <button id="reset-settings" type="button">Reset</button>
+          <button type="submit">Save Settings</button>
+        </footer>
+      </form>
+    </main>
+    <script type="module" src="options.js"></script>
+  </body>
+</html>

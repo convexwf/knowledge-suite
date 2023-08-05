@@ -43,6 +43,11 @@ input {
   justify-content: space-between;
 }
 
+.header-actions {
+  display: flex;
+  gap: 8px;
+}
+
 h1 {
   font-size: 18px;
   line-height: 1.2;
@@ -338,13 +343,13 @@ button[data-active="true"] {
 
 .saved-url,
 .saved-meta,
-.saved-paths {
+.saved-details {
   color: #526174;
   font-size: 11px;
   line-height: 1.45;
   overflow-wrap: anywhere;
 }
 
-.saved-paths {
+.saved-details {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
