@@ -14,7 +14,7 @@ export interface ParsedPage {
   document: KnowledgeDocument;
 }
 
-type ParserMethod = "defuddle" | "site_adapter" | "dom_fallback";
+type ParserMethod = "selection" | "defuddle" | "site_adapter" | "schema_org" | "dom_fallback";
 
 interface CandidateMetrics {
   textLength: number;
@@ -38,7 +38,9 @@ interface ParserCandidate {
     publishedAt?: string | null;
     language?: string;
     image?: string;
+    tags?: string[];
   };
+  references?: KnowledgeDocument["references"];
   metrics: CandidateMetrics;
   score: number;
   warnings: string[];
@@ -77,6 +79,7 @@ export async function parsePage(input: ResolvedInput): Promise<ParsedPage> {
     metadata: {
       inputMode: input.inputMode,
       normalizedUrl: input.normalizedUrl,
+      fetchUrl: input.fetchUrl,
       title: selectedTitle,
       parserMethod: selected.method,
       parserProfile: selected.adapterId ?? selected.method,
@@ -130,9 +133,10 @@ export async function parsePage(input: ResolvedInput): Promise<ParsedPage> {
         defuddleResult?.language ||
         baseDocument.documentElement?.getAttribute("lang") ||
         input.meta.language,
-      tags: [],
+      tags: unique(selected.metadata.tags ?? []),
       parser_version: `${PARSER_VERSION}:${selected.method}`
     },
+    references: selected.references,
     sections
   };
 
@@ -147,8 +151,13 @@ function buildCandidates(
 ): ParserCandidate[] {
   const candidates: ParserCandidate[] = [];
 
+  const selectionCandidate = buildSelectionCandidate(input, title);
+  if (selectionCandidate) {
+    candidates.push(selectionCandidate);
+  }
+
   if (defuddleResult) {
-    const sections = extractDefuddleSections(defuddleResult.content, title, input.url);
+    const sections = extractDefuddleSections(defuddleResult.content, title, input.fetchUrl ?? input.url);
     candidates.push(makeCandidate({
       id: "defuddle",
       method: "defuddle",
@@ -172,9 +181,14 @@ function buildCandidates(
     candidates.push(...buildAdapterCandidates(input, title, match));
   }
 
+  const schemaCandidate = buildSchemaOrgCandidate(input, title);
+  if (schemaCandidate) {
+    candidates.push(schemaCandidate);
+  }
+
   const fallbackDocument = parseCleanDocument(input.html);
   const fallbackRoot = pickReadableRoot(fallbackDocument);
-  normalizeUrls(fallbackRoot, input.url);
+  normalizeUrls(fallbackRoot, input.fetchUrl ?? input.url);
   candidates.push(makeCandidate({
     id: "dom_fallback",
     method: "dom_fallback",
@@ -189,16 +203,92 @@ function buildCandidates(
   return candidates;
 }
 
+function buildSelectionCandidate(input: ResolvedInput, title: string): ParserCandidate | undefined {
+  if (!input.selectionHtml || normalizeText(input.selectionHtml).length < 20) {
+    return undefined;
+  }
+  const document = parseCleanDocument(input.selectionHtml);
+  const root = pickParsedContentRoot(document);
+  if (!root) {
+    return undefined;
+  }
+  normalizeUrls(root, input.fetchUrl ?? input.url);
+  return makeCandidate({
+    id: "selection",
+    method: "selection",
+    title,
+    sections: extractSections(root, title),
+    metadata: {},
+    reason: "User-selected page fragment",
+    baseScore: 120,
+    warnings: []
+  });
+}
+
+function buildSchemaOrgCandidate(input: ResolvedInput, fallbackTitle: string): ParserCandidate | undefined {
+  const document = parseHTML(input.html).document;
+  const article = findSchemaArticle(document);
+  if (!article) {
+    return undefined;
+  }
+
+  const title = stringValue(article.headline) || stringValue(article.name) || fallbackTitle;
+  const body = stringValue(article.articleBody) || stringValue(article.abstract) || stringValue(article.description);
+  if (!body || normalizeText(body).length < 80) {
+    return undefined;
+  }
+
+  const sections: KnowledgeDocument["sections"] = [];
+  const abstract = stringValue(article.abstract);
+  if (abstract && normalizeText(abstract) !== normalizeText(body)) {
+    sections.push({
+      section_id: makeId(),
+      type: "heading",
+      level: 2,
+      content: "Abstract"
+    });
+    sections.push({
+      section_id: makeId(),
+      type: "paragraph",
+      content: normalizeText(abstract)
+    });
+  }
+  for (const paragraph of body.split(/\n{2,}/).map(normalizeText).filter(Boolean)) {
+    sections.push({
+      section_id: makeId(),
+      type: "paragraph",
+      content: paragraph
+    });
+  }
+
+  return makeCandidate({
+    id: "schema_org",
+    method: "schema_org",
+    title,
+    sections,
+    metadata: {
+      authors: schemaAuthors(article.author),
+      publishedAt: normalizeDate(stringValue(article.datePublished)),
+      image: schemaImage(article.image),
+      tags: schemaKeywords(article.keywords)
+    },
+    reason: `Schema.org ${stringValue(article["@type"]) || "Article"} JSON-LD candidate`,
+    baseScore: 30,
+    warnings: []
+  });
+}
+
 function buildAdapterCandidates(input: ResolvedInput, title: string, match: MatchedAdapter): ParserCandidate[] {
   const document = parseCleanDocument(input.html);
-  applyAdapterCleanup(document, match.adapter, input.url);
+  const baseUrl = input.fetchUrl ?? input.url;
+  applyAdapterCleanup(document, match.adapter, baseUrl);
   const candidates: ParserCandidate[] = [];
 
   for (const selector of match.adapter.content.selectors) {
     const roots = [...document.querySelectorAll(selector)];
     for (const [index, root] of roots.entries()) {
       applyScopedExcludes(root, match.adapter.content.excludeSelectors ?? []);
-      normalizeUrls(root, input.url);
+      normalizeUrls(root, baseUrl);
       const rootTextLength = normalizeText(root.textContent ?? "").length;
       if (rootTextLength < (match.adapter.content.requireTextLength ?? 0) && !root.querySelector("img,table")) {
         continue;
@@ -209,12 +299,14 @@ function buildAdapterCandidates(input: ResolvedInput, title: string, match: Matc
         method: "site_adapter",
         adapterId: match.adapter.id,
         title: readAdapterMetadata(document, match.adapter, "title") || title,
-        sections,
-        metadata: {
-          authors: unique([readAdapterMetadata(document, match.adapter, "author")].filter(Boolean) as string[]),
+      sections,
+      metadata: {
+          authors: readAdapterMetadataList(document, match.adapter, "author"),
           publishedAt: normalizeDate(readAdapterMetadata(document, match.adapter, "publishedAt")),
-          image: readAdapterMetadata(document, match.adapter, "image")
-        },
+          image: readAdapterMetadata(document, match.adapter, "image"),
+          tags: adapterTags(match.adapter, input.url)
+      },
+        references: match.adapter.id === "arxiv_html" ? extractArxivReferences(root) : undefined,
         reason: `Matched ${match.adapter.id} (${match.matchReason}); content selector ${selector}`,
         baseScore: match.adapter.priority / 2 + match.matchScore / 10 + (match.adapter.quality?.minScoreBonus ?? 0),
         warnings: []
@@ -232,6 +324,7 @@ function makeCandidate(params: {
   title?: string;
   sections: KnowledgeDocument["sections"];
   metadata: ParserCandidate["metadata"];
+  references?: ParserCandidate["references"];
   reason: string;
   baseScore: number;
   warnings: string[];
@@ -340,6 +433,168 @@ function readAdapterMetadata(document: Document, adapter: SiteAdapter, key: keyo
     }
   }
   return undefined;
+}
+
+function readAdapterMetadataList(document: Document, adapter: SiteAdapter, key: keyof NonNullable<SiteAdapter["metadata"]>): string[] {
+  for (const selector of adapter.metadata?.[key] ?? []) {
+    const values: string[] = [];
+    for (const node of document.querySelectorAll(selector)) {
+      const content = node.getAttribute("content") ||
+        node.getAttribute("datetime") ||
+        node.getAttribute("src") ||
+        node.textContent;
+      const normalized = normalizeText(content ?? "");
+      if (normalized) {
+        values.push(normalized);
+      }
+    }
+    if (values.length > 0) {
+      return unique(values);
+    }
+  }
+  return [];
+}
+
+function adapterTags(adapter: SiteAdapter, url: string): string[] {
+  if (adapter.id !== "arxiv_html") {
+    return [];
+  }
+  const arxivId = arxivIdFromUrl(url);
+  return unique([
+    arxivId ? `paper:work_id:arxiv:${arxivId}` : "",
+    "paper:variant:preprint"
+  ]);
+}
+
+function arxivIdFromUrl(input: string): string | undefined {
+  let url: URL;
+  try {
+    url = new URL(input);
+  } catch {
+    return undefined;
+  }
+  if (url.hostname !== "arxiv.org" && url.hostname !== "www.arxiv.org") {
+    return undefined;
+  }
+  const parts = url.pathname.split("/").filter(Boolean);
+  if (parts[0] && ["abs", "html", "pdf"].includes(parts[0].toLowerCase())) {
+    parts.shift();
+  }
+  let tail = parts.join("/");
+  if (tail.toLowerCase().endsWith(".pdf")) {
+    tail = tail.slice(0, -4);
+  }
+  return /^(\d{4}\.\d{4,5}|[a-z][a-z0-9-]*(?:\.[a-z]{2})?\/\d{7})(?:v\d+)?$/i.test(tail)
+    ? tail
+    : undefined;
+}
+
+function extractArxivReferences(root: Element): KnowledgeDocument["references"] {
+  const references: KnowledgeDocument["references"] = [];
+  const bibliography = root.querySelector(".ltx_bibliography, section.ltx_bibliography, [id^='bib']");
+  if (!bibliography) {
+    return references;
+  }
+  for (const item of bibliography.querySelectorAll("li[id], .ltx_bibitem[id]")) {
+    const refId = item.getAttribute("id");
+    const text = normalizeText(item.textContent ?? "");
+    if (!refId || !text) {
+      continue;
+    }
+    references.push({
+      ref_id: refId,
+      label: item.querySelector(".ltx_tag")?.textContent?.trim() || undefined,
+      text
+    });
+  }
+  return references;
+}
+
+function findSchemaArticle(document: Document): Record<string, unknown> | undefined {
+  const candidates: Record<string, unknown>[] = [];
+  for (const script of document.querySelectorAll('script[type="application/ld+json"]')) {
+    const text = script.textContent?.trim();
+    if (!text) {
+      continue;
+    }
+    try {
+      collectJsonLdObjects(JSON.parse(text), candidates);
+    } catch {
+      // Ignore invalid JSON-LD blocks; other candidates may still be usable.
+    }
+  }
+  return candidates.find((candidate) => {
+    const types = arrayValue(candidate["@type"]).map(String);
+    return types.some((type) => /^(Article|NewsArticle|BlogPosting|ScholarlyArticle|TechArticle)$/i.test(type));
+  });
+}
+
+function collectJsonLdObjects(value: unknown, output: Record<string, unknown>[]): void {
+  if (Array.isArray(value)) {
+    value.forEach((item) => collectJsonLdObjects(item, output));
+    return;
+  }
+  if (!isRecord(value)) {
+    return;
+  }
+  output.push(value);
+  const graph = value["@graph"];
+  if (graph) {
+    collectJsonLdObjects(graph, output);
+  }
+}
+
+function schemaAuthors(value: unknown): string[] {
+  return unique(arrayValue(value)
+    .map((author) => {
+      if (typeof author === "string") {
+        return author;
+      }
+      if (isRecord(author)) {
+        return stringValue(author.name);
+      }
+      return "";
+    })
+    .filter((author): author is string => Boolean(author)));
+}
+
+function schemaImage(value: unknown): string | undefined {
+  const first = arrayValue(value)[0];
+  if (typeof first === "string") {
+    return first;
+  }
+  if (isRecord(first)) {
+    return stringValue(first.url) || stringValue(first.contentUrl);
+  }
+  return undefined;
+}
+
+function schemaKeywords(value: unknown): string[] {
+  if (typeof value === "string") {
+    return value.split(",").map(normalizeText).filter(Boolean);
+  }
+  return arrayValue(value).map((item) => String(item)).map(normalizeText).filter(Boolean);
+}
+
+function stringValue(value: unknown): string | undefined {
+  if (typeof value === "string") {
+    return normalizeText(value) || undefined;
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  return undefined;
+}
+
+function arrayValue(value: unknown): unknown[] {
+  if (Array.isArray(value)) {
+    return value;
+  }
+  return value === undefined || value === null ? [] : [value];
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function normalizeDate(value: string | undefined): string | null {
@@ -557,6 +812,15 @@ function extractSections(root: Element, title: string): KnowledgeDocument["secti
       continue;
     }
 
+    if (tagName === "blockquote") {
+      sections.push({
+        section_id: makeId(),
+        type: "blockquote",
+        content: inlineToMarkdown(node)
+      });
+      continue;
+    }
+
     if (tagName === "figure") {
       const assets = [...node.querySelectorAll("img")]
         .map((img) => ({
@@ -637,6 +901,16 @@ function renderInlineNode(node: ChildNode): string {
     return `\`${content.replace(/`/g, "\\`")}\``;
   }
 
+  if (tagName === "math") {
+    const tex = mathText(element);
+    if (!tex) {
+      return content;
+    }
+    const display = element.getAttribute("display") === "block" ||
+      (element.getAttribute("class") ?? "").includes("ltx_Math_display");
+    return display ? `\n$$\n${tex}\n$$\n` : `$${tex}$`;
+  }
+
   if (tagName === "strong" || tagName === "b") {
     return content ? `**${content}**` : "";
   }
@@ -650,6 +924,18 @@ function renderInlineNode(node: ChildNode): string {
   }
 
   return content;
+}
+
+function mathText(element: Element): string | undefined {
+  for (const encoding of ["application/x-tex", "application/x-latex"]) {
+    const annotation = element.querySelector(`annotation[encoding="${encoding}"]`);
+    const text = normalizeText(annotation?.textContent ?? "");
+    if (text) {
+      return text;
+    }
+  }
+  const altText = normalizeText(element.getAttribute("alttext") ?? "");
+  return altText || undefined;
 }
 
 function measureSections(sections: KnowledgeDocument["sections"]): CandidateMetrics {
@@ -681,7 +967,15 @@ function scoreCandidate(method: ParserMethod, metrics: CandidateMetrics, baseSco
     return -100;
   }
 
-  const methodBoost = method === "defuddle" ? 20 : method === "site_adapter" ? 35 : 0;
+  const methodBoost = method === "selection"
+    ? 60
+    : method === "defuddle"
+      ? 20
+      : method === "site_adapter"
+        ? 35
+        : method === "schema_org"
+          ? 15
+          : 0;
   const lengthScore = Math.min(metrics.textLength / 20, 80);
   const structureScore = Math.min(metrics.sectionCount * 5, 40) +
     metrics.headingCount * 4 +

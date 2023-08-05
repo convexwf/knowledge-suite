@@ -26,6 +26,8 @@ function sectionToMarkdown(section: DocumentSection): string[] {
       return [`${"#".repeat(section.level ?? 2)} ${section.content ?? ""}`, ""];
     case "paragraph":
       return [section.content ?? "", ""];
+    case "blockquote":
+      return blockquoteToMarkdown(section);
     case "list":
       return [...(section.items ?? []).map((item) => `- ${typeof item === "string" ? item : item.text}`), ""];
     case "code":
@@ -37,6 +39,14 @@ function sectionToMarkdown(section: DocumentSection): string[] {
     default:
       return [];
   }
+}
+
+function blockquoteToMarkdown(section: DocumentSection): string[] {
+  const content = section.content ?? "";
+  if (!content) {
+    return [];
+  }
+  return [...content.split(/\r?\n/).map((line) => `> ${line}`), ""];
 }
 
 function figureToMarkdown(section: DocumentSection): string[] {

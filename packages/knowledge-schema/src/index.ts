@@ -55,6 +55,7 @@ export interface RawDoc {
 export type DocumentSectionType =
   | "heading"
   | "paragraph"
+  | "blockquote"
   | "list"
   | "table"
   | "code"

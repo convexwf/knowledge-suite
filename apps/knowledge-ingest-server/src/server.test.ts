@@ -331,6 +331,177 @@ describe("knowledge ingest server", () => {
     await app.close();
   });
 
+  it("prefers a user selection candidate when selection HTML is present", async () => {
+    const app = await buildServer({
+      host: "127.0.0.1",
+      port: 0,
+      token: "test-token",
+      storeRoot,
+      fetchTimeoutMs: 1000,
+      maxHtmlBytes: 1024 * 1024
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/clip/preview",
+      headers: { authorization: "Bearer test-token" },
+      payload: {
+        inputMode: "browser_html",
+        snapshot: {
+          pageUrl: "https://example.com/selection",
+          title: "Selection Article",
+          html: `<!doctype html><html><body><article><h1>Selection Article</h1><p>Full page content that should lose to the selected passage when the user has highlighted a useful excerpt.</p></article></body></html>`,
+          selectionHtml: `<section><h2>Selected Passage</h2><p>The selected passage is intentionally long enough to become a first-class parser candidate.</p><blockquote>Selection keeps quoted material.</blockquote></section>`,
+          capturedAt: "2026-05-11T02:00:00.000Z",
+          meta: {}
+        }
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().rawdoc.metadata.parserMethod).toBe("selection");
+    expect(response.json().markdown).toContain("## Selected Passage");
+    expect(response.json().markdown).toContain("> Selection keeps quoted material.");
+    expect(response.json().markdown).not.toContain("Full page content");
+
+    await app.close();
+  });
+
+  it("uses schema.org JSON-LD as a parser candidate", async () => {
+    const app = await buildServer({
+      host: "127.0.0.1",
+      port: 0,
+      token: "test-token",
+      storeRoot,
+      fetchTimeoutMs: 1000,
+      maxHtmlBytes: 1024 * 1024
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/clip/preview",
+      headers: { authorization: "Bearer test-token" },
+      payload: {
+        inputMode: "browser_html",
+        snapshot: {
+          pageUrl: "https://example.com/jsonld",
+          title: "Shell Page",
+          html: `<!doctype html>
+            <html>
+              <head>
+                <script type="application/ld+json">
+                  {
+                    "@context": "https://schema.org",
+                    "@type": "ScholarlyArticle",
+                    "headline": "Structured Article",
+                    "author": [{"name": "Grace Hopper"}],
+                    "datePublished": "2026-01-02",
+                    "keywords": ["parser", "jsonld"],
+                    "abstract": "A structured abstract extracted from schema.org metadata.",
+                    "articleBody": "A structured article body extracted from schema.org metadata.\\n\\nThe body has enough text to be useful when the visible DOM is sparse."
+                  }
+                </script>
+              </head>
+              <body><main><p>Short shell.</p></main></body>
+            </html>`,
+          capturedAt: "2026-05-11T02:00:00.000Z",
+          meta: {}
+        }
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().rawdoc.metadata.parserMethod).toBe("schema_org");
+    expect(response.json().document.meta.title).toBe("Structured Article");
+    expect(response.json().document.meta.authors).toEqual(["Grace Hopper"]);
+    expect(response.json().document.meta.tags).toEqual(["parser", "jsonld"]);
+    expect(response.json().markdown).toContain("A structured article body");
+
+    await app.close();
+  });
+
+  it("parses arXiv LaTeXML HTML with paper tags and references", async () => {
+    let fetchedUrl = "";
+    globalThis.fetch = async (url) => {
+      fetchedUrl = String(url);
+      return new Response(`<!doctype html>
+        <html>
+          <head>
+            <title>arXiv paper</title>
+            <meta name="citation_author" content="Ignored Meta Author">
+          </head>
+          <body>
+            <article class="ltx_document">
+              <h1 class="ltx_title_document">A Useful Paper</h1>
+              <div class="ltx_authors">
+                <span class="ltx_personname">Ada Lovelace</span>
+                <span class="ltx_personname">Alan Turing</span>
+              </div>
+              <section class="ltx_section">
+                <h2 class="ltx_title">Introduction</h2>
+                <div class="ltx_para">
+                  <p class="ltx_p">This arXiv paragraph is long enough to exercise the paper parser candidate and preserve inline math <math alttext="x^2"></math>.</p>
+                </div>
+                <figure>
+                  <img class="ltx_graphics" src="figures/example.png" alt="Example figure">
+                  <figcaption class="ltx_caption">An example figure.</figcaption>
+                </figure>
+              </section>
+              <section class="ltx_bibliography">
+                <ul>
+                  <li id="bib.bib1"><span class="ltx_tag">[1]</span> A referenced paper.</li>
+                </ul>
+              </section>
+            </article>
+          </body>
+        </html>`, {
+        status: 200,
+        headers: {
+          "content-type": "text/html; charset=utf-8"
+        }
+      });
+    };
+
+    const app = await buildServer({
+      host: "127.0.0.1",
+      port: 0,
+      token: "test-token",
+      storeRoot,
+      fetchTimeoutMs: 1000,
+      maxHtmlBytes: 1024 * 1024
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/clip/preview",
+      headers: { authorization: "Bearer test-token" },
+      payload: {
+        inputMode: "server_fetch",
+        url: "https://arxiv.org/abs/2401.00001v1"
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(fetchedUrl).toBe("https://arxiv.org/html/2401.00001v1");
+    expect(response.json().rawdoc.metadata.parserMethod).toBe("site_adapter");
+    expect(response.json().rawdoc.metadata.parserProfile).toBe("arxiv_html");
+    expect(response.json().document.meta.title).toBe("A Useful Paper");
+    expect(response.json().document.meta.authors).toEqual(["Ada Lovelace", "Alan Turing"]);
+    expect(response.json().document.meta.tags).toEqual([
+      "paper:work_id:arxiv:2401.00001v1",
+      "paper:variant:preprint"
+    ]);
+    expect(response.json().document.references[0]).toMatchObject({
+      ref_id: "bib.bib1",
+      label: "[1]",
+      text: "[1] A referenced paper."
+    });
+    expect(response.json().markdown).toContain("inline math $x^2$");
+    expect(response.json().markdown).toContain("![Example figure](https://arxiv.org/html/figures/example.png)");
+
+    await app.close();
+  });
+
   it("removes common page chrome before extraction", async () => {
     const app = await buildServer({
       host: "127.0.0.1",
