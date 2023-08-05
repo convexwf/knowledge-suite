@@ -60,12 +60,57 @@
               </select>
             </label>
           </div>
-          <div class="toggle-grid">
-            <label><input id="allow-server-fetch" type="checkbox" /> Allow server fetch mode</label>
-            <label><input id="auto-refresh" type="checkbox" /> Auto refresh on tab changes</label>
-            <label><input id="health-check-on-open" type="checkbox" /> Health check before parsing</label>
-            <label><input id="delete-files-by-default" type="checkbox" /> Delete saved files with clip records</label>
-            <label><input id="show-parser-diagnostics" type="checkbox" /> Show parser diagnostics tab</label>
+          <div class="toggle-list" aria-label="Clipping behavior switches">
+            <label class="toggle-row">
+              <span>
+                <strong>Allow Server Fetch mode</strong>
+                <span class="toggle-description">
+                  Enable the side panel mode where the local server fetches the current URL by itself. Local
+                  <code>file://</code> pages still use Current HTML because the server cannot read browser-only local files.
+                </span>
+              </span>
+              <input id="allow-server-fetch" type="checkbox" />
+            </label>
+            <label class="toggle-row">
+              <span>
+                <strong>Auto refresh when the active tab changes</strong>
+                <span class="toggle-description">
+                  Re-run preview automatically after switching tabs or after the current tab finishes loading. Turn this off
+                  when you want preview to update only after pressing Refresh.
+                </span>
+              </span>
+              <input id="auto-refresh" type="checkbox" />
+            </label>
+            <label class="toggle-row">
+              <span>
+                <strong>Check server health before parsing</strong>
+                <span class="toggle-description">
+                  Verify the local server is reachable before previewing or saving. This gives clearer errors for wrong URL,
+                  token, or Docker startup issues, with a small extra request before each parse.
+                </span>
+              </span>
+              <input id="health-check-on-open" type="checkbox" />
+            </label>
+            <label class="toggle-row">
+              <span>
+                <strong>Delete generated files with clip records</strong>
+                <span class="toggle-description">
+                  When deleting the current URL from Saved, also remove its raw HTML, RawDoc JSON, Document JSON, and
+                  Markdown files. Turn this off only if you want the database record removed but object files kept.
+                </span>
+              </span>
+              <input id="delete-files-by-default" type="checkbox" />
+            </label>
+            <label class="toggle-row">
+              <span>
+                <strong>Show parser diagnostics tab</strong>
+                <span class="toggle-description">
+                  Show the Parser tab in the side panel with extraction method, adapter matches, candidate scores, and
+                  warnings. Useful while improving extraction quality; optional for daily clipping.
+                </span>
+              </span>
+              <input id="show-parser-diagnostics" type="checkbox" />
+            </label>
           </div>
         </section>
 

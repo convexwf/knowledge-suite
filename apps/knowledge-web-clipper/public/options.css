@@ -89,23 +89,11 @@ p {
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
 }
 
-.toggle-grid {
-  display: grid;
-  gap: 10px 18px;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-}
-
 label {
   color: #42526a;
   display: grid;
   font-size: 13px;
   gap: 6px;
-}
-
-.toggle-grid label {
-  align-items: center;
-  display: flex;
-  gap: 8px;
 }
 
 input,
@@ -121,6 +109,51 @@ select {
 input[type="checkbox"] {
   min-height: auto;
   width: 16px;
+}
+
+.toggle-list {
+  border: 1px solid #d9e1ea;
+  border-radius: 8px;
+  display: grid;
+  overflow: hidden;
+}
+
+.toggle-row {
+  align-items: center;
+  background: #ffffff;
+  border-bottom: 1px solid #d9e1ea;
+  display: grid;
+  gap: 16px;
+  grid-template-columns: 1fr auto;
+  padding: 14px;
+}
+
+.toggle-row:last-child {
+  border-bottom: 0;
+}
+
+.toggle-row strong {
+  color: #172033;
+  display: block;
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.toggle-description {
+  color: #526174;
+  display: block;
+  font-size: 12px;
+  line-height: 1.5;
+  margin-top: 4px;
+}
+
+.toggle-description code {
+  background: #eef3f8;
+  border-radius: 4px;
+  color: #172033;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  padding: 1px 4px;
 }
 
 .status-output {
@@ -163,5 +196,10 @@ input[type="checkbox"] {
   .form-actions {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .toggle-row {
+    align-items: start;
+    grid-template-columns: 1fr;
   }
 }
