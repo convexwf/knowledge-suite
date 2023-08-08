@@ -220,6 +220,67 @@ button[data-active="true"] {
   padding: 1px 4px;
 }
 
+.preview-output .math-inline,
+.preview-output .math-display {
+  color: #172033;
+  font-family: "Times New Roman", Cambria, Georgia, serif;
+  letter-spacing: 0;
+}
+
+.preview-output .math-inline {
+  background: #f6f8fb;
+  border: 1px solid #d9e1ea;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 1px;
+  margin: 0 2px;
+  padding: 1px 4px;
+  white-space: nowrap;
+}
+
+.preview-output .math-display {
+  align-items: center;
+  background: #f6f8fb;
+  border: 1px solid #d9e1ea;
+  border-radius: 6px;
+  display: flex;
+  gap: 2px;
+  justify-content: center;
+  margin: 0 0 12px;
+  min-height: 38px;
+  overflow-x: auto;
+  padding: 8px 10px;
+  white-space: nowrap;
+}
+
+.preview-output .math-frac {
+  align-items: stretch;
+  display: inline-flex;
+  flex-direction: column;
+  line-height: 1.05;
+  margin: 0 2px;
+  text-align: center;
+  vertical-align: middle;
+}
+
+.preview-output .math-num {
+  border-bottom: 1px solid currentColor;
+  padding: 0 3px 2px;
+}
+
+.preview-output .math-den {
+  padding: 2px 3px 0;
+}
+
+.preview-output .math-inline sup,
+.preview-output .math-inline sub,
+.preview-output .math-display sup,
+.preview-output .math-display sub {
+  font-size: 0.72em;
+  line-height: 0;
+}
+
 .preview-output pre {
   overflow: auto;
   padding: 10px;

@@ -588,6 +588,7 @@ function renderMarkdown(markdown: string): DocumentFragment {
   let paragraph: string[] = [];
   let list: HTMLUListElement | undefined;
   let codeBlock: string[] | undefined;
+  let mathBlock: string[] | undefined;
   let tableRows: string[][] = [];
 
   const flushParagraph = () => {
@@ -619,6 +620,24 @@ function renderMarkdown(markdown: string): DocumentFragment {
   };
 
   for (const line of lines) {
+    if (line.trim() === "$$") {
+      if (mathBlock) {
+        fragment.append(renderMath(mathBlock.join("\n"), true));
+        mathBlock = undefined;
+      } else {
+        flushParagraph();
+        flushList();
+        flushTable();
+        mathBlock = [];
+      }
+      continue;
+    }
+
+    if (mathBlock) {
+      mathBlock.push(line);
+      continue;
+    }
+
     if (line.startsWith("```")) {
       if (codeBlock) {
         const pre = document.createElement("pre");
@@ -697,6 +716,9 @@ function renderMarkdown(markdown: string): DocumentFragment {
     pre.append(code);
     fragment.append(pre);
   }
+  if (mathBlock) {
+    fragment.append(renderMath(mathBlock.join("\n"), true));
+  }
   flushParagraph();
   flushList();
   flushTable();
@@ -717,12 +739,14 @@ function stripFrontmatter(markdown: string): string {
 }
 
 function appendInlineMarkdown(parent: HTMLElement, text: string): void {
-  const parts = text.split(/(!?\[[^\]]*]\([^)]+\)|`[^`]+`)/g);
+  const parts = text.split(/(!?\[[^\]]*]\([^)]+\)|`[^`]+`|\$[^$\n]+\$)/g);
   for (const part of parts) {
     if (part.startsWith("`") && part.endsWith("`") && part.length > 1) {
       const code = document.createElement("code");
       code.textContent = part.slice(1, -1);
       parent.append(code);
+    } else if (part.startsWith("$") && part.endsWith("$") && part.length > 1) {
+      parent.append(renderMath(part.slice(1, -1), false));
     } else if (part.startsWith("![")) {
       const image = part.match(/^!\[([^\]]*)]\(([^)]+)\)$/);
       if (image && isSafeMarkdownUrl(image[2], "image")) {
@@ -751,6 +775,179 @@ function appendInlineMarkdown(parent: HTMLElement, text: string): void {
       parent.append(document.createTextNode(part));
     }
   }
+}
+
+function renderMath(source: string, display: boolean): HTMLElement {
+  const element = document.createElement(display ? "div" : "span");
+  element.className = display ? "math-display" : "math-inline";
+  element.dataset.source = source;
+  appendMathTokens(element, source.trim());
+  return element;
+}
+
+function appendMathTokens(parent: HTMLElement, source: string): void {
+  let index = 0;
+  while (index < source.length) {
+    if (source.startsWith("\\frac", index)) {
+      const parsed = parseFraction(source, index + "\\frac".length);
+      if (parsed) {
+        const fraction = document.createElement("span");
+        fraction.className = "math-frac";
+        const numerator = document.createElement("span");
+        numerator.className = "math-num";
+        appendMathTokens(numerator, parsed.numerator);
+        const denominator = document.createElement("span");
+        denominator.className = "math-den";
+        appendMathTokens(denominator, parsed.denominator);
+        fraction.append(numerator, denominator);
+        parent.append(fraction);
+        index = parsed.nextIndex;
+        continue;
+      }
+    }
+
+    const char = source[index];
+    if ((char === "^" || char === "_") && parent.lastChild) {
+      const parsed = parseScriptArgument(source, index + 1);
+      if (parsed) {
+        const script = document.createElement(char === "^" ? "sup" : "sub");
+        appendMathTokens(script, parsed.value);
+        parent.append(script);
+        index = parsed.nextIndex;
+        continue;
+      }
+    }
+
+    if (char === "\\") {
+      const command = source.slice(index).match(/^\\[A-Za-z]+/);
+      if (command) {
+        parent.append(document.createTextNode(mathCommandText(command[0])));
+        index += command[0].length;
+        continue;
+      }
+    }
+
+    parent.append(document.createTextNode(mathSymbolText(char)));
+    index += 1;
+  }
+}
+
+function parseFraction(source: string, startIndex: number): { numerator: string; denominator: string; nextIndex: number } | undefined {
+  const numerator = parseBraceGroup(source, skipSpaces(source, startIndex));
+  if (!numerator) {
+    return undefined;
+  }
+  const denominator = parseBraceGroup(source, skipSpaces(source, numerator.nextIndex));
+  if (!denominator) {
+    return undefined;
+  }
+  return {
+    numerator: numerator.value,
+    denominator: denominator.value,
+    nextIndex: denominator.nextIndex
+  };
+}
+
+function parseScriptArgument(source: string, startIndex: number): { value: string; nextIndex: number } | undefined {
+  const index = skipSpaces(source, startIndex);
+  if (source[index] === "{") {
+    return parseBraceGroup(source, index);
+  }
+  if (source[index] === "\\") {
+    const command = source.slice(index).match(/^\\[A-Za-z]+/);
+    if (command) {
+      return {
+        value: command[0],
+        nextIndex: index + command[0].length
+      };
+    }
+  }
+  return source[index]
+    ? { value: source[index], nextIndex: index + 1 }
+    : undefined;
+}
+
+function parseBraceGroup(source: string, startIndex: number): { value: string; nextIndex: number } | undefined {
+  if (source[startIndex] !== "{") {
+    return undefined;
+  }
+  let depth = 0;
+  for (let index = startIndex; index < source.length; index += 1) {
+    const char = source[index];
+    if (char === "{") {
+      depth += 1;
+    } else if (char === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        return {
+          value: source.slice(startIndex + 1, index),
+          nextIndex: index + 1
+        };
+      }
+    }
+  }
+  return undefined;
+}
+
+function skipSpaces(source: string, startIndex: number): number {
+  let index = startIndex;
+  while (source[index] === " ") {
+    index += 1;
+  }
+  return index;
+}
+
+function mathCommandText(command: string): string {
+  const commands: Record<string, string> = {
+    "\\alpha": "α",
+    "\\beta": "β",
+    "\\gamma": "γ",
+    "\\delta": "δ",
+    "\\epsilon": "ε",
+    "\\theta": "θ",
+    "\\lambda": "λ",
+    "\\mu": "μ",
+    "\\pi": "π",
+    "\\sigma": "σ",
+    "\\phi": "φ",
+    "\\omega": "ω",
+    "\\Gamma": "Γ",
+    "\\Delta": "Δ",
+    "\\Theta": "Θ",
+    "\\Lambda": "Λ",
+    "\\Pi": "Π",
+    "\\Sigma": "Σ",
+    "\\Phi": "Φ",
+    "\\Omega": "Ω",
+    "\\sum": "∑",
+    "\\prod": "∏",
+    "\\int": "∫",
+    "\\infty": "∞",
+    "\\partial": "∂",
+    "\\nabla": "∇",
+    "\\times": "×",
+    "\\cdot": "·",
+    "\\pm": "±",
+    "\\leq": "≤",
+    "\\geq": "≥",
+    "\\neq": "≠",
+    "\\approx": "≈",
+    "\\to": "→",
+    "\\rightarrow": "→",
+    "\\leftarrow": "←",
+    "\\Rightarrow": "⇒",
+    "\\in": "∈",
+    "\\notin": "∉",
+    "\\subset": "⊂",
+    "\\subseteq": "⊆",
+    "\\cup": "∪",
+    "\\cap": "∩"
+  };
+  return commands[command] ?? command.replace(/^\\/, "");
+}
+
+function mathSymbolText(char: string): string {
+  return char === "~" ? " " : char;
 }
 
 function parseMarkdownTableRow(line: string): string[] | undefined {

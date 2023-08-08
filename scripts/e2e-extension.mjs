@@ -24,6 +24,10 @@ const html = (title, paragraph) => `<!doctype html>
     <article>
       <h1>${title}</h1>
       <p>${paragraph} Read the <a href="http://127.0.0.1:${pagePort}/source">source article</a>.</p>
+      <p>Inline math should render from Markdown $x_i^2 + \\alpha$.</p>
+      <p>$$</p>
+      <p>\\frac{a+b}{c}</p>
+      <p>$$</p>
       <p><img src="http://127.0.0.1:${pagePort}/chart.png" alt="progress chart"></p>
       <table>
         <tr><th>Metric</th><th>Value</th></tr>
@@ -107,23 +111,25 @@ try {
 
   const articleTabId = await findArticleTabId(sidePanel);
   await sidePanel.evaluate(async ({ articleTabId: tabId, ingestPort: port, token: authToken }) => {
-    const serverUrl = document.querySelector("#server-url");
-    const serverToken = document.querySelector("#server-token");
-    if (!serverUrl || !serverToken) {
-      throw new Error("Missing settings inputs");
-    }
-
-    serverUrl.value = `http://127.0.0.1:${port}`;
-    serverToken.value = authToken;
-    serverUrl.dispatchEvent(new Event("change"));
-    serverToken.dispatchEvent(new Event("change"));
+    await chrome.storage.local.set({
+      serverUrl: `http://127.0.0.1:${port}`,
+      token: authToken,
+      defaultInputMode: "browser_html",
+      allowServerFetch: true,
+      autoRefresh: true
+    });
     document.querySelector("#mode-browser")?.click();
     await chrome.tabs.update(tabId, { active: true });
   }, { articleTabId, ingestPort, token });
 
-  await sidePanel.evaluate(() => document.querySelector("#refresh-button")?.click());
+  await sidePanel.evaluate(async (tabId) => {
+    await chrome.tabs.update(tabId, { active: true });
+    document.querySelector("#refresh-button")?.click();
+  }, articleTabId);
   await expectOutput(sidePanel, "Knowledge extension E2E page");
   await expectOutput(sidePanel, "Content script collection");
+  await sidePanel.locator("#preview-output .math-inline").filter({ hasText: "α" }).waitFor({ timeout: 10000 });
+  await sidePanel.locator("#preview-output .math-display .math-frac").waitFor({ timeout: 10000 });
   await sidePanel.locator('#preview-output a[href^="http://127.0.0.1:"]').filter({ hasText: "source article" }).waitFor({ timeout: 10000 });
   await sidePanel.locator('#preview-output img[alt="progress chart"]').waitFor({ timeout: 10000 });
   await sidePanel.locator("#preview-output table").filter({ hasText: "Body fat" }).waitFor({ timeout: 10000 });
@@ -138,7 +144,7 @@ try {
 
   await sidePanel.evaluate(() => document.querySelector("#tab-saved")?.click());
   await sidePanel.locator("#saved-list").filter({ hasText: "E2E Article" }).waitFor({ timeout: 10000 });
-  await sidePanel.locator("#saved-list").filter({ hasText: ".md" }).waitFor({ timeout: 10000 });
+  await sidePanel.locator("#saved-list").filter({ hasText: "knowledge-ingest-server" }).waitFor({ timeout: 10000 });
 
   await sidePanel.evaluate(() => document.querySelector("#tab-preview")?.click());
   const secondArticle = await context.newPage();
