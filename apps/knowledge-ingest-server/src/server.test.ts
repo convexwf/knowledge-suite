@@ -158,6 +158,41 @@ describe("knowledge ingest server", () => {
     await app.close();
   });
 
+  it("rejects oversized browser_html uploads with a server_fetch hint", async () => {
+    const app = await buildServer({
+      host: "127.0.0.1",
+      port: 0,
+      token: "test-token",
+      storeRoot,
+      fetchTimeoutMs: 1000,
+      maxHtmlBytes: 512
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/clip/preview",
+      headers: { authorization: "Bearer test-token" },
+      payload: {
+        inputMode: "browser_html",
+        snapshot: {
+          pageUrl: "https://example.com/large",
+          title: "Large",
+          html: `<html><body>${"x".repeat(1024)}</body></html>`,
+          capturedAt: "2026-05-11T02:00:00.000Z",
+          meta: {}
+        }
+      }
+    });
+
+    expect(response.statusCode).toBe(413);
+    expect(response.json()).toMatchObject({
+      error: "payload_too_large"
+    });
+    expect(response.json().message).toContain("Switch the extension to Server Fetch mode");
+
+    await app.close();
+  });
+
   it("extracts Defuddle metadata for body-only article pages without semantic article wrappers", async () => {
     const app = await buildServer({
       host: "127.0.0.1",

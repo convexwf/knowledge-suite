@@ -62,12 +62,18 @@ export async function resolveClipInput(input: ClipInput, config: ServerConfig): 
 
   const contentLength = Number(response.headers.get("content-length") ?? 0);
   if (contentLength > config.maxHtmlBytes) {
-    throw new Error(`HTML response from ${fetchUrl} is too large: ${contentLength} bytes`);
+    throw new Error(
+      `HTML response from ${fetchUrl} is too large: ${contentLength} bytes. Server Fetch cannot process this page unless KNOWLEDGE_MAX_HTML_BYTES is increased.`
+    );
   }
 
   const html = await response.text();
   if (Buffer.byteLength(html) > config.maxHtmlBytes) {
-    throw new Error(`HTML response from ${input.url} is too large: ${Buffer.byteLength(html)} bytes`);
+    throw new Error(
+      `HTML response from ${input.url} is too large: ${Buffer.byteLength(
+        html
+      )} bytes. Server Fetch cannot process this page unless KNOWLEDGE_MAX_HTML_BYTES is increased.`
+    );
   }
 
   return {
@@ -85,7 +91,9 @@ function fromSnapshot(snapshot: PageSnapshot, config: ServerConfig): ResolvedInp
   const url = snapshot.canonicalUrl || snapshot.pageUrl;
   const htmlBytes = Buffer.byteLength(snapshot.html);
   if (htmlBytes > config.maxHtmlBytes) {
-    throw new Error(`Page HTML is too large: ${htmlBytes} bytes`);
+    throw new Error(
+      `Page HTML is too large for Current HTML mode: ${htmlBytes} bytes. Switch the extension to Server Fetch mode for this page.`
+    );
   }
 
   return {

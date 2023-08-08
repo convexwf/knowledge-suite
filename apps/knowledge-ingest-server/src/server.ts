@@ -11,7 +11,10 @@ import { parsePage } from "./parser.js";
 import { KnowledgeStore } from "./store.js";
 
 export async function buildServer(config: ServerConfig = loadConfig()) {
-  const app = fastify({ logger: true });
+  const app = fastify({
+    logger: true,
+    bodyLimit: config.maxHtmlBytes
+  });
   const store = new KnowledgeStore(config.storeRoot);
   await store.ensure();
 
@@ -26,6 +29,16 @@ export async function buildServer(config: ServerConfig = loadConfig()) {
   });
 
   app.setErrorHandler(async (error, _request, reply) => {
+    if (isBodyTooLargeError(error)) {
+      await reply.code(413).send({
+        error: "payload_too_large",
+        message: `Current HTML upload is too large for direct browser transfer. The server limit is ${formatBytes(
+          config.maxHtmlBytes
+        )}. Switch the extension to Server Fetch mode for this page, or increase KNOWLEDGE_MAX_HTML_BYTES if the fetched HTML is also larger than this limit.`
+      });
+      return;
+    }
+
     const message = error instanceof Error ? error.message : String(error);
     const statusCode = isClientInputError(message) ? 400 : 500;
     await reply.code(statusCode).send({
@@ -149,4 +162,20 @@ function isClientInputError(message: string): boolean {
     "Path escapes knowledge store",
     "Unsafe relative path"
   ].some((needle) => message.includes(needle));
+}
+
+function isBodyTooLargeError(error: unknown): boolean {
+  return Boolean(
+    error &&
+      typeof error === "object" &&
+      (error as { code?: unknown }).code === "FST_ERR_CTP_BODY_TOO_LARGE"
+  );
+}
+
+function formatBytes(bytes: number): string {
+  const mib = bytes / (1024 * 1024);
+  if (Number.isInteger(mib)) {
+    return `${mib} MiB`;
+  }
+  return `${bytes} bytes`;
 }
