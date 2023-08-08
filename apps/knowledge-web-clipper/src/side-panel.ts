@@ -11,6 +11,24 @@ import {
   PreviewResult
 } from "./types.js";
 
+declare global {
+  interface Window {
+    katex?: {
+      render: (
+        source: string,
+        element: HTMLElement,
+        options: {
+          displayMode?: boolean;
+          output?: "html" | "mathml" | "htmlAndMathml";
+          strict?: boolean | string;
+          throwOnError?: boolean;
+          trust?: boolean;
+        }
+      ) => void;
+    };
+  }
+}
+
 const previewOutput = mustGet<HTMLElement>("preview-output");
 const codeOutput = mustGet<HTMLPreElement>("code-output");
 const rawdocOutput = mustGet<HTMLPreElement>("rawdoc-output");
@@ -620,7 +638,17 @@ function renderMarkdown(markdown: string): DocumentFragment {
   };
 
   for (const line of lines) {
-    if (line.trim() === "$$") {
+    const trimmedLine = line.trim();
+    const inlineDisplayMath = parseOneLineDisplayMath(trimmedLine);
+    if (inlineDisplayMath) {
+      flushParagraph();
+      flushList();
+      flushTable();
+      fragment.append(renderMath(inlineDisplayMath, true));
+      continue;
+    }
+
+    if (trimmedLine === "$$" || trimmedLine === "\\[") {
       if (mathBlock) {
         fragment.append(renderMath(mathBlock.join("\n"), true));
         mathBlock = undefined;
@@ -630,6 +658,12 @@ function renderMarkdown(markdown: string): DocumentFragment {
         flushTable();
         mathBlock = [];
       }
+      continue;
+    }
+
+    if (trimmedLine === "\\]" && mathBlock) {
+      fragment.append(renderMath(mathBlock.join("\n"), true));
+      mathBlock = undefined;
       continue;
     }
 
@@ -739,7 +773,7 @@ function stripFrontmatter(markdown: string): string {
 }
 
 function appendInlineMarkdown(parent: HTMLElement, text: string): void {
-  const parts = text.split(/(!?\[[^\]]*]\([^)]+\)|`[^`]+`|\$[^$\n]+\$)/g);
+  const parts = text.split(/(!?\[[^\]]*]\([^)]+\)|`[^`]+`|\\\([^\n]+?\\\)|\$[^$\n]+\$)/g);
   for (const part of parts) {
     if (part.startsWith("`") && part.endsWith("`") && part.length > 1) {
       const code = document.createElement("code");
@@ -747,6 +781,8 @@ function appendInlineMarkdown(parent: HTMLElement, text: string): void {
       parent.append(code);
     } else if (part.startsWith("$") && part.endsWith("$") && part.length > 1) {
       parent.append(renderMath(part.slice(1, -1), false));
+    } else if (part.startsWith("\\(") && part.endsWith("\\)") && part.length > 3) {
+      parent.append(renderMath(part.slice(2, -2), false));
     } else if (part.startsWith("![")) {
       const image = part.match(/^!\[([^\]]*)]\(([^)]+)\)$/);
       if (image && isSafeMarkdownUrl(image[2], "image")) {
@@ -781,8 +817,30 @@ function renderMath(source: string, display: boolean): HTMLElement {
   const element = document.createElement(display ? "div" : "span");
   element.className = display ? "math-display" : "math-inline";
   element.dataset.source = source;
-  appendMathTokens(element, source.trim());
+  const normalized = source.trim();
+  if (window.katex) {
+    window.katex.render(normalized, element, {
+      displayMode: display,
+      output: "htmlAndMathml",
+      strict: "ignore",
+      throwOnError: false,
+      trust: false
+    });
+    element.classList.add("math-rendered");
+    return element;
+  }
+  appendMathTokens(element, normalized);
   return element;
+}
+
+function parseOneLineDisplayMath(line: string): string | undefined {
+  if (line.startsWith("$$") && line.endsWith("$$") && line.length > 4) {
+    return line.slice(2, -2).trim();
+  }
+  if (line.startsWith("\\[") && line.endsWith("\\]") && line.length > 4) {
+    return line.slice(2, -2).trim();
+  }
+  return undefined;
 }
 
 function appendMathTokens(parent: HTMLElement, source: string): void {

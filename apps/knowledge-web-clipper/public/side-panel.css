@@ -223,7 +223,6 @@ button[data-active="true"] {
 .preview-output .math-inline,
 .preview-output .math-display {
   color: #172033;
-  font-family: "Times New Roman", Cambria, Georgia, serif;
   letter-spacing: 0;
 }
 
@@ -237,6 +236,10 @@ button[data-active="true"] {
   margin: 0 2px;
   padding: 1px 4px;
   white-space: nowrap;
+}
+
+.preview-output .math-rendered {
+  font-family: KaTeX_Main, "Times New Roman", Cambria, Georgia, serif;
 }
 
 .preview-output .math-display {
@@ -279,6 +282,12 @@ button[data-active="true"] {
 .preview-output .math-display sub {
   font-size: 0.72em;
   line-height: 0;
+}
+
+.preview-output .math-rendered sup,
+.preview-output .math-rendered sub {
+  font-size: inherit;
+  line-height: inherit;
 }
 
 .preview-output pre {

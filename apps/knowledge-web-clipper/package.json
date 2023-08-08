@@ -10,5 +10,8 @@
   },
   "devDependencies": {
     "@types/chrome": "^0.0.270"
+  },
+  "dependencies": {
+    "katex": "^0.16.45"
   }
 }

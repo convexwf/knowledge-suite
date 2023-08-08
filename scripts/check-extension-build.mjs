@@ -9,7 +9,10 @@ if (/^\s*(import|export)\s/m.test(content)) {
 for (const file of [
   "apps/knowledge-web-clipper/dist/options.html",
   "apps/knowledge-web-clipper/dist/options.css",
-  "apps/knowledge-web-clipper/dist/options.js"
+  "apps/knowledge-web-clipper/dist/options.js",
+  "apps/knowledge-web-clipper/dist/vendor/katex/katex.min.css",
+  "apps/knowledge-web-clipper/dist/vendor/katex/katex.min.js",
+  "apps/knowledge-web-clipper/dist/vendor/katex/fonts/KaTeX_Main-Regular.woff2"
 ]) {
   await access(file);
 }

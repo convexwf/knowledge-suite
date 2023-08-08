@@ -128,8 +128,8 @@ try {
   }, articleTabId);
   await expectOutput(sidePanel, "Knowledge extension E2E page");
   await expectOutput(sidePanel, "Content script collection");
-  await sidePanel.locator("#preview-output .math-inline").filter({ hasText: "α" }).waitFor({ timeout: 10000 });
-  await sidePanel.locator("#preview-output .math-display .math-frac").waitFor({ timeout: 10000 });
+  await sidePanel.locator("#preview-output .math-inline .katex").waitFor({ timeout: 10000 });
+  await sidePanel.locator("#preview-output .math-display .katex").waitFor({ timeout: 10000 });
   await sidePanel.locator('#preview-output a[href^="http://127.0.0.1:"]').filter({ hasText: "source article" }).waitFor({ timeout: 10000 });
   await sidePanel.locator('#preview-output img[alt="progress chart"]').waitFor({ timeout: 10000 });
   await sidePanel.locator("#preview-output table").filter({ hasText: "Body fat" }).waitFor({ timeout: 10000 });
