@@ -476,6 +476,7 @@ function renderParserDiagnostics(preview: PreviewResult): DocumentFragment {
       const adapterRecord = adapter as Record<string, unknown>;
       return [
         [`${index + 1}.id`, adapterRecord.id],
+        [`${index + 1}.type`, adapterRecord.type],
         [`${index + 1}.score`, adapterRecord.matchScore],
         [`${index + 1}.reason`, adapterRecord.matchReason]
       ];

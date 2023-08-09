@@ -6,7 +6,7 @@ import {
   nowIso,
   RawDoc
 } from "@uknowledge/knowledge-schema";
-import { matchSiteAdapters, type MatchedAdapter, type SiteAdapter } from "./adapters.js";
+import { matchSiteAdapters, type MatchedAdapter, type SiteAdapter } from "./parser/adapters/index.js";
 import { ResolvedInput } from "./input.js";
 
 export interface ParsedPage {
@@ -56,8 +56,10 @@ export async function parsePage(input: ResolvedInput): Promise<ParsedPage> {
   const rawdocId = makeId();
   const docId = makeId();
   const fetchTime = nowIso();
-  const baseDocument = parseCleanDocument(input.html);
   const matchedAdapters = matchSiteAdapters(input);
+  const baseDocument = parseCleanDocument(input.html);
+  applyMatchedAdapterCleanup(baseDocument, matchedAdapters, input.fetchUrl ?? input.url, "defuddle");
+  applyDefuddleRootHints(baseDocument, matchedAdapters);
   const defuddleResult = runDefuddle(baseDocument, input);
   const title = input.title || defuddleResult?.title || readTitle(baseDocument) || input.normalizedUrl;
   const candidates = buildCandidates(input, title, defuddleResult, matchedAdapters);
@@ -86,6 +88,7 @@ export async function parsePage(input: ResolvedInput): Promise<ParsedPage> {
       parserWarnings,
       matchedAdapters: matchedAdapters.map((match) => ({
         id: match.adapter.id,
+        type: match.adapter.type,
         priority: match.adapter.priority,
         matchScore: round(match.matchScore),
         matchReason: match.matchReason
@@ -187,6 +190,7 @@ function buildCandidates(
   }
 
   const fallbackDocument = parseCleanDocument(input.html);
+  applyMatchedAdapterCleanup(fallbackDocument, matchedAdapters, input.fetchUrl ?? input.url, "fallback");
   const fallbackRoot = pickReadableRoot(fallbackDocument);
   normalizeUrls(fallbackRoot, input.fetchUrl ?? input.url);
   candidates.push(makeCandidate({
@@ -707,6 +711,43 @@ function applyAdapterCleanup(document: Document, adapter: SiteAdapter, baseUrl: 
 
   if (adapter.cleanup?.normalizeRelativeUrls) {
     normalizeUrls(document.documentElement, baseUrl);
+  }
+}
+
+function applyMatchedAdapterCleanup(
+  document: Document,
+  matches: MatchedAdapter[],
+  baseUrl: string,
+  phase: "defuddle" | "fallback"
+): void {
+  for (const match of matches) {
+    if (phase === "fallback" && match.adapter.hints?.fallbackCleanup === false) {
+      continue;
+    }
+    applyAdapterCleanup(document, match.adapter, baseUrl);
+  }
+}
+
+function applyDefuddleRootHints(document: Document, matches: MatchedAdapter[]): void {
+  const body = document.body;
+  if (!body) {
+    return;
+  }
+
+  for (const match of matches) {
+    const selectors = match.adapter.hints?.defuddleRootSelectors ?? match.adapter.content.selectors;
+    for (const selector of selectors) {
+      const root = document.querySelector(selector);
+      if (!root) {
+        continue;
+      }
+      const rootTextLength = normalizeText(root.textContent ?? "").length;
+      if (rootTextLength < (match.adapter.content.requireTextLength ?? 0) && !root.querySelector("img,table")) {
+        continue;
+      }
+      body.replaceChildren(root.cloneNode(true));
+      return;
+    }
   }
 }
 
