@@ -1,4 +1,5 @@
 import type { ResolvedInput } from "../../input.js";
+import type { KnowledgeDocument } from "@uknowledge/knowledge-schema";
 
 export type SiteAdapterType = "config" | "code" | "generic";
 
@@ -34,6 +35,16 @@ export interface AdapterHintsConfig {
   fallbackCleanup?: boolean;
 }
 
+export interface AdapterUrlTransforms {
+  canonicalUrl?: (input: string) => string | undefined;
+  fetchUrl?: (input: string) => string | undefined;
+}
+
+export interface AdapterEnrichmentConfig {
+  tags?: (url: string) => string[];
+  references?: (root: Element) => KnowledgeDocument["references"];
+}
+
 export interface SiteAdapter {
   id: string;
   type: SiteAdapterType;
@@ -43,6 +54,8 @@ export interface SiteAdapter {
   metadata?: AdapterMetadataConfig;
   cleanup?: AdapterCleanupConfig;
   hints?: AdapterHintsConfig;
+  urlTransforms?: AdapterUrlTransforms;
+  enrich?: AdapterEnrichmentConfig;
   quality?: {
     minScoreBonus?: number;
     preferOverGeneric?: boolean;

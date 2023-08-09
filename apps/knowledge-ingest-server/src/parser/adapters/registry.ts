@@ -20,6 +20,26 @@ export function matchSiteAdapters(input: ResolvedInput): MatchedAdapter[] {
     });
 }
 
+export function resolveCanonicalUrl(originalUrl: string, pageCanonicalUrl?: string): string {
+  for (const adapter of siteAdapters) {
+    const canonicalUrl = adapter.urlTransforms?.canonicalUrl?.(originalUrl);
+    if (canonicalUrl) {
+      return canonicalUrl;
+    }
+  }
+  return pageCanonicalUrl || originalUrl;
+}
+
+export function resolveFetchUrl(inputUrl: string): string {
+  for (const adapter of siteAdapters) {
+    const fetchUrl = adapter.urlTransforms?.fetchUrl?.(inputUrl);
+    if (fetchUrl) {
+      return fetchUrl;
+    }
+  }
+  return inputUrl;
+}
+
 export function validateSiteAdapters(adapters: SiteAdapter[]): SiteAdapter[] {
   const ids = new Set<string>();
   for (const adapter of adapters) {

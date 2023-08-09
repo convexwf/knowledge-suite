@@ -6,6 +6,7 @@ import {
   PageSnapshot
 } from "@uknowledge/knowledge-schema";
 import { ServerConfig } from "./config.js";
+import { resolveCanonicalUrl, resolveFetchUrl } from "./parser/adapters/index.js";
 
 export interface ResolvedInput {
   inputMode: ClipInput["inputMode"];
@@ -34,7 +35,7 @@ export async function resolveClipInput(input: ClipInput, config: ServerConfig): 
   const timeout = setTimeout(() => controller.abort(), config.fetchTimeoutMs);
   let response: Response;
 
-  const fetchUrl = arxivHtmlFetchUrl(input.url);
+  const fetchUrl = resolveFetchUrl(input.url);
 
   try {
     response = await fetch(fetchUrl, {
@@ -92,8 +93,7 @@ export async function resolveClipInput(input: ClipInput, config: ServerConfig): 
 }
 
 function fromSnapshot(snapshot: PageSnapshot, config: ServerConfig): ResolvedInput {
-  const mirrorSourceUrl = sourceUrlFromMirror(snapshot.pageUrl);
-  const canonicalUrl = mirrorSourceUrl || snapshot.canonicalUrl;
+  const canonicalUrl = resolveCanonicalUrl(snapshot.pageUrl, snapshot.canonicalUrl);
   const url = canonicalUrl || snapshot.pageUrl;
   const htmlBytes = Buffer.byteLength(snapshot.html);
   if (htmlBytes > config.maxHtmlBytes) {
@@ -116,63 +116,7 @@ function fromSnapshot(snapshot: PageSnapshot, config: ServerConfig): ResolvedInp
   };
 }
 
-function sourceUrlFromMirror(input: string): string | undefined {
-  let url: URL;
-  try {
-    url = new URL(input);
-  } catch {
-    return undefined;
-  }
-
-  if (url.hostname !== "freedium-mirror.cfd") {
-    return undefined;
-  }
-
-  const path = url.pathname.startsWith("/") ? url.pathname.slice(1) : url.pathname;
-  const embeddedUrl = decodeURIComponent(path);
-  if (!/^https?:\/\//i.test(embeddedUrl)) {
-    return undefined;
-  }
-
-  try {
-    return new URL(embeddedUrl).toString();
-  } catch {
-    return undefined;
-  }
-}
-
 function isHtmlContentType(contentType: string): boolean {
   const normalized = contentType.toLowerCase();
   return normalized.includes("text/html") || normalized.includes("application/xhtml+xml");
-}
-
-function arxivHtmlFetchUrl(input: string): string {
-  const arxivId = arxivIdFromUrl(input);
-  if (!arxivId) {
-    return input;
-  }
-  return `https://arxiv.org/html/${arxivId}`;
-}
-
-function arxivIdFromUrl(input: string): string | undefined {
-  let url: URL;
-  try {
-    url = new URL(input);
-  } catch {
-    return undefined;
-  }
-  if (url.hostname !== "arxiv.org" && url.hostname !== "www.arxiv.org") {
-    return undefined;
-  }
-  const parts = url.pathname.split("/").filter(Boolean);
-  if (parts[0] && ["abs", "html", "pdf"].includes(parts[0].toLowerCase())) {
-    parts.shift();
-  }
-  let tail = parts.join("/");
-  if (tail.toLowerCase().endsWith(".pdf")) {
-    tail = tail.slice(0, -4);
-  }
-  return /^(\d{4}\.\d{4,5}|[a-z][a-z0-9-]*(?:\.[a-z]{2})?\/\d{7})(?:v\d+)?$/i.test(tail)
-    ? tail
-    : undefined;
 }

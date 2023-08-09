@@ -312,9 +312,9 @@ function buildAdapterCandidates(input: ResolvedInput, title: string, match: Matc
           authors: readAdapterMetadataList(document, match.adapter, "author"),
           publishedAt: normalizeDate(readAdapterMetadata(document, match.adapter, "publishedAt")),
           image: readAdapterMetadata(document, match.adapter, "image"),
-          tags: adapterTags(match.adapter, input.url)
+          tags: match.adapter.enrich?.tags?.(input.url) ?? []
       },
-        references: match.adapter.id === "arxiv_html" ? extractArxivReferences(root) : undefined,
+        references: match.adapter.enrich?.references?.(root),
         reason: `Matched ${match.adapter.id} (${match.matchReason}); content selector ${selector}`,
         baseScore: match.adapter.priority / 2 + match.matchScore / 10 + (match.adapter.quality?.minScoreBonus ?? 0),
         warnings: []
@@ -465,61 +465,6 @@ function readAdapterMetadataList(document: Document, adapter: SiteAdapter, key: 
     }
   }
   return [];
-}
-
-function adapterTags(adapter: SiteAdapter, url: string): string[] {
-  if (adapter.id !== "arxiv_html") {
-    return [];
-  }
-  const arxivId = arxivIdFromUrl(url);
-  return unique([
-    arxivId ? `paper:work_id:arxiv:${arxivId}` : "",
-    "paper:variant:preprint"
-  ]);
-}
-
-function arxivIdFromUrl(input: string): string | undefined {
-  let url: URL;
-  try {
-    url = new URL(input);
-  } catch {
-    return undefined;
-  }
-  if (url.hostname !== "arxiv.org" && url.hostname !== "www.arxiv.org") {
-    return undefined;
-  }
-  const parts = url.pathname.split("/").filter(Boolean);
-  if (parts[0] && ["abs", "html", "pdf"].includes(parts[0].toLowerCase())) {
-    parts.shift();
-  }
-  let tail = parts.join("/");
-  if (tail.toLowerCase().endsWith(".pdf")) {
-    tail = tail.slice(0, -4);
-  }
-  return /^(\d{4}\.\d{4,5}|[a-z][a-z0-9-]*(?:\.[a-z]{2})?\/\d{7})(?:v\d+)?$/i.test(tail)
-    ? tail
-    : undefined;
-}
-
-function extractArxivReferences(root: Element): KnowledgeDocument["references"] {
-  const references: KnowledgeDocument["references"] = [];
-  const bibliography = root.querySelector(".ltx_bibliography, section.ltx_bibliography, [id^='bib']");
-  if (!bibliography) {
-    return references;
-  }
-  for (const item of bibliography.querySelectorAll("li[id], .ltx_bibitem[id]")) {
-    const refId = item.getAttribute("id");
-    const text = normalizeText(item.textContent ?? "");
-    if (!refId || !text) {
-      continue;
-    }
-    references.push({
-      ref_id: refId,
-      label: item.querySelector(".ltx_tag")?.textContent?.trim() || undefined,
-      text
-    });
-  }
-  return references;
 }
 
 function findSchemaArticle(document: Document): Record<string, unknown> | undefined {

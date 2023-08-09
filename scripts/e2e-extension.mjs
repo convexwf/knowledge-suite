@@ -122,10 +122,8 @@ try {
     await chrome.tabs.update(tabId, { active: true });
   }, { articleTabId, ingestPort, token });
 
-  await sidePanel.evaluate(async (tabId) => {
-    await chrome.tabs.update(tabId, { active: true });
-    document.querySelector("#refresh-button")?.click();
-  }, articleTabId);
+  await activateTab(sidePanel, articleTabId);
+  await sidePanel.evaluate(() => document.querySelector("#refresh-button")?.click());
   await expectOutput(sidePanel, "Knowledge extension E2E page");
   await expectOutput(sidePanel, "Content script collection");
   await sidePanel.locator("#preview-output .math-inline .katex").waitFor({ timeout: 10000 });
@@ -152,16 +150,14 @@ try {
     waitUntil: "domcontentloaded"
   });
   const secondTabId = await findArticleTabId(sidePanel, `http://127.0.0.1:${pagePort}/second`);
-  await sidePanel.evaluate((tabId) => chrome.tabs.update(tabId, { active: true }), secondTabId);
+  await activateTab(sidePanel, secondTabId);
   await expectOutput(sidePanel, "Knowledge extension auto refresh page");
 
   await sidePanel.evaluate(() => document.querySelector("#copy-button")?.click());
   await sidePanel.locator("#status-pill").filter({ hasText: "Copied" }).waitFor({ timeout: 10000 });
 
-  await sidePanel.evaluate(async (tabId) => {
-    await chrome.tabs.update(tabId, { active: true });
-    document.querySelector("#delete-button")?.click();
-  }, articleTabId);
+  await activateTab(sidePanel, articleTabId);
+  await sidePanel.evaluate(() => document.querySelector("#delete-button")?.click());
   await sidePanel.locator("#status-pill").filter({ hasText: "Deleted" }).waitFor({ timeout: 10000 });
   const deletedStatus = await get(`/api/clip/status?url=${encodeURIComponent(`http://127.0.0.1:${pagePort}/article?utm_source=e2e#top`)}`);
   if (deletedStatus.saved !== false) {
@@ -215,6 +211,22 @@ async function findArticleTabId(page, urlPrefix = `http://127.0.0.1:${pagePort}/
     throw new Error(`Unable to find article tab: ${JSON.stringify(tabs)}`);
   }
   return tab.id;
+}
+
+async function activateTab(page, tabId) {
+  await page.evaluate(async (tabId) => {
+    await chrome.tabs.update(tabId, { active: true });
+    const deadline = Date.now() + 3000;
+    while (Date.now() < deadline) {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (tab?.id === tabId) {
+        return;
+      }
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, 50));
+    }
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    throw new Error(`Expected active tab ${tabId}, got ${tab?.id ?? "none"} (${tab?.url ?? "unknown url"})`);
+  }, tabId);
 }
 
 async function expectOutput(page, text) {
