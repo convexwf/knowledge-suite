@@ -58,7 +58,8 @@ export async function parsePage(input: ResolvedInput): Promise<ParsedPage> {
   const fetchTime = nowIso();
   const matchedAdapters = matchSiteAdapters(input);
   const baseDocument = parseCleanDocument(input.html);
-  applyMatchedAdapterCleanup(baseDocument, matchedAdapters, input.fetchUrl ?? input.url, "defuddle");
+  const htmlBaseUrl = htmlBaseUrlFor(input);
+  applyMatchedAdapterCleanup(baseDocument, matchedAdapters, htmlBaseUrl, "defuddle");
   applyDefuddleRootHints(baseDocument, matchedAdapters);
   const defuddleResult = runDefuddle(baseDocument, input);
   const title = input.title || defuddleResult?.title || readTitle(baseDocument) || input.normalizedUrl;
@@ -81,6 +82,8 @@ export async function parsePage(input: ResolvedInput): Promise<ParsedPage> {
     metadata: {
       inputMode: input.inputMode,
       normalizedUrl: input.normalizedUrl,
+      originalUrl: input.originalUrl,
+      canonicalUrl: input.canonicalUrl,
       fetchUrl: input.fetchUrl,
       title: selectedTitle,
       parserMethod: selected.method,
@@ -160,7 +163,7 @@ function buildCandidates(
   }
 
   if (defuddleResult) {
-    const sections = extractDefuddleSections(defuddleResult.content, title, input.fetchUrl ?? input.url);
+    const sections = extractDefuddleSections(defuddleResult.content, title, htmlBaseUrlFor(input));
     candidates.push(makeCandidate({
       id: "defuddle",
       method: "defuddle",
@@ -190,9 +193,10 @@ function buildCandidates(
   }
 
   const fallbackDocument = parseCleanDocument(input.html);
-  applyMatchedAdapterCleanup(fallbackDocument, matchedAdapters, input.fetchUrl ?? input.url, "fallback");
+  const htmlBaseUrl = htmlBaseUrlFor(input);
+  applyMatchedAdapterCleanup(fallbackDocument, matchedAdapters, htmlBaseUrl, "fallback");
   const fallbackRoot = pickReadableRoot(fallbackDocument);
-  normalizeUrls(fallbackRoot, input.fetchUrl ?? input.url);
+  normalizeUrls(fallbackRoot, htmlBaseUrl);
   candidates.push(makeCandidate({
     id: "dom_fallback",
     method: "dom_fallback",
@@ -216,7 +220,7 @@ function buildSelectionCandidate(input: ResolvedInput, title: string): ParserCan
   if (!root) {
     return undefined;
   }
-  normalizeUrls(root, input.fetchUrl ?? input.url);
+  normalizeUrls(root, htmlBaseUrlFor(input));
   return makeCandidate({
     id: "selection",
     method: "selection",
@@ -284,7 +288,7 @@ function buildSchemaOrgCandidate(input: ResolvedInput, fallbackTitle: string): P
 
 function buildAdapterCandidates(input: ResolvedInput, title: string, match: MatchedAdapter): ParserCandidate[] {
   const document = parseCleanDocument(input.html);
-  const baseUrl = input.fetchUrl ?? input.url;
+  const baseUrl = htmlBaseUrlFor(input);
   applyAdapterCleanup(document, match.adapter, baseUrl);
   const candidates: ParserCandidate[] = [];
 
@@ -319,6 +323,10 @@ function buildAdapterCandidates(input: ResolvedInput, title: string, match: Matc
   }
 
   return candidates;
+}
+
+function htmlBaseUrlFor(input: ResolvedInput): string {
+  return input.fetchUrl ?? input.originalUrl ?? input.url;
 }
 
 function makeCandidate(params: {

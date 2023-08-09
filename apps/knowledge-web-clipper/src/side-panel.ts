@@ -448,6 +448,8 @@ function renderParserDiagnostics(preview: PreviewResult): DocumentFragment {
       ["input_mode", metadata.inputMode],
       ["source_type", preview.rawdoc.source_type],
       ["source_uri", preview.rawdoc.source_uri],
+      ["original_url", metadata.originalUrl],
+      ["canonical_url", metadata.canonicalUrl],
       ["normalized_url", metadata.normalizedUrl],
       ["fetch_time", preview.rawdoc.fetch_time],
       ["content_length", preview.rawdoc.content_length]

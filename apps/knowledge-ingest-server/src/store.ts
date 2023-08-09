@@ -62,7 +62,7 @@ export class KnowledgeStore {
         parser_version, parser_method, content_hash, saved_at, updated_at
       FROM clips
       WHERE url_hash = ?
-    `).get(hash) as ClipRow | undefined;
+    `).get(hash) as ClipRow | undefined ?? this.findClipByOriginalUrl(normalizedUrl);
 
     if (!row) {
       return {
@@ -91,6 +91,8 @@ export class KnowledgeStore {
       return {
         normalizedUrl: row.normalized_url,
         urlHash: row.url_hash,
+        originalUrl: row.original_url ?? undefined,
+        canonicalUrl: row.canonical_url ?? undefined,
         savedAt: row.saved_at,
         updatedAt: row.updated_at,
         title: row.page_title ?? undefined,
@@ -113,7 +115,7 @@ export class KnowledgeStore {
     await this.ensure();
     const normalized = normalizeUrlForKnowledge(normalizedUrl);
     const hash = urlHash(normalized);
-    const row = this.findClip(hash);
+    const row = this.findClip(hash) ?? this.findClipByOriginalUrl(normalizedUrl);
 
     if (!row) {
       return {
@@ -127,7 +129,7 @@ export class KnowledgeStore {
 
     try {
       this.database!.exec("BEGIN");
-      this.database!.prepare("DELETE FROM clips WHERE url_hash = ?").run(hash);
+      this.database!.prepare("DELETE FROM clips WHERE url_hash = ?").run(row.url_hash);
       this.database!.prepare("DELETE FROM documents WHERE doc_id = ?").run(row.doc_id);
       this.database!.prepare("DELETE FROM rawdocs WHERE rawdoc_id = ?").run(row.rawdoc_id);
       this.database!.exec("COMMIT");
@@ -170,6 +172,12 @@ export class KnowledgeStore {
     const contentHash = sha256(params.markdown);
     const authorsJson = JSON.stringify(params.document.meta.authors ?? []);
     const rawMetadata = params.rawdoc.metadata ?? {};
+    const originalUrl = typeof rawMetadata.originalUrl === "string"
+      ? rawMetadata.originalUrl
+      : params.rawdoc.source_uri;
+    const canonicalUrl = typeof rawMetadata.canonicalUrl === "string"
+      ? rawMetadata.canonicalUrl
+      : params.document.meta.source.url ?? params.rawdoc.source_uri;
 
     await Promise.all([
       this.writeText(paths.rawHtmlPath, params.html),
@@ -294,8 +302,8 @@ export class KnowledgeStore {
       `).run(
         hash,
         normalized,
-        params.rawdoc.source_uri,
-        params.document.meta.source.url ?? params.rawdoc.source_uri,
+        originalUrl,
+        canonicalUrl,
         params.document.doc_id,
         params.rawdoc.rawdoc_id,
         params.document.meta.title,
@@ -439,12 +447,23 @@ export class KnowledgeStore {
     `).get(hash) as ClipRow | undefined;
   }
 
+  private findClipByOriginalUrl(input: string): ClipRow | undefined {
+    return this.database!.prepare(`
+      SELECT url_hash, normalized_url, original_url, canonical_url, doc_id, rawdoc_id, page_title,
+        parser_version, parser_method, content_hash, saved_at, updated_at
+      FROM clips
+      WHERE original_url = ?
+    `).get(input) as ClipRow | undefined;
+  }
+
   private toStatus(row: ClipRow): ClipStatus {
     const paths = pathsFor(row.doc_id, row.rawdoc_id);
     return {
       normalizedUrl: row.normalized_url,
       urlHash: row.url_hash,
       saved: true,
+      originalUrl: row.original_url ?? undefined,
+      canonicalUrl: row.canonical_url ?? undefined,
       savedAt: row.saved_at,
       updatedAt: row.updated_at,
       title: row.page_title ?? undefined,

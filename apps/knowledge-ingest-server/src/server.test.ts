@@ -97,6 +97,8 @@ describe("knowledge ingest server", () => {
     expect(preview.statusCode).toBe(200);
     expect(preview.json().markdown).toContain("Hello knowledge suite.");
     expect(preview.json().rawdoc.metadata.defuddle.wordCount).toBeGreaterThan(0);
+    expect(preview.json().rawdoc.metadata.originalUrl).toBe("https://example.com/a?utm_source=x#top");
+    expect(preview.json().rawdoc.metadata.canonicalUrl).toBe("https://example.com/a");
     expect(preview.json().status.saved).toBe(false);
 
     const save = await app.inject({
@@ -117,6 +119,11 @@ describe("knowledge ingest server", () => {
     });
     expect(status.statusCode).toBe(200);
     expect(status.json().saved).toBe(true);
+    expect(status.json()).toMatchObject({
+      normalizedUrl: "https://example.com/a",
+      originalUrl: "https://example.com/a?utm_source=x#top",
+      canonicalUrl: "https://example.com/a"
+    });
 
     const list = await app.inject({
       method: "GET",
@@ -127,6 +134,8 @@ describe("knowledge ingest server", () => {
     expect(list.json().clips).toHaveLength(1);
     expect(list.json().clips[0]).toMatchObject({
       normalizedUrl: "https://example.com/a",
+      originalUrl: "https://example.com/a?utm_source=x#top",
+      canonicalUrl: "https://example.com/a",
       savedAt: expect.any(String),
       title: "Example Article"
     });
@@ -303,47 +312,59 @@ describe("knowledge ingest server", () => {
       maxHtmlBytes: 1024 * 1024
     });
 
+    const freediumHtml = `<!doctype html>
+      <html>
+        <head>
+          <title>How I Lowered My Body Fat Percentage</title>
+          <meta property="og:title" content="How I Lowered My Body Fat Percentage">
+        </head>
+        <body>
+          <div class="storage-notification-container">Local storage warning should be removed.</div>
+          <div class="container">
+            <h1>How I Lowered My Body Fat Percentage</h1>
+            <div class="main-content">
+              <div>
+                <p>This Freedium article paragraph contains enough concrete prose to be considered useful by the parser scoring model.</p>
+                <p>The second paragraph confirms the adapter-selected content root keeps the article body without the storage notification chrome.</p>
+                <figure>
+                  <img data-src="/images/progress.jpg" alt="Progress chart">
+                  <figcaption>Progress chart.</figcaption>
+                </figure>
+              </div>
+            </div>
+          </div>
+        </body>
+      </html>`;
+    const freediumPayload = {
+      inputMode: "browser_html" as const,
+      snapshot: {
+        pageUrl: "https://freedium-mirror.cfd/https://medium.com/in-fitness-and-in-health/example-a875f21bed2d",
+        title: "How I Lowered My Body Fat Percentage",
+        html: freediumHtml,
+        capturedAt: "2026-05-11T02:00:00.000Z",
+        meta: {}
+      }
+    };
+
     const response = await app.inject({
       method: "POST",
       url: "/api/clip/preview",
       headers: { authorization: "Bearer test-token" },
-      payload: {
-        inputMode: "browser_html",
-        snapshot: {
-          pageUrl: "https://freedium-mirror.cfd/https://medium.com/in-fitness-and-in-health/example-a875f21bed2d",
-          title: "How I Lowered My Body Fat Percentage",
-          html: `<!doctype html>
-            <html>
-              <head>
-                <title>How I Lowered My Body Fat Percentage</title>
-                <meta property="og:title" content="How I Lowered My Body Fat Percentage">
-              </head>
-              <body>
-                <div class="storage-notification-container">Local storage warning should be removed.</div>
-                <div class="container">
-                  <h1>How I Lowered My Body Fat Percentage</h1>
-                  <div class="main-content">
-                    <div>
-                      <p>This Freedium article paragraph contains enough concrete prose to be considered useful by the parser scoring model.</p>
-                      <p>The second paragraph confirms the adapter-selected content root keeps the article body without the storage notification chrome.</p>
-                      <figure>
-                        <img data-src="/images/progress.jpg" alt="Progress chart">
-                        <figcaption>Progress chart.</figcaption>
-                      </figure>
-                    </div>
-                  </div>
-                </div>
-              </body>
-            </html>`,
-          capturedAt: "2026-05-11T02:00:00.000Z",
-          meta: {}
-        }
-      }
+      payload: freediumPayload
     });
 
     expect(response.statusCode).toBe(200);
     expect(response.json().rawdoc.metadata.parserMethod).toBe("site_adapter");
     expect(response.json().rawdoc.metadata.parserProfile).toBe("freedium");
+    expect(response.json().rawdoc.metadata.originalUrl).toBe(
+      "https://freedium-mirror.cfd/https://medium.com/in-fitness-and-in-health/example-a875f21bed2d"
+    );
+    expect(response.json().rawdoc.metadata.canonicalUrl).toBe(
+      "https://medium.com/in-fitness-and-in-health/example-a875f21bed2d"
+    );
+    expect(response.json().rawdoc.metadata.normalizedUrl).toBe(
+      "https://medium.com/in-fitness-and-in-health/example-a875f21bed2d"
+    );
     expect(response.json().rawdoc.metadata.matchedAdapters[0]).toMatchObject({
       id: "freedium"
     });
@@ -362,6 +383,35 @@ describe("knowledge ingest server", () => {
     expect(response.json().markdown).toContain("The second paragraph confirms");
     expect(response.json().markdown).toContain("![Progress chart](https://freedium-mirror.cfd/images/progress.jpg)");
     expect(response.json().markdown).not.toContain("Local storage warning");
+
+    const save = await app.inject({
+      method: "POST",
+      url: "/api/clip/save",
+      headers: { authorization: "Bearer test-token" },
+      payload: freediumPayload
+    });
+    expect(save.statusCode).toBe(200);
+    expect(save.json()).toMatchObject({
+      saved: true,
+      status: {
+        normalizedUrl: "https://medium.com/in-fitness-and-in-health/example-a875f21bed2d",
+        originalUrl: "https://freedium-mirror.cfd/https://medium.com/in-fitness-and-in-health/example-a875f21bed2d",
+        canonicalUrl: "https://medium.com/in-fitness-and-in-health/example-a875f21bed2d"
+      }
+    });
+
+    const mirrorStatus = await app.inject({
+      method: "GET",
+      url: "/api/clip/status?url=https%3A%2F%2Ffreedium-mirror.cfd%2Fhttps%3A%2F%2Fmedium.com%2Fin-fitness-and-in-health%2Fexample-a875f21bed2d",
+      headers: { authorization: "Bearer test-token" }
+    });
+    expect(mirrorStatus.statusCode).toBe(200);
+    expect(mirrorStatus.json()).toMatchObject({
+      saved: true,
+      normalizedUrl: "https://medium.com/in-fitness-and-in-health/example-a875f21bed2d",
+      originalUrl: "https://freedium-mirror.cfd/https://medium.com/in-fitness-and-in-health/example-a875f21bed2d",
+      canonicalUrl: "https://medium.com/in-fitness-and-in-health/example-a875f21bed2d"
+    });
 
     await app.close();
   });

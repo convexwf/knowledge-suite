@@ -32,7 +32,38 @@ export function validateSiteAdapters(adapters: SiteAdapter[]): SiteAdapter[] {
 }
 
 function matchAdapter(adapter: SiteAdapter, input: ResolvedInput): MatchedAdapter | undefined {
-  const url = safeUrl(input.url);
+  const matched = candidateUrls(input)
+    .map((candidate) => matchAdapterUrl(adapter, candidate.value, candidate.label))
+    .filter((match): match is Omit<MatchedAdapter, "adapter"> => Boolean(match))
+    .sort((left, right) => right.matchScore - left.matchScore)[0];
+
+  if (!matched) {
+    return undefined;
+  }
+
+  return {
+    adapter,
+    matchScore: matched.matchScore + adapter.priority / 10,
+    matchReason: matched.matchReason
+  };
+}
+
+function candidateUrls(input: ResolvedInput): Array<{ label: string; value: string }> {
+  const candidates = [
+    { label: "url", value: input.url },
+    { label: "originalUrl", value: input.originalUrl }
+  ];
+  return candidates.filter((candidate, index) =>
+    candidate.value && candidates.findIndex((other) => other.value === candidate.value) === index
+  );
+}
+
+function matchAdapterUrl(
+  adapter: SiteAdapter,
+  value: string,
+  label: string
+): Omit<MatchedAdapter, "adapter"> | undefined {
+  const url = safeUrl(value);
   if (!url) {
     return undefined;
   }
@@ -42,27 +73,27 @@ function matchAdapter(adapter: SiteAdapter, input: ResolvedInput): MatchedAdapte
 
   if (adapter.match.hosts?.includes(url.hostname)) {
     score += 100;
-    reasons.push(`host:${url.hostname}`);
+    reasons.push(`${label}:host:${url.hostname}`);
   }
 
   for (const suffix of adapter.match.hostSuffixes ?? []) {
     if (url.hostname.endsWith(suffix)) {
       score += 80;
-      reasons.push(`hostSuffix:${suffix}`);
+      reasons.push(`${label}:hostSuffix:${suffix}`);
     }
   }
 
   for (const pattern of adapter.match.pathPatterns ?? []) {
     if (new RegExp(pattern).test(url.pathname)) {
       score += 50;
-      reasons.push(`path:${pattern}`);
+      reasons.push(`${label}:path:${pattern}`);
     }
   }
 
   for (const pattern of adapter.match.urlPatterns ?? []) {
-    if (new RegExp(pattern).test(input.url)) {
+    if (new RegExp(pattern).test(value)) {
       score += 40;
-      reasons.push(`url:${pattern}`);
+      reasons.push(`${label}:url:${pattern}`);
     }
   }
 
@@ -71,8 +102,7 @@ function matchAdapter(adapter: SiteAdapter, input: ResolvedInput): MatchedAdapte
   }
 
   return {
-    adapter,
-    matchScore: score + adapter.priority / 10,
+    matchScore: score,
     matchReason: reasons.join(", ")
   };
 }

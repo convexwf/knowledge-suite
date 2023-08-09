@@ -92,6 +92,8 @@ export interface KnowledgeDocument {
 export interface ClipListItem {
   normalizedUrl: string;
   urlHash: string;
+  originalUrl?: string;
+  canonicalUrl?: string;
   savedAt: string;
   updatedAt?: string;
   title?: string;
@@ -114,6 +116,8 @@ export interface ClipStatusResult {
   normalizedUrl: string;
   urlHash: string;
   saved: boolean;
+  originalUrl?: string;
+  canonicalUrl?: string;
   savedAt?: string;
   updatedAt?: string;
   title?: string;

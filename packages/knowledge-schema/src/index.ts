@@ -108,6 +108,8 @@ export interface ClipStatus {
   normalizedUrl: string;
   urlHash: string;
   saved: boolean;
+  originalUrl?: string;
+  canonicalUrl?: string;
   savedAt?: string;
   updatedAt?: string;
   title?: string;
@@ -146,6 +148,8 @@ export interface ClipDeleteResponse extends ClipStatus {
 export interface ClipListItem {
   normalizedUrl: string;
   urlHash: string;
+  originalUrl?: string;
+  canonicalUrl?: string;
   savedAt: string;
   updatedAt?: string;
   title?: string;

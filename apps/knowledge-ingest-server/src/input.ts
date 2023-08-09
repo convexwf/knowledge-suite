@@ -10,6 +10,8 @@ import { ServerConfig } from "./config.js";
 export interface ResolvedInput {
   inputMode: ClipInput["inputMode"];
   url: string;
+  originalUrl: string;
+  canonicalUrl?: string;
   fetchUrl?: string;
   normalizedUrl: string;
   html: string;
@@ -79,6 +81,8 @@ export async function resolveClipInput(input: ClipInput, config: ServerConfig): 
   return {
     inputMode: "server_fetch",
     url: input.url,
+    originalUrl: input.url,
+    canonicalUrl: input.url,
     fetchUrl,
     normalizedUrl: normalizeUrlForKnowledge(input.url),
     html,
@@ -88,7 +92,9 @@ export async function resolveClipInput(input: ClipInput, config: ServerConfig): 
 }
 
 function fromSnapshot(snapshot: PageSnapshot, config: ServerConfig): ResolvedInput {
-  const url = snapshot.canonicalUrl || snapshot.pageUrl;
+  const mirrorSourceUrl = sourceUrlFromMirror(snapshot.pageUrl);
+  const canonicalUrl = mirrorSourceUrl || snapshot.canonicalUrl;
+  const url = canonicalUrl || snapshot.pageUrl;
   const htmlBytes = Buffer.byteLength(snapshot.html);
   if (htmlBytes > config.maxHtmlBytes) {
     throw new Error(
@@ -99,6 +105,8 @@ function fromSnapshot(snapshot: PageSnapshot, config: ServerConfig): ResolvedInp
   return {
     inputMode: "browser_html",
     url,
+    originalUrl: snapshot.pageUrl,
+    canonicalUrl,
     normalizedUrl: normalizeUrlForKnowledge(url),
     html: snapshot.html,
     title: snapshot.title,
@@ -106,6 +114,31 @@ function fromSnapshot(snapshot: PageSnapshot, config: ServerConfig): ResolvedInp
     capturedAt: snapshot.capturedAt,
     selectionHtml: snapshot.selectionHtml
   };
+}
+
+function sourceUrlFromMirror(input: string): string | undefined {
+  let url: URL;
+  try {
+    url = new URL(input);
+  } catch {
+    return undefined;
+  }
+
+  if (url.hostname !== "freedium-mirror.cfd") {
+    return undefined;
+  }
+
+  const path = url.pathname.startsWith("/") ? url.pathname.slice(1) : url.pathname;
+  const embeddedUrl = decodeURIComponent(path);
+  if (!/^https?:\/\//i.test(embeddedUrl)) {
+    return undefined;
+  }
+
+  try {
+    return new URL(embeddedUrl).toString();
+  } catch {
+    return undefined;
+  }
 }
 
 function isHtmlContentType(contentType: string): boolean {

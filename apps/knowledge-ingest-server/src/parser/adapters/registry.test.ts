@@ -15,8 +15,10 @@ describe("site adapter registry", () => {
   it("matches adapters with type and reasons", () => {
     const [match] = matchSiteAdapters({
       inputMode: "browser_html",
-      url: "https://freedium-mirror.cfd/https://medium.com/in-fitness-and-in-health/example",
-      normalizedUrl: "https://freedium-mirror.cfd/https://medium.com/in-fitness-and-in-health/example",
+      url: "https://medium.com/in-fitness-and-in-health/example",
+      originalUrl: "https://freedium-mirror.cfd/https://medium.com/in-fitness-and-in-health/example",
+      canonicalUrl: "https://medium.com/in-fitness-and-in-health/example",
+      normalizedUrl: "https://medium.com/in-fitness-and-in-health/example",
       title: "Example",
       html: "<html><body><main>Example</main></body></html>",
       meta: {},
@@ -27,7 +29,7 @@ describe("site adapter registry", () => {
       id: "freedium",
       type: "config"
     });
-    expect(match.matchReason).toContain("host:freedium-mirror.cfd");
+    expect(match.matchReason).toContain("originalUrl:host:freedium-mirror.cfd");
   });
 
   it("rejects duplicate adapter ids", () => {
