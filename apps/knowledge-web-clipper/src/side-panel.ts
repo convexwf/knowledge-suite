@@ -35,6 +35,7 @@ const codeOutput = mustGet<HTMLPreElement>("code-output");
 const rawdocOutput = mustGet<HTMLPreElement>("rawdoc-output");
 const parserOutput = mustGet<HTMLDivElement>("parser-output");
 const statusPill = mustGet<HTMLElement>("status-pill");
+const statusDetail = mustGet<HTMLElement>("status-detail");
 const pageUrlEl = mustGet<HTMLElement>("page-url");
 const autoRefreshInput = mustGet<HTMLInputElement>("auto-refresh");
 const settingsButton = mustGet<HTMLButtonElement>("settings-button");
@@ -60,6 +61,7 @@ let savedClips: ClipListItem[] = [];
 let currentInputMode: InputMode = settings.defaultInputMode;
 let activeView: PanelView = settings.defaultPanelTab;
 let autoRefreshTimer: number | undefined;
+let pendingAction: "delete" | "preview" | "save" | undefined;
 
 autoRefreshInput.checked = settings.autoRefresh;
 applySettingsToUi();
@@ -125,7 +127,12 @@ async function preview(): Promise<void> {
   if (!activeTab) {
     return;
   }
+  if (pendingAction) {
+    return;
+  }
 
+  pendingAction = "preview";
+  updateActionButtons();
   setStatus("Previewing");
   try {
     await refreshServerStatus();
@@ -140,6 +147,8 @@ async function preview(): Promise<void> {
   } catch (error) {
     setStatus("Error");
     renderError(error);
+  } finally {
+    pendingAction = undefined;
     updateActionButtons();
   }
 }
@@ -148,7 +157,18 @@ async function save(): Promise<void> {
   if (!activeTab) {
     return;
   }
+  if (pendingAction === "save") {
+    setStatus("Saving", "A save request is already running.");
+    return;
+  }
+  if (pendingAction) {
+    setStatus("Busy", "Wait for the current request to finish.");
+    return;
+  }
 
+  const previousStatus = lastPreview?.status;
+  pendingAction = "save";
+  updateActionButtons();
   setStatus("Saving");
   try {
     await refreshServerStatus();
@@ -156,24 +176,25 @@ async function save(): Promise<void> {
     lastPreview = await createKnowledgeApiClient(settings).save(body);
     await loadSavedClips();
     await notifyBadgeRefresh();
-    setStatus(statusLabel(lastPreview.status));
+    setStatus(statusLabel(lastPreview.status), summarizeSave(previousStatus, lastPreview));
     renderOutput();
-    updateActionButtons();
   } catch (error) {
     setStatus("Error");
     renderError(error);
+  } finally {
+    pendingAction = undefined;
     updateActionButtons();
   }
 }
 
 async function copyMarkdown(): Promise<void> {
   if (!lastPreview?.markdown) {
-    setStatus("Nothing to copy");
+    setStatus("Nothing to copy", "Preview or save a page first.");
     return;
   }
 
   await navigator.clipboard.writeText(lastPreview.markdown);
-  setStatus("Copied");
+  setStatus("Copied", "Markdown copied to your clipboard.");
 }
 
 async function deleteCurrentClip(mode: ClipDeleteMode): Promise<void> {
@@ -181,19 +202,30 @@ async function deleteCurrentClip(mode: ClipDeleteMode): Promise<void> {
   if (!activeTab) {
     return;
   }
+  if (pendingAction) {
+    setStatus("Busy", "Wait for the current request to finish.");
+    return;
+  }
 
   if (mode === "remove" && lastPreview?.status.state !== "parsed") {
-    setStatus("Nothing to remove");
+    setStatus("Nothing to remove", "This page does not have an active parsed document.");
     updateActionButtons();
     return;
   }
   if (mode === "purge" && lastPreview?.status.state === "empty") {
-    setStatus("Nothing to purge");
+    setStatus("Nothing to purge", "This page is not stored yet.");
     updateActionButtons();
     return;
   }
 
-  setStatus(mode === "remove" ? "Removing parsed result" : "Purging capture");
+  pendingAction = "delete";
+  updateActionButtons();
+  setStatus(
+    mode === "remove" ? "Removing parsed result" : "Purging capture",
+    mode === "remove"
+      ? "Raw HTML and RawDoc will stay available for reparse."
+      : "This removes both the capture and the parsed result."
+  );
   try {
     const deleted = await createKnowledgeApiClient(settings).deleteClip(activeTab.url, mode);
     lastPreview = lastPreview
@@ -201,12 +233,16 @@ async function deleteCurrentClip(mode: ClipDeleteMode): Promise<void> {
       : undefined;
     await loadSavedClips();
     await notifyBadgeRefresh();
-    setStatus(deleted.deleted ? statusLabel(deleted) : "Not saved");
+    setStatus(
+      deleted.deleted ? statusLabel(deleted) : "Not saved",
+      summarizeDelete(mode, deleted.deleted)
+    );
     renderOutput();
-    updateActionButtons();
   } catch (error) {
     setStatus("Error");
     renderError(error);
+  } finally {
+    pendingAction = undefined;
     updateActionButtons();
   }
 }
@@ -335,9 +371,9 @@ async function refreshServerStatus(): Promise<void> {
 
   if (activeTab) {
     const status = await api.status(activeTab.url);
-    setStatus(status.state === "empty" ? "Connected" : statusLabel(status));
+    setStatus(status.state === "empty" ? "Connected" : statusLabel(status), summarizeStatus(status));
   } else {
-    setStatus("Connected");
+    setStatus("Connected", "Knowledge server is reachable.");
   }
 }
 
@@ -436,8 +472,9 @@ function makeEmptyState(text: string): HTMLElement {
   return element;
 }
 
-function setStatus(text: string): void {
+function setStatus(text: string, detail?: string): void {
   statusPill.textContent = text;
+  statusDetail.textContent = detail ?? defaultStatusDetail(text);
 }
 
 function renderError(error: unknown): void {
@@ -464,10 +501,62 @@ function statusLabel(status: { state: "empty" | "captured" | "parsed" }): string
 
 function updateActionButtons(): void {
   const state = lastPreview?.status.state ?? "empty";
-  copyButton.disabled = !lastPreview?.markdown;
-  saveButton.disabled = !activeTab;
-  removeButton.disabled = state !== "parsed";
-  purgeButton.disabled = state === "empty";
+  const busy = Boolean(pendingAction);
+  copyButton.disabled = busy || !lastPreview?.markdown;
+  saveButton.disabled = busy || !activeTab;
+  refreshButton.disabled = busy;
+  settingsButton.disabled = busy;
+  removeButton.disabled = busy || state !== "parsed";
+  purgeButton.disabled = busy || state === "empty";
+  modeBrowserButton.disabled = busy;
+  modeFetchButton.disabled = busy || (activeTab?.isFileUrl ?? false) || !settings.allowServerFetch;
+  autoRefreshInput.disabled = busy;
+}
+
+function summarizeSave(
+  previousStatus: PreviewResult["status"] | undefined,
+  preview: PreviewResult
+): string {
+  const nextDoc = shortId(preview.document.doc_id);
+  const nextRawdoc = shortId(preview.rawdoc.rawdoc_id);
+  if (!previousStatus || previousStatus.state === "empty") {
+    return `Saved a new clip as doc ${nextDoc} from raw ${nextRawdoc}.`;
+  }
+  if (previousStatus.state === "captured") {
+    return `Parsed the saved raw capture and created doc ${nextDoc}.`;
+  }
+  if (previousStatus.docId && previousStatus.docId !== preview.document.doc_id) {
+    return `Replaced doc ${shortId(previousStatus.docId)} with ${nextDoc}.`;
+  }
+  return `Saved doc ${nextDoc}.`;
+}
+
+function summarizeDelete(mode: ClipDeleteMode, deleted: boolean): string {
+  if (!deleted) {
+    return "Nothing changed.";
+  }
+  if (mode === "remove") {
+    return "Removed the parsed result and kept the raw capture.";
+  }
+  return "Purged both the raw capture and the parsed result.";
+}
+
+function summarizeStatus(status: PreviewResult["status"]): string {
+  if (status.state === "empty") {
+    return "This page has not been stored yet.";
+  }
+  if (status.state === "captured") {
+    return `Raw capture ${shortId(status.rawdocId)} is stored and ready to reparse.`;
+  }
+  return `Parsed doc ${shortId(status.docId)} is active for this page.`;
+}
+
+function defaultStatusDetail(text: string): string {
+  return text === "Idle" ? "Ready" : "";
+}
+
+function shortId(value: string | undefined): string {
+  return value ? value.slice(0, 8) : "unknown";
 }
 
 function clipStatusFromDelete(deleted: {

@@ -135,6 +135,12 @@ button[data-active="true"] {
   justify-content: space-between;
 }
 
+.status-copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
 #status-pill {
   background: #e7edf5;
   border-radius: 999px;
@@ -142,6 +148,14 @@ button[data-active="true"] {
   display: inline-flex;
   font-size: 12px;
   padding: 5px 9px;
+}
+
+#status-detail {
+  color: #526174;
+  font-size: 12px;
+  line-height: 1.35;
+  max-width: 220px;
+  overflow-wrap: anywhere;
 }
 
 #save-button,
