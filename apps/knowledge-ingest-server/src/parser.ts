@@ -14,6 +14,10 @@ export interface ParsedPage {
   document: KnowledgeDocument;
 }
 
+interface ParsePageOptions {
+  rawdocId?: string;
+}
+
 type ParserMethod = "selection" | "defuddle" | "site_adapter" | "schema_org" | "dom_fallback";
 
 interface CandidateMetrics {
@@ -52,8 +56,8 @@ const DefuddleClass = DefuddleDefault as unknown as {
   new (doc: Document, options?: DefuddleOptions): { parse(): DefuddleResponse };
 };
 
-export async function parsePage(input: ResolvedInput): Promise<ParsedPage> {
-  const rawdocId = makeId();
+export async function parsePage(input: ResolvedInput, options: ParsePageOptions = {}): Promise<ParsedPage> {
+  const rawdocId = options.rawdocId ?? makeId();
   const docId = makeId();
   const fetchTime = nowIso();
   const matchedAdapters = matchSiteAdapters(input);

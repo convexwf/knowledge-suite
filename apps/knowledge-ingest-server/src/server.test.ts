@@ -99,7 +99,11 @@ describe("knowledge ingest server", () => {
     expect(preview.json().rawdoc.metadata.defuddle.wordCount).toBeGreaterThan(0);
     expect(preview.json().rawdoc.metadata.originalUrl).toBe("https://example.com/a?utm_source=x#top");
     expect(preview.json().rawdoc.metadata.canonicalUrl).toBe("https://example.com/a");
-    expect(preview.json().status.saved).toBe(false);
+    expect(preview.json().status).toMatchObject({
+      state: "empty",
+      hasRawdoc: false,
+      hasDocument: false
+    });
 
     const save = await app.inject({
       method: "POST",
@@ -109,6 +113,11 @@ describe("knowledge ingest server", () => {
     });
     expect(save.statusCode).toBe(200);
     expect(save.json().saved).toBe(true);
+    expect(save.json().status).toMatchObject({
+      state: "parsed",
+      hasRawdoc: true,
+      hasDocument: true
+    });
     expect(save.json().paths.markdownPath).toMatch(/\.md$/);
     await expect(access(join(storeRoot, "index.sqlite3"))).resolves.toBeUndefined();
 
@@ -118,9 +127,11 @@ describe("knowledge ingest server", () => {
       headers: { authorization: "Bearer test-token" }
     });
     expect(status.statusCode).toBe(200);
-    expect(status.json().saved).toBe(true);
     expect(status.json()).toMatchObject({
       normalizedUrl: "https://example.com/a",
+      state: "parsed",
+      hasRawdoc: true,
+      hasDocument: true,
       originalUrl: "https://example.com/a?utm_source=x#top",
       canonicalUrl: "https://example.com/a"
     });
@@ -134,9 +145,13 @@ describe("knowledge ingest server", () => {
     expect(list.json().clips).toHaveLength(1);
     expect(list.json().clips[0]).toMatchObject({
       normalizedUrl: "https://example.com/a",
+      state: "parsed",
+      hasRawdoc: true,
+      hasDocument: true,
       originalUrl: "https://example.com/a?utm_source=x#top",
       canonicalUrl: "https://example.com/a",
-      savedAt: expect.any(String),
+      captureSavedAt: expect.any(String),
+      captureUpdatedAt: expect.any(String),
       title: "Example Article"
     });
 
@@ -151,9 +166,14 @@ describe("knowledge ingest server", () => {
     expect(deleted.statusCode).toBe(200);
     expect(deleted.json()).toMatchObject({
       deleted: true,
-      saved: false
+      mode: "remove",
+      previousState: "parsed",
+      currentState: "captured",
+      state: "captured",
+      hasRawdoc: true,
+      hasDocument: false
     });
-    expect(deleted.json().deletedPaths).toContain(markdownPath);
+    expect(deleted.json().deletedFiles).toContain(markdownPath);
     await expect(access(join(storeRoot, markdownPath))).rejects.toThrow();
 
     const deletedStatus = await app.inject({
@@ -162,7 +182,45 @@ describe("knowledge ingest server", () => {
       headers: { authorization: "Bearer test-token" }
     });
     expect(deletedStatus.statusCode).toBe(200);
-    expect(deletedStatus.json().saved).toBe(false);
+    expect(deletedStatus.json()).toMatchObject({
+      normalizedUrl: "https://example.com/a",
+      state: "captured",
+      hasRawdoc: true,
+      hasDocument: false
+    });
+
+    const reparsed = await app.inject({
+      method: "POST",
+      url: "/api/clip/reparse",
+      headers: { authorization: "Bearer test-token" },
+      payload: { url: "https://example.com/a" }
+    });
+    expect(reparsed.statusCode).toBe(200);
+    expect(reparsed.json()).toMatchObject({
+      saved: true,
+      status: {
+        normalizedUrl: "https://example.com/a",
+        state: "parsed",
+        hasRawdoc: true,
+        hasDocument: true
+      }
+    });
+    expect(reparsed.json().rawdoc.rawdoc_id).toBe(save.json().rawdoc.rawdoc_id);
+
+    const purged = await app.inject({
+      method: "DELETE",
+      url: "/api/clip?url=https%3A%2F%2Fexample.com%2Fa&mode=purge",
+      headers: { authorization: "Bearer test-token" }
+    });
+    expect(purged.statusCode).toBe(200);
+    expect(purged.json()).toMatchObject({
+      deleted: true,
+      mode: "purge",
+      currentState: "empty",
+      state: "empty",
+      hasRawdoc: false,
+      hasDocument: false
+    });
 
     await app.close();
   });
@@ -395,6 +453,9 @@ describe("knowledge ingest server", () => {
       saved: true,
       status: {
         normalizedUrl: "https://medium.com/in-fitness-and-in-health/example-a875f21bed2d",
+        state: "parsed",
+        hasRawdoc: true,
+        hasDocument: true,
         originalUrl: "https://freedium-mirror.cfd/https://medium.com/in-fitness-and-in-health/example-a875f21bed2d",
         canonicalUrl: "https://medium.com/in-fitness-and-in-health/example-a875f21bed2d"
       }
@@ -407,8 +468,10 @@ describe("knowledge ingest server", () => {
     });
     expect(mirrorStatus.statusCode).toBe(200);
     expect(mirrorStatus.json()).toMatchObject({
-      saved: true,
       normalizedUrl: "https://medium.com/in-fitness-and-in-health/example-a875f21bed2d",
+      state: "parsed",
+      hasRawdoc: true,
+      hasDocument: true,
       originalUrl: "https://freedium-mirror.cfd/https://medium.com/in-fitness-and-in-health/example-a875f21bed2d",
       canonicalUrl: "https://medium.com/in-fitness-and-in-health/example-a875f21bed2d"
     });

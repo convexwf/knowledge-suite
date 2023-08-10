@@ -1,5 +1,7 @@
 export type InputMode = "browser_html" | "server_fetch";
 export type PanelView = "preview" | "json" | "rawdoc" | "parser" | "saved";
+export type ClipState = "empty" | "captured" | "parsed";
+export type ClipDeleteMode = "remove" | "purge";
 
 export interface PageSnapshot {
   pageUrl: string;
@@ -41,10 +43,7 @@ export interface PreviewResult {
   rawdoc: RawDoc;
   markdown: string;
   document: KnowledgeDocument;
-  status: {
-    saved: boolean;
-    title?: string;
-  };
+  status: ClipStatusResult;
 }
 
 export interface RawDoc {
@@ -92,15 +91,17 @@ export interface KnowledgeDocument {
 export interface ClipListItem {
   normalizedUrl: string;
   urlHash: string;
+  state: "captured" | "parsed";
+  hasRawdoc: true;
+  hasDocument: boolean;
   originalUrl?: string;
   canonicalUrl?: string;
-  savedAt: string;
-  updatedAt?: string;
+  captureSavedAt: string;
+  captureUpdatedAt: string;
+  parseUpdatedAt?: string;
   title?: string;
   docId?: string;
   rawdocId?: string;
-  parserVersion?: string;
-  parserMethod?: string;
 }
 
 export interface ClipListResult {
@@ -109,22 +110,28 @@ export interface ClipListResult {
 
 export interface ClipDeleteResult extends ClipStatusResult {
   deleted: boolean;
+  mode: ClipDeleteMode;
+  previousState: "captured" | "parsed";
+  currentState: "empty" | "captured";
+  removedDocId?: string;
+  removedRawdocId?: string;
   deletedFiles?: string[];
 }
 
 export interface ClipStatusResult {
   normalizedUrl: string;
   urlHash: string;
-  saved: boolean;
+  state: ClipState;
+  hasRawdoc: boolean;
+  hasDocument: boolean;
   originalUrl?: string;
   canonicalUrl?: string;
-  savedAt?: string;
-  updatedAt?: string;
+  captureSavedAt?: string;
+  captureUpdatedAt?: string;
+  parseUpdatedAt?: string;
   title?: string;
   docId?: string;
   rawdocId?: string;
-  parserVersion?: string;
-  parserMethod?: string;
 }
 
 export interface HealthResult {

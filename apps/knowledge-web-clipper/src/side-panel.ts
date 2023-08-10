@@ -126,9 +126,9 @@ async function preview(): Promise<void> {
     await refreshServerStatus();
     const body = await buildRequestBody();
     lastPreview = await createKnowledgeApiClient(settings).preview(body);
-    setStatus(lastPreview.status.saved ? "Saved" : "Ready");
+    setStatus(statusLabel(lastPreview.status));
     renderOutput();
-    if (lastPreview.status.saved) {
+    if (lastPreview.status.state !== "empty") {
       void loadSavedClips();
     }
   } catch (error) {
@@ -149,7 +149,7 @@ async function save(): Promise<void> {
     lastPreview = await createKnowledgeApiClient(settings).save(body);
     await loadSavedClips();
     await notifyBadgeRefresh();
-    setStatus("Saved");
+    setStatus(statusLabel(lastPreview.status));
     renderOutput();
   } catch (error) {
     setStatus("Error");
@@ -175,13 +175,14 @@ async function deleteCurrentClip(): Promise<void> {
 
   setStatus("Deleting");
   try {
-    const deleted = await createKnowledgeApiClient(settings).deleteClip(activeTab.url, settings.deleteFilesByDefault);
+    const mode = lastPreview?.status.state === "captured" ? "purge" : "remove";
+    const deleted = await createKnowledgeApiClient(settings).deleteClip(activeTab.url, mode);
     lastPreview = lastPreview
-      ? { ...lastPreview, status: { ...lastPreview.status, saved: false } }
+      ? { ...lastPreview, status: clipStatusFromDelete(deleted) }
       : undefined;
     await loadSavedClips();
     await notifyBadgeRefresh();
-    setStatus(deleted.deleted ? "Deleted" : "Not saved");
+    setStatus(deleted.deleted ? statusLabel(deleted) : "Not saved");
     renderOutput();
   } catch (error) {
     setStatus("Error");
@@ -312,7 +313,7 @@ async function refreshServerStatus(): Promise<void> {
 
   if (activeTab) {
     const status = await api.status(activeTab.url);
-    setStatus(status.saved ? "Saved" : "Connected");
+    setStatus(status.state === "empty" ? "Connected" : statusLabel(status));
   } else {
     setStatus("Connected");
   }
@@ -351,11 +352,13 @@ function renderSavedList(): void {
 
     const meta = document.createElement("div");
     meta.className = "saved-meta";
-    meta.textContent = new Date(clip.savedAt).toLocaleString();
+    meta.textContent = [clip.state === "parsed" ? "Parsed" : "Raw only", new Date(
+      (clip.parseUpdatedAt ?? clip.captureUpdatedAt)
+    ).toLocaleString()].join(" | ");
 
     const details = document.createElement("div");
     details.className = "saved-details";
-    details.textContent = [clip.docId, clip.parserVersion, clip.parserMethod].filter(Boolean).join(" | ");
+    details.textContent = [clip.rawdocId, clip.docId].filter(Boolean).join(" | ");
 
     item.append(title, url, meta);
     if (details.textContent) {
@@ -433,6 +436,40 @@ function renderError(error: unknown): void {
   previewOutput.replaceChildren(pre);
 }
 
+function statusLabel(status: { state: "empty" | "captured" | "parsed" }): string {
+  return status.state === "parsed" ? "Parsed" : status.state === "captured" ? "Raw only" : "Not saved";
+}
+
+function clipStatusFromDelete(deleted: {
+  normalizedUrl: string;
+  urlHash: string;
+  currentState: "empty" | "captured";
+  hasRawdoc: boolean;
+  hasDocument: boolean;
+  originalUrl?: string;
+  canonicalUrl?: string;
+  title?: string;
+  rawdocId?: string;
+  captureSavedAt?: string;
+  captureUpdatedAt?: string;
+  parseUpdatedAt?: string;
+}): PreviewResult["status"] {
+  return {
+    normalizedUrl: deleted.normalizedUrl,
+    urlHash: deleted.urlHash,
+    state: deleted.currentState,
+    hasRawdoc: deleted.hasRawdoc,
+    hasDocument: deleted.hasDocument,
+    originalUrl: deleted.originalUrl,
+    canonicalUrl: deleted.canonicalUrl,
+    title: deleted.title,
+    rawdocId: deleted.rawdocId,
+    captureSavedAt: deleted.captureSavedAt,
+    captureUpdatedAt: deleted.captureUpdatedAt,
+    parseUpdatedAt: deleted.parseUpdatedAt
+  };
+}
+
 function renderParserDiagnostics(preview: PreviewResult): DocumentFragment {
   const fragment = document.createDocumentFragment();
   const metadata = preview.rawdoc.metadata ?? {};
@@ -465,7 +502,7 @@ function renderParserDiagnostics(preview: PreviewResult): DocumentFragment {
       ["language", preview.document.meta.language],
       ["section_count", preview.document.sections.length],
       ["markdown_chars", preview.markdown.length],
-      ["saved", preview.status.saved]
+      ["clip_state", preview.status.state]
     ])
   );
 

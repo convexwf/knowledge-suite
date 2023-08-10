@@ -1,11 +1,13 @@
 import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
-import { access, mkdir, rm, unlink, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import {
+  ClipDeleteMode,
+  ClipDeleteResponse,
   ClipListItem,
-  ClipStatus,
   ClipSaveResponse,
+  ClipStatus,
   KnowledgeDocument,
   normalizeUrlForKnowledge,
   RawDoc,
@@ -18,14 +20,17 @@ interface ClipRow {
   normalized_url: string;
   original_url: string | null;
   canonical_url: string | null;
+  rawdoc_id: string;
+  active_doc_id: string | null;
+  page_title: string | null;
+  capture_saved_at: string;
+  capture_updated_at: string;
+  parse_updated_at: string | null;
+}
+
+interface DocumentRow {
   doc_id: string;
   rawdoc_id: string;
-  page_title: string | null;
-  parser_version: string;
-  parser_method: string;
-  content_hash: string | null;
-  saved_at: string;
-  updated_at: string;
 }
 
 interface SavePaths {
@@ -35,7 +40,7 @@ interface SavePaths {
   markdownPath: string;
 }
 
-const STORE_SCHEMA_VERSION = 2;
+const STORE_SCHEMA_VERSION = 3;
 
 export class KnowledgeStore {
   private database?: DatabaseSync;
@@ -51,24 +56,23 @@ export class KnowledgeStore {
     ]);
     await this.resetLegacyStoreIfNeeded();
     this.ensureDatabase();
+    this.migrateSchemaIfNeeded();
+    this.ensureIndexes();
   }
 
-  async status(normalizedUrl: string): Promise<ClipStatus> {
+  async status(inputUrl: string): Promise<ClipStatus> {
     await this.ensure();
-    const normalized = normalizeUrlForKnowledge(normalizedUrl);
+    const normalized = normalizeUrlForKnowledge(inputUrl);
     const hash = urlHash(normalized);
-    const row = this.database!.prepare(`
-      SELECT url_hash, normalized_url, original_url, canonical_url, doc_id, rawdoc_id, page_title,
-        parser_version, parser_method, content_hash, saved_at, updated_at
-      FROM clips
-      WHERE url_hash = ?
-    `).get(hash) as ClipRow | undefined ?? this.findClipByOriginalUrl(normalizedUrl);
+    const row = this.findClip(hash) ?? this.findClipByOriginalUrl(inputUrl);
 
     if (!row) {
       return {
         normalizedUrl: normalized,
         urlHash: hash,
-        saved: false
+        state: "empty",
+        hasRawdoc: false,
+        hasDocument: false
       };
     }
 
@@ -79,31 +83,28 @@ export class KnowledgeStore {
     await this.ensure();
     const boundedLimit = Math.min(Math.max(Math.trunc(limit) || 50, 1), 200);
     const rows = this.database!.prepare(`
-      SELECT url_hash, normalized_url, original_url, canonical_url, doc_id, rawdoc_id, page_title,
-        parser_version, parser_method, content_hash, saved_at, updated_at
+      SELECT url_hash, normalized_url, original_url, canonical_url, rawdoc_id, active_doc_id, page_title,
+        capture_saved_at, capture_updated_at, parse_updated_at
       FROM clips
-      ORDER BY updated_at DESC
+      ORDER BY COALESCE(parse_updated_at, capture_updated_at) DESC
       LIMIT ?
     `).all(boundedLimit) as unknown as ClipRow[];
 
-    return rows.map((row) => {
-      const paths = pathsFor(row.doc_id, row.rawdoc_id);
-      return {
-        normalizedUrl: row.normalized_url,
-        urlHash: row.url_hash,
-        originalUrl: row.original_url ?? undefined,
-        canonicalUrl: row.canonical_url ?? undefined,
-        savedAt: row.saved_at,
-        updatedAt: row.updated_at,
-        title: row.page_title ?? undefined,
-        docId: row.doc_id,
-        rawdocId: row.rawdoc_id,
-        parserVersion: row.parser_version,
-        parserMethod: row.parser_method,
-        markdownPath: paths.markdownPath,
-        documentPath: paths.documentPath
-      };
-    });
+    return rows.map((row) => ({
+      normalizedUrl: row.normalized_url,
+      urlHash: row.url_hash,
+      state: row.active_doc_id ? "parsed" : "captured",
+      hasRawdoc: true,
+      hasDocument: Boolean(row.active_doc_id),
+      originalUrl: row.original_url ?? undefined,
+      canonicalUrl: row.canonical_url ?? undefined,
+      captureSavedAt: row.capture_saved_at,
+      captureUpdatedAt: row.capture_updated_at,
+      parseUpdatedAt: row.parse_updated_at ?? undefined,
+      title: row.page_title ?? undefined,
+      docId: row.active_doc_id ?? undefined,
+      rawdocId: row.rawdoc_id
+    }));
   }
 
   close(): void {
@@ -111,47 +112,28 @@ export class KnowledgeStore {
     this.database = undefined;
   }
 
-  async deleteByUrl(normalizedUrl: string, deleteFiles = true): Promise<ClipStatus & { deleted: boolean; deletedPaths: string[] }> {
+  async deleteByUrl(inputUrl: string, mode: ClipDeleteMode): Promise<ClipDeleteResponse> {
     await this.ensure();
-    const normalized = normalizeUrlForKnowledge(normalizedUrl);
+    const normalized = normalizeUrlForKnowledge(inputUrl);
     const hash = urlHash(normalized);
-    const row = this.findClip(hash) ?? this.findClipByOriginalUrl(normalizedUrl);
+    const row = this.findClip(hash) ?? this.findClipByOriginalUrl(inputUrl);
 
     if (!row) {
       return {
         normalizedUrl: normalized,
         urlHash: hash,
-        saved: false,
+        state: "empty",
+        hasRawdoc: false,
+        hasDocument: false,
         deleted: false,
-        deletedPaths: []
+        mode,
+        previousState: "captured",
+        currentState: "empty",
+        deletedFiles: []
       };
     }
 
-    try {
-      this.database!.exec("BEGIN");
-      this.database!.prepare("DELETE FROM clips WHERE url_hash = ?").run(row.url_hash);
-      this.database!.prepare("DELETE FROM documents WHERE doc_id = ?").run(row.doc_id);
-      this.database!.prepare("DELETE FROM rawdocs WHERE rawdoc_id = ?").run(row.rawdoc_id);
-      this.database!.exec("COMMIT");
-    } catch (error) {
-      this.database!.exec("ROLLBACK");
-      throw error;
-    }
-
-    const deletedPaths: string[] = [];
-    if (deleteFiles) {
-      for (const relativePath of Object.values(pathsFor(row.doc_id, row.rawdoc_id))) {
-        await this.deleteFile(relativePath);
-        deletedPaths.push(relativePath);
-      }
-    }
-
-    return {
-      ...this.toStatus(row),
-      saved: false,
-      deleted: true,
-      deletedPaths
-    };
+    return mode === "remove" ? this.removeByRow(row) : this.purgeByRow(row);
   }
 
   async save(params: {
@@ -221,7 +203,7 @@ export class KnowledgeStore {
         sha256(params.html),
         typeof rawMetadata.capturedAt === "string" ? rawMetadata.capturedAt : null,
         params.rawdoc.fetch_time,
-        now
+        previous && previous.rawdoc_id === params.rawdoc.rawdoc_id ? previous.capture_saved_at : now
       );
 
       this.database!.prepare(`
@@ -278,39 +260,33 @@ export class KnowledgeStore {
           normalized_url,
           original_url,
           canonical_url,
-          doc_id,
           rawdoc_id,
+          active_doc_id,
           page_title,
-          parser_version,
-          parser_method,
-          content_hash,
-          saved_at,
-          updated_at
+          capture_saved_at,
+          capture_updated_at,
+          parse_updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(url_hash) DO UPDATE SET
           normalized_url = excluded.normalized_url,
           original_url = excluded.original_url,
           canonical_url = excluded.canonical_url,
-          doc_id = excluded.doc_id,
           rawdoc_id = excluded.rawdoc_id,
+          active_doc_id = excluded.active_doc_id,
           page_title = excluded.page_title,
-          parser_version = excluded.parser_version,
-          parser_method = excluded.parser_method,
-          content_hash = excluded.content_hash,
-          updated_at = excluded.updated_at
+          capture_updated_at = excluded.capture_updated_at,
+          parse_updated_at = excluded.parse_updated_at
       `).run(
         hash,
         normalized,
         originalUrl,
         canonicalUrl,
-        params.document.doc_id,
         params.rawdoc.rawdoc_id,
+        params.document.doc_id,
         params.document.meta.title,
-        parserInfo.version,
-        parserInfo.method,
-        contentHash,
-        previous?.saved_at ?? now,
+        previous?.capture_saved_at ?? now,
+        now,
         now
       );
       this.database!.exec("COMMIT");
@@ -319,11 +295,33 @@ export class KnowledgeStore {
       throw error;
     }
 
-    if (previous && (previous.doc_id !== params.document.doc_id || previous.rawdoc_id !== params.rawdoc.rawdoc_id)) {
-      await this.deleteObjectFiles(previous);
+    if (previous) {
+      if (previous.active_doc_id && previous.active_doc_id !== params.document.doc_id) {
+        await this.deleteDerivedArtifacts(previous.active_doc_id);
+      }
+      if (previous.rawdoc_id !== params.rawdoc.rawdoc_id) {
+        await this.deleteCaptureArtifacts(previous.rawdoc_id);
+      }
     }
 
     return paths;
+  }
+
+  async loadCaptureByUrl(inputUrl: string): Promise<{ clip: ClipStatus; html: string; rawdoc: RawDoc }> {
+    await this.ensure();
+    const normalized = normalizeUrlForKnowledge(inputUrl);
+    const row = this.findClip(urlHash(normalized)) ?? this.findClipByOriginalUrl(inputUrl);
+    if (!row) {
+      throw new Error("Capture does not exist for this URL");
+    }
+
+    const html = await this.readText(pathsForActiveCapture(row).rawHtmlPath);
+    const rawdoc = JSON.parse(await this.readText(pathsForActiveCapture(row).rawdocPath)) as RawDoc;
+    return {
+      clip: this.toStatus(row),
+      html,
+      rawdoc
+    };
   }
 
   private ensureDatabase(): void {
@@ -338,18 +336,13 @@ export class KnowledgeStore {
         normalized_url TEXT NOT NULL UNIQUE,
         original_url TEXT,
         canonical_url TEXT,
-        doc_id TEXT NOT NULL,
         rawdoc_id TEXT NOT NULL,
+        active_doc_id TEXT,
         page_title TEXT,
-        parser_version TEXT NOT NULL,
-        parser_method TEXT NOT NULL,
-        content_hash TEXT,
-        saved_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
+        capture_saved_at TEXT NOT NULL,
+        capture_updated_at TEXT NOT NULL,
+        parse_updated_at TEXT
       );
-
-      CREATE INDEX IF NOT EXISTS idx_clips_doc_id ON clips(doc_id);
-      CREATE INDEX IF NOT EXISTS idx_clips_rawdoc_id ON clips(rawdoc_id);
 
       CREATE TABLE IF NOT EXISTS documents (
         doc_id TEXT PRIMARY KEY,
@@ -368,9 +361,6 @@ export class KnowledgeStore {
         updated_at TEXT NOT NULL
       );
 
-      CREATE INDEX IF NOT EXISTS idx_documents_rawdoc_id ON documents(rawdoc_id);
-      CREATE INDEX IF NOT EXISTS idx_documents_content_hash ON documents(content_hash);
-
       CREATE TABLE IF NOT EXISTS rawdocs (
         rawdoc_id TEXT PRIMARY KEY,
         source_uri TEXT NOT NULL,
@@ -383,13 +373,89 @@ export class KnowledgeStore {
         fetched_at TEXT,
         created_at TEXT NOT NULL
       );
-
-      CREATE INDEX IF NOT EXISTS idx_rawdocs_normalized_url ON rawdocs(normalized_url);
-      CREATE INDEX IF NOT EXISTS idx_rawdocs_html_hash ON rawdocs(html_hash);
-
-      PRAGMA user_version = ${STORE_SCHEMA_VERSION};
     `);
     this.database = database;
+  }
+
+  private ensureIndexes(): void {
+    this.database!.exec(`
+      CREATE INDEX IF NOT EXISTS idx_clips_rawdoc_id ON clips(rawdoc_id);
+      CREATE INDEX IF NOT EXISTS idx_clips_active_doc_id ON clips(active_doc_id);
+      CREATE INDEX IF NOT EXISTS idx_documents_rawdoc_id ON documents(rawdoc_id);
+      CREATE INDEX IF NOT EXISTS idx_documents_normalized_url ON documents(normalized_url);
+      CREATE INDEX IF NOT EXISTS idx_documents_content_hash ON documents(content_hash);
+      CREATE INDEX IF NOT EXISTS idx_rawdocs_normalized_url ON rawdocs(normalized_url);
+      CREATE INDEX IF NOT EXISTS idx_rawdocs_html_hash ON rawdocs(html_hash);
+    `);
+  }
+
+  private migrateSchemaIfNeeded(): void {
+    const userVersion = this.database!.prepare("PRAGMA user_version").get() as { user_version: number } | undefined;
+    const clipsColumns = this.database!.prepare("PRAGMA table_info(clips)").all() as Array<{ name: string }>;
+    const hasActiveDocId = clipsColumns.some((column) => column.name === "active_doc_id");
+    if (hasActiveDocId && (userVersion?.user_version ?? 0) >= STORE_SCHEMA_VERSION) {
+      return;
+    }
+
+    const hasLegacyV2 = clipsColumns.some((column) => column.name === "doc_id");
+    if (!hasLegacyV2) {
+      this.database!.exec(`PRAGMA user_version = ${STORE_SCHEMA_VERSION}`);
+      return;
+    }
+
+    this.database!.exec("BEGIN");
+    try {
+      this.database!.exec("ALTER TABLE clips RENAME TO clips_old");
+      this.database!.exec(`
+        CREATE TABLE clips (
+          url_hash TEXT PRIMARY KEY,
+          normalized_url TEXT NOT NULL UNIQUE,
+          original_url TEXT,
+          canonical_url TEXT,
+          rawdoc_id TEXT NOT NULL,
+          active_doc_id TEXT,
+          page_title TEXT,
+          capture_saved_at TEXT NOT NULL,
+          capture_updated_at TEXT NOT NULL,
+          parse_updated_at TEXT
+        );
+
+        CREATE INDEX idx_clips_rawdoc_id ON clips(rawdoc_id);
+        CREATE INDEX idx_clips_active_doc_id ON clips(active_doc_id);
+      `);
+      this.database!.exec(`
+        INSERT INTO clips (
+          url_hash,
+          normalized_url,
+          original_url,
+          canonical_url,
+          rawdoc_id,
+          active_doc_id,
+          page_title,
+          capture_saved_at,
+          capture_updated_at,
+          parse_updated_at
+        )
+        SELECT
+          url_hash,
+          normalized_url,
+          original_url,
+          canonical_url,
+          rawdoc_id,
+          doc_id,
+          page_title,
+          saved_at,
+          updated_at,
+          updated_at
+        FROM clips_old
+      `);
+      this.database!.exec("DROP TABLE clips_old");
+      this.database!.exec(`PRAGMA user_version = ${STORE_SCHEMA_VERSION}`);
+      this.database!.exec("COMMIT");
+    } catch (error) {
+      this.database!.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   private async resetLegacyStoreIfNeeded(): Promise<void> {
@@ -412,11 +478,11 @@ export class KnowledgeStore {
         return;
       }
 
-      const columns = database.prepare("PRAGMA table_info(clips)").all() as unknown as Array<{ name: string }>;
-      const hasNewSchema = columns.some((column) => column.name === "rawdoc_id") &&
-        columns.some((column) => column.name === "parser_version") &&
-        columns.some((column) => column.name === "parser_method");
-      if (hasNewSchema) {
+      const columns = database.prepare("PRAGMA table_info(clips)").all() as Array<{ name: string }>;
+      const hasResetCandidate = columns.some((column) => column.name === "markdown_path")
+        || columns.some((column) => column.name === "document_path")
+        || columns.some((column) => column.name === "rawdoc_path");
+      if (!hasResetCandidate) {
         return;
       }
     } finally {
@@ -440,8 +506,8 @@ export class KnowledgeStore {
 
   private findClip(hash: string): ClipRow | undefined {
     return this.database!.prepare(`
-      SELECT url_hash, normalized_url, original_url, canonical_url, doc_id, rawdoc_id, page_title,
-        parser_version, parser_method, content_hash, saved_at, updated_at
+      SELECT url_hash, normalized_url, original_url, canonical_url, rawdoc_id, active_doc_id, page_title,
+        capture_saved_at, capture_updated_at, parse_updated_at
       FROM clips
       WHERE url_hash = ?
     `).get(hash) as ClipRow | undefined;
@@ -449,43 +515,164 @@ export class KnowledgeStore {
 
   private findClipByOriginalUrl(input: string): ClipRow | undefined {
     return this.database!.prepare(`
-      SELECT url_hash, normalized_url, original_url, canonical_url, doc_id, rawdoc_id, page_title,
-        parser_version, parser_method, content_hash, saved_at, updated_at
+      SELECT url_hash, normalized_url, original_url, canonical_url, rawdoc_id, active_doc_id, page_title,
+        capture_saved_at, capture_updated_at, parse_updated_at
       FROM clips
       WHERE original_url = ?
     `).get(input) as ClipRow | undefined;
   }
 
+  private findDocument(docId: string): DocumentRow | undefined {
+    return this.database!.prepare(`
+      SELECT doc_id, rawdoc_id
+      FROM documents
+      WHERE doc_id = ?
+    `).get(docId) as DocumentRow | undefined;
+  }
+
   private toStatus(row: ClipRow): ClipStatus {
-    const paths = pathsFor(row.doc_id, row.rawdoc_id);
+    const hasDocument = Boolean(row.active_doc_id);
     return {
       normalizedUrl: row.normalized_url,
       urlHash: row.url_hash,
-      saved: true,
+      state: hasDocument ? "parsed" : "captured",
+      hasRawdoc: true,
+      hasDocument,
       originalUrl: row.original_url ?? undefined,
       canonicalUrl: row.canonical_url ?? undefined,
-      savedAt: row.saved_at,
-      updatedAt: row.updated_at,
+      captureSavedAt: row.capture_saved_at,
+      captureUpdatedAt: row.capture_updated_at,
+      parseUpdatedAt: row.parse_updated_at ?? undefined,
       title: row.page_title ?? undefined,
-      docId: row.doc_id,
-      rawdocId: row.rawdoc_id,
-      parserVersion: row.parser_version,
-      parserMethod: row.parser_method,
-      markdownPath: paths.markdownPath,
-      documentPath: paths.documentPath
+      docId: row.active_doc_id ?? undefined,
+      rawdocId: row.rawdoc_id
     };
   }
 
-  private async deleteObjectFiles(row: Pick<ClipRow, "doc_id" | "rawdoc_id">): Promise<void> {
-    for (const relativePath of Object.values(pathsFor(row.doc_id, row.rawdoc_id))) {
-      await this.deleteFile(relativePath);
+  private async removeByRow(row: ClipRow): Promise<ClipDeleteResponse> {
+    if (!row.active_doc_id) {
+      return {
+        ...this.toStatus(row),
+        deleted: false,
+        mode: "remove",
+        previousState: "captured",
+        currentState: "captured",
+        deletedFiles: []
+      };
     }
+
+    const now = new Date().toISOString();
+    const deletedFiles = await this.deleteDerivedArtifacts(row.active_doc_id);
+    try {
+      this.database!.exec("BEGIN");
+      this.database!.prepare("DELETE FROM documents WHERE doc_id = ?").run(row.active_doc_id);
+      this.database!.prepare(`
+        UPDATE clips
+        SET active_doc_id = NULL,
+            capture_updated_at = ?,
+            parse_updated_at = NULL
+        WHERE url_hash = ?
+      `).run(now, row.url_hash);
+      this.database!.exec("COMMIT");
+    } catch (error) {
+      this.database!.exec("ROLLBACK");
+      throw error;
+    }
+
+    return {
+      normalizedUrl: row.normalized_url,
+      urlHash: row.url_hash,
+      state: "captured",
+      hasRawdoc: true,
+      hasDocument: false,
+      originalUrl: row.original_url ?? undefined,
+      canonicalUrl: row.canonical_url ?? undefined,
+      captureSavedAt: row.capture_saved_at,
+      captureUpdatedAt: now,
+      title: row.page_title ?? undefined,
+      rawdocId: row.rawdoc_id,
+      deleted: true,
+      mode: "remove",
+      previousState: "parsed",
+      currentState: "captured",
+      deletedFiles,
+      removedDocId: row.active_doc_id
+    };
+  }
+
+  private async purgeByRow(row: ClipRow): Promise<ClipDeleteResponse> {
+    const deletedFiles: string[] = [];
+    if (row.active_doc_id) {
+      deletedFiles.push(...await this.deleteDerivedArtifacts(row.active_doc_id));
+    }
+    deletedFiles.push(...await this.deleteCaptureArtifacts(row.rawdoc_id));
+
+    try {
+      this.database!.exec("BEGIN");
+      this.database!.prepare("DELETE FROM clips WHERE url_hash = ?").run(row.url_hash);
+      if (row.active_doc_id) {
+        this.database!.prepare("DELETE FROM documents WHERE doc_id = ?").run(row.active_doc_id);
+      }
+      this.database!.prepare("DELETE FROM rawdocs WHERE rawdoc_id = ?").run(row.rawdoc_id);
+      this.database!.exec("COMMIT");
+    } catch (error) {
+      this.database!.exec("ROLLBACK");
+      throw error;
+    }
+
+    return {
+      normalizedUrl: row.normalized_url,
+      urlHash: row.url_hash,
+      state: "empty",
+      hasRawdoc: false,
+      hasDocument: false,
+      originalUrl: row.original_url ?? undefined,
+      canonicalUrl: row.canonical_url ?? undefined,
+      deleted: true,
+      mode: "purge",
+      previousState: row.active_doc_id ? "parsed" : "captured",
+      currentState: "empty",
+      deletedFiles,
+      removedDocId: row.active_doc_id ?? undefined,
+      removedRawdocId: row.rawdoc_id
+    };
+  }
+
+  private async deleteDerivedArtifacts(docId: string): Promise<string[]> {
+    const deletedFiles: string[] = [];
+    const relativePaths = [
+      documentJsonPath(docId),
+      markdownPath(docId)
+    ];
+    for (const relativePath of relativePaths) {
+      await this.deleteFile(relativePath);
+      deletedFiles.push(relativePath);
+    }
+    return deletedFiles;
+  }
+
+  private async deleteCaptureArtifacts(rawdocId: string): Promise<string[]> {
+    const deletedFiles: string[] = [];
+    const relativePaths = [
+      rawHtmlPath(rawdocId),
+      rawdocMetaPath(rawdocId)
+    ];
+    for (const relativePath of relativePaths) {
+      await this.deleteFile(relativePath);
+      deletedFiles.push(relativePath);
+    }
+    return deletedFiles;
   }
 
   private async writeText(relativePath: string, content: string): Promise<void> {
     const path = resolveInsideRoot(this.root, relativePath);
     await mkdir(dirname(path), { recursive: true });
     await writeFile(path, content, "utf8");
+  }
+
+  private async readText(relativePath: string): Promise<string> {
+    const path = resolveInsideRoot(this.root, relativePath);
+    return readFile(path, "utf8");
   }
 
   private async writeJson(relativePath: string, content: unknown): Promise<void> {
@@ -504,11 +691,34 @@ export class KnowledgeStore {
 
 function pathsFor(docId: string, rawdocId: string): SavePaths {
   return {
-    rawHtmlPath: `rawdocs/${rawdocId}.html`,
-    rawdocPath: `rawdocs/${rawdocId}.json`,
-    documentPath: `documents/${docId}.json`,
-    markdownPath: `markdown/${docId}.md`
+    rawHtmlPath: rawHtmlPath(rawdocId),
+    rawdocPath: rawdocMetaPath(rawdocId),
+    documentPath: documentJsonPath(docId),
+    markdownPath: markdownPath(docId)
   };
+}
+
+function pathsForActiveCapture(row: Pick<ClipRow, "rawdoc_id">): Pick<SavePaths, "rawHtmlPath" | "rawdocPath"> {
+  return {
+    rawHtmlPath: rawHtmlPath(row.rawdoc_id),
+    rawdocPath: rawdocMetaPath(row.rawdoc_id)
+  };
+}
+
+function rawHtmlPath(rawdocId: string): string {
+  return `rawdocs/${rawdocId}.html`;
+}
+
+function rawdocMetaPath(rawdocId: string): string {
+  return `rawdocs/${rawdocId}.json`;
+}
+
+function documentJsonPath(docId: string): string {
+  return `documents/${docId}.json`;
+}
+
+function markdownPath(docId: string): string {
+  return `markdown/${docId}.md`;
 }
 
 function parserInfoFor(document: KnowledgeDocument, rawdoc: RawDoc): { version: string; method: string; profile: string | null } {

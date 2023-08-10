@@ -32,7 +32,9 @@ export async function refreshBadge(tabId: number): Promise<void> {
 
     const settings = await getSettings();
     const status = await createKnowledgeApiClient(settings).status(url);
-    await setBadge(tabId, status.saved ? "OK" : "", status.saved ? "#1f7a4d" : "#808995");
+    const badge = status.state === "parsed" ? "OK" : status.state === "captured" ? "RAW" : "";
+    const color = status.state === "parsed" ? "#1f7a4d" : "#808995";
+    await setBadge(tabId, badge, color);
   } catch (error) {
     if (isMissingTabError(error)) {
       return;

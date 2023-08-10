@@ -2,10 +2,12 @@ import cors from "@fastify/cors";
 import fastify from "fastify";
 import {
   ClipInputSchema,
-  ClipSaveRequestSchema
+  ClipReparseRequestSchema,
+  ClipSaveRequestSchema,
+  RawDoc
 } from "@uknowledge/knowledge-schema";
 import { loadConfig, ServerConfig } from "./config.js";
-import { resolveClipInput } from "./input.js";
+import { ResolvedInput, resolveClipInput } from "./input.js";
 import { documentToMarkdown } from "./markdown.js";
 import { parsePage } from "./parser.js";
 import { KnowledgeStore } from "./store.js";
@@ -89,11 +91,11 @@ export async function buildServer(config: ServerConfig = loadConfig()) {
   });
 
   app.delete("/api/clip", async (request) => {
-    const query = request.query as { url?: string; deleteFiles?: string };
+    const query = request.query as { url?: string; mode?: "purge" | "remove" };
     if (!query.url) {
       throw new Error("url is required");
     }
-    return store.deleteByUrl(query.url, query.deleteFiles !== "false");
+    return store.deleteByUrl(query.url, query.mode === "purge" ? "purge" : "remove");
   });
 
   app.post("/api/clip/preview", async (request) => {
@@ -131,7 +133,56 @@ export async function buildServer(config: ServerConfig = loadConfig()) {
     };
   });
 
+  app.post("/api/clip/reparse", async (request) => {
+    const input = ClipReparseRequestSchema.parse(request.body);
+    const capture = await store.loadCaptureByUrl(input.url);
+    const resolved = resolvedInputFromCapture(capture.rawdoc, capture.html);
+    const parsed = await parsePage(resolved, { rawdocId: capture.rawdoc.rawdoc_id });
+    const markdown = documentToMarkdown(parsed.document);
+    const paths = await store.save({
+      normalizedUrl: resolved.normalizedUrl,
+      html: resolved.html,
+      rawdoc: parsed.rawdoc,
+      document: parsed.document,
+      markdown
+    });
+    const status = await store.status(resolved.normalizedUrl);
+    return {
+      ...parsed,
+      markdown,
+      status,
+      saved: true,
+      paths
+    };
+  });
+
   return app;
+}
+
+function resolvedInputFromCapture(rawdoc: RawDoc, html: string): ResolvedInput {
+  const metadata = rawdoc.metadata ?? {};
+  const normalizedUrl = typeof metadata.normalizedUrl === "string" ? metadata.normalizedUrl : rawdoc.source_uri;
+  return {
+    inputMode: metadata.inputMode === "server_fetch" ? "server_fetch" : "browser_html",
+    url: typeof metadata.canonicalUrl === "string" ? metadata.canonicalUrl : rawdoc.source_uri,
+    originalUrl: typeof metadata.originalUrl === "string" ? metadata.originalUrl : rawdoc.source_uri,
+    canonicalUrl: typeof metadata.canonicalUrl === "string" ? metadata.canonicalUrl : undefined,
+    fetchUrl: typeof metadata.fetchUrl === "string" ? metadata.fetchUrl : undefined,
+    normalizedUrl,
+    html,
+    title: typeof metadata.title === "string" ? metadata.title : undefined,
+    meta: isStringRecord(metadata.meta) ? metadata.meta : {},
+    capturedAt: typeof metadata.capturedAt === "string" ? metadata.capturedAt : rawdoc.fetch_time,
+    selectionHtml: typeof metadata.selectionHtml === "string" ? metadata.selectionHtml : undefined
+  };
+}
+
+function isStringRecord(value: unknown): value is Record<string, string> {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      Object.values(value as Record<string, unknown>).every((item) => typeof item === "string")
+  );
 }
 
 function isAllowedCorsOrigin(origin: string | undefined): boolean {

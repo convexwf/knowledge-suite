@@ -17,7 +17,7 @@ describe("KnowledgeStore", () => {
     await rm(storeRoot, { recursive: true, force: true });
   });
 
-  it("stores UUID-named objects and moves a URL to the newest reparse result", async () => {
+  it("stores UUID-named objects and points a URL to the newest parsed result", async () => {
     const store = new KnowledgeStore(storeRoot);
     const first = fixture("11111111-1111-4111-8111-111111111111", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "First Title");
     const second = fixture("22222222-2222-4222-8222-222222222222", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "Second Title");
@@ -45,53 +45,227 @@ describe("KnowledgeStore", () => {
 
     const status = await store.status("https://example.com/article?utm_source=x");
     expect(status).toMatchObject({
-      saved: true,
+      normalizedUrl: "https://example.com/article",
+      state: "parsed",
+      hasRawdoc: true,
+      hasDocument: true,
       title: "Second Title",
       docId: second.document.doc_id,
-      rawdocId: second.rawdoc.rawdoc_id,
-      parserVersion: "knowledge-ingest-server/0.1",
-      parserMethod: "defuddle",
-      documentPath: secondPaths.documentPath,
-      markdownPath: secondPaths.markdownPath
+      rawdocId: second.rawdoc.rawdoc_id
+    });
+    expect(status.captureSavedAt).toEqual(expect.any(String));
+    expect(status.captureUpdatedAt).toEqual(expect.any(String));
+    expect(status.parseUpdatedAt).toEqual(expect.any(String));
+
+    const list = await store.list();
+    expect(list).toHaveLength(1);
+    expect(list[0]).toMatchObject({
+      normalizedUrl: "https://example.com/article",
+      state: "parsed",
+      hasRawdoc: true,
+      hasDocument: true,
+      title: "Second Title",
+      docId: second.document.doc_id,
+      rawdocId: second.rawdoc.rawdoc_id
     });
 
     store.close();
   });
 
-  it("deletes the current URL row, object rows, and object files", async () => {
+  it("remove deletes only derived artifacts and keeps the raw capture for reparse", async () => {
     const store = new KnowledgeStore(storeRoot);
-    const clip = fixture("33333333-3333-4333-8333-333333333333", "cccccccc-cccc-4ccc-8ccc-cccccccccccc", "Deleted Title");
+    const clip = fixture("33333333-3333-4333-8333-333333333333", "cccccccc-cccc-4ccc-8ccc-cccccccccccc", "Captured Title");
 
     const paths = await store.save(clip);
     expect(tableCount(storeRoot, "clips")).toBe(1);
     expect(tableCount(storeRoot, "documents")).toBe(1);
     expect(tableCount(storeRoot, "rawdocs")).toBe(1);
 
-    const result = await store.deleteByUrl(clip.normalizedUrl);
+    const result = await store.deleteByUrl(clip.normalizedUrl, "remove");
 
     expect(result).toMatchObject({
       deleted: true,
-      saved: false,
-      docId: clip.document.doc_id,
+      mode: "remove",
+      previousState: "parsed",
+      currentState: "captured",
+      state: "captured",
+      hasRawdoc: true,
+      hasDocument: false,
+      removedDocId: clip.document.doc_id,
       rawdocId: clip.rawdoc.rawdoc_id
     });
+    expect(result.deletedFiles).toEqual([
+      paths.documentPath,
+      paths.markdownPath
+    ]);
+    expect(tableCount(storeRoot, "clips")).toBe(1);
+    expect(tableCount(storeRoot, "documents")).toBe(0);
+    expect(tableCount(storeRoot, "rawdocs")).toBe(1);
+    await expect(access(join(storeRoot, paths.documentPath))).rejects.toThrow();
+    await expect(access(join(storeRoot, paths.markdownPath))).rejects.toThrow();
+    await expect(access(join(storeRoot, paths.rawHtmlPath))).resolves.toBeUndefined();
+    await expect(access(join(storeRoot, paths.rawdocPath))).resolves.toBeUndefined();
+
+    const status = await store.status(clip.normalizedUrl);
+    expect(status).toMatchObject({
+      state: "captured",
+      hasRawdoc: true,
+      hasDocument: false,
+      rawdocId: clip.rawdoc.rawdoc_id
+    });
+    expect(status.docId).toBeUndefined();
+    expect(status.parseUpdatedAt).toBeUndefined();
+
+    const capture = await store.loadCaptureByUrl(clip.normalizedUrl);
+    expect(capture.html).toContain("Captured Title");
+    expect(capture.rawdoc.rawdoc_id).toBe(clip.rawdoc.rawdoc_id);
+
+    store.close();
+  });
+
+  it("purge deletes clip rows, capture rows, and all capture files", async () => {
+    const store = new KnowledgeStore(storeRoot);
+    const clip = fixture("44444444-4444-4444-8444-444444444444", "dddddddd-dddd-4ddd-8ddd-dddddddddddd", "Purge Title");
+    const paths = await store.save(clip);
+
+    const removed = await store.deleteByUrl(clip.normalizedUrl, "remove");
+    expect(removed.currentState).toBe("captured");
+
+    const purged = await store.deleteByUrl(clip.normalizedUrl, "purge");
+
+    expect(purged).toMatchObject({
+      deleted: true,
+      mode: "purge",
+      previousState: "captured",
+      currentState: "empty",
+      state: "empty",
+      hasRawdoc: false,
+      hasDocument: false,
+      removedRawdocId: clip.rawdoc.rawdoc_id
+    });
+    expect(purged.deletedFiles).toEqual([
+      paths.rawHtmlPath,
+      paths.rawdocPath
+    ]);
     expect(tableCount(storeRoot, "clips")).toBe(0);
     expect(tableCount(storeRoot, "documents")).toBe(0);
     expect(tableCount(storeRoot, "rawdocs")).toBe(0);
-    await expect(access(join(storeRoot, paths.documentPath))).rejects.toThrow();
-    await expect(access(join(storeRoot, paths.markdownPath))).rejects.toThrow();
     await expect(access(join(storeRoot, paths.rawHtmlPath))).rejects.toThrow();
     await expect(access(join(storeRoot, paths.rawdocPath))).rejects.toThrow();
 
     store.close();
   });
 
-  it("creates all database tables with no stored path columns", async () => {
+  it("creates all database tables with the v3 capture and derived columns", async () => {
     const store = new KnowledgeStore(storeRoot);
     await store.ensure();
 
     expectStoreSchema(storeRoot);
 
+    store.close();
+  });
+
+  it("migrates the v2 clips table into the capture and derived split schema", async () => {
+    const database = new DatabaseSync(join(storeRoot, "index.sqlite3"));
+    database.exec(`
+      CREATE TABLE clips (
+        url_hash TEXT PRIMARY KEY,
+        normalized_url TEXT NOT NULL UNIQUE,
+        original_url TEXT,
+        canonical_url TEXT,
+        doc_id TEXT,
+        rawdoc_id TEXT NOT NULL,
+        page_title TEXT,
+        parser_version TEXT,
+        parser_method TEXT,
+        content_hash TEXT,
+        saved_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE documents (
+        doc_id TEXT PRIMARY KEY,
+        rawdoc_id TEXT NOT NULL,
+        title TEXT NOT NULL,
+        source_url TEXT,
+        normalized_url TEXT,
+        language TEXT,
+        authors_json TEXT,
+        published_at TEXT,
+        parser_version TEXT NOT NULL,
+        parser_method TEXT NOT NULL,
+        parser_profile TEXT,
+        content_hash TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE rawdocs (
+        rawdoc_id TEXT PRIMARY KEY,
+        source_uri TEXT NOT NULL,
+        normalized_url TEXT,
+        input_mode TEXT NOT NULL,
+        content_type TEXT,
+        content_length INTEGER,
+        html_hash TEXT,
+        captured_at TEXT,
+        fetched_at TEXT,
+        created_at TEXT NOT NULL
+      );
+
+      INSERT INTO clips (
+        url_hash,
+        normalized_url,
+        original_url,
+        canonical_url,
+        doc_id,
+        rawdoc_id,
+        page_title,
+        parser_version,
+        parser_method,
+        content_hash,
+        saved_at,
+        updated_at
+      )
+      VALUES (
+        'hash-v2',
+        'https://example.com/v2',
+        'https://example.com/v2?utm_source=x',
+        'https://example.com/v2',
+        'doc-v2',
+        'raw-v2',
+        'Migrated Title',
+        'knowledge-ingest-server/0.1',
+        'defuddle',
+        'content-hash',
+        '2026-05-10T00:00:00.000Z',
+        '2026-05-11T00:00:00.000Z'
+      );
+
+      PRAGMA user_version = 2;
+    `);
+    database.close();
+
+    const store = new KnowledgeStore(storeRoot);
+    await store.ensure();
+
+    const status = await store.status("https://example.com/v2?utm_source=x");
+    expect(status).toMatchObject({
+      normalizedUrl: "https://example.com/v2",
+      state: "parsed",
+      hasRawdoc: true,
+      hasDocument: true,
+      originalUrl: "https://example.com/v2?utm_source=x",
+      canonicalUrl: "https://example.com/v2",
+      title: "Migrated Title",
+      docId: "doc-v2",
+      rawdocId: "raw-v2",
+      captureSavedAt: "2026-05-10T00:00:00.000Z",
+      captureUpdatedAt: "2026-05-11T00:00:00.000Z",
+      parseUpdatedAt: "2026-05-11T00:00:00.000Z"
+    });
+
+    expectStoreSchema(storeRoot);
     store.close();
   });
 
@@ -123,7 +297,9 @@ describe("KnowledgeStore", () => {
     await expect(access(join(storeRoot, "docs", "legacy.md"))).rejects.toThrow();
     await expect(access(join(storeRoot, "rawdocs", "legacy.meta.json"))).rejects.toThrow();
     expect(await store.status("https://example.com/legacy")).toMatchObject({
-      saved: false
+      state: "empty",
+      hasRawdoc: false,
+      hasDocument: false
     });
 
     store.close();
@@ -155,14 +331,12 @@ function expectStoreSchema(root: string): void {
       "normalized_url",
       "original_url",
       "canonical_url",
-      "doc_id",
       "rawdoc_id",
+      "active_doc_id",
       "page_title",
-      "parser_version",
-      "parser_method",
-      "content_hash",
-      "saved_at",
-      "updated_at"
+      "capture_saved_at",
+      "capture_updated_at",
+      "parse_updated_at"
     ]);
     expect(columnsByTable.documents).toEqual([
       "doc_id",
@@ -192,6 +366,9 @@ function expectStoreSchema(root: string): void {
       "fetched_at",
       "created_at"
     ]);
+
+    const userVersion = database.prepare("PRAGMA user_version").get() as { user_version: number };
+    expect(userVersion.user_version).toBe(3);
 
     for (const columns of Object.values(columnsByTable)) {
       expect(columns.filter((column) => column.includes("path"))).toEqual([]);
@@ -232,7 +409,10 @@ function fixture(docId: string, rawdocId: string, title: string): {
       content_length: Buffer.byteLength(html),
       metadata: {
         inputMode: "browser_html",
-        parserMethod: "defuddle"
+        parserMethod: "defuddle",
+        originalUrl: "https://example.com/article?utm_source=x",
+        canonicalUrl: normalizedUrl,
+        normalizedUrl
       }
     },
     document: {

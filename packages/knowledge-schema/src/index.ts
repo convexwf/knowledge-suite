@@ -42,6 +42,14 @@ export const ClipSaveRequestSchema = ClipInputSchema.and(
 );
 export type ClipSaveRequest = z.infer<typeof ClipSaveRequestSchema>;
 
+export const ClipReparseRequestSchema = z.object({
+  url: z.string().min(1)
+});
+export type ClipReparseRequest = z.infer<typeof ClipReparseRequestSchema>;
+
+export const ClipDeleteModeSchema = z.enum(["remove", "purge"]);
+export type ClipDeleteMode = z.infer<typeof ClipDeleteModeSchema>;
+
 export interface RawDoc {
   rawdoc_id: string;
   source_type: "url" | "singlefile_html" | "pdf" | "epub";
@@ -107,18 +115,17 @@ export interface KnowledgeDocument {
 export interface ClipStatus {
   normalizedUrl: string;
   urlHash: string;
-  saved: boolean;
+  state: "empty" | "captured" | "parsed";
+  hasRawdoc: boolean;
+  hasDocument: boolean;
   originalUrl?: string;
   canonicalUrl?: string;
-  savedAt?: string;
-  updatedAt?: string;
+  captureSavedAt?: string;
+  captureUpdatedAt?: string;
+  parseUpdatedAt?: string;
   title?: string;
   docId?: string;
   rawdocId?: string;
-  parserVersion?: string;
-  parserMethod?: string;
-  markdownPath?: string;
-  documentPath?: string;
 }
 
 export interface ClipPreviewResponse {
@@ -142,23 +149,28 @@ export interface ClipStatusResponse extends ClipStatus {}
 
 export interface ClipDeleteResponse extends ClipStatus {
   deleted: boolean;
-  deletedPaths: string[];
+  mode: ClipDeleteMode;
+  previousState: "captured" | "parsed";
+  currentState: "empty" | "captured";
+  deletedFiles: string[];
+  removedDocId?: string;
+  removedRawdocId?: string;
 }
 
 export interface ClipListItem {
   normalizedUrl: string;
   urlHash: string;
+  state: "captured" | "parsed";
+  hasRawdoc: true;
+  hasDocument: boolean;
   originalUrl?: string;
   canonicalUrl?: string;
-  savedAt: string;
-  updatedAt?: string;
+  captureSavedAt: string;
+  captureUpdatedAt: string;
+  parseUpdatedAt?: string;
   title?: string;
   docId?: string;
   rawdocId?: string;
-  parserVersion?: string;
-  parserMethod?: string;
-  markdownPath?: string;
-  documentPath?: string;
 }
 
 export interface ClipListResponse {

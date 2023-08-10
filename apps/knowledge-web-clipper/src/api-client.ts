@@ -1,5 +1,6 @@
 import {
   ClipDeleteResult,
+  ClipDeleteMode,
   ClipListResult,
   ClipRequestBody,
   ClipStatusResult,
@@ -12,7 +13,8 @@ export interface KnowledgeApiClient {
   health(): Promise<HealthResult>;
   status(url: string): Promise<ClipStatusResult>;
   list(limit?: number): Promise<ClipListResult>;
-  deleteClip(url: string, deleteFiles?: boolean): Promise<ClipDeleteResult>;
+  deleteClip(url: string, mode?: ClipDeleteMode): Promise<ClipDeleteResult>;
+  reparse(url: string): Promise<PreviewResult>;
   preview(body: ClipRequestBody): Promise<PreviewResult>;
   save(body: ClipRequestBody): Promise<PreviewResult>;
 }
@@ -41,14 +43,15 @@ export function createKnowledgeApiClient(settings: ExtensionSettings): Knowledge
       undefined,
       options
     ),
-    deleteClip: (url, deleteFiles = settings.deleteFilesByDefault) => request<ClipDeleteResult>(
+    deleteClip: (url, mode = "remove") => request<ClipDeleteResult>(
       baseUrl,
       settings.token,
       "DELETE",
-      `/api/clip?url=${encodeURIComponent(url)}&deleteFiles=${encodeURIComponent(String(deleteFiles))}`,
+      `/api/clip?url=${encodeURIComponent(url)}&mode=${encodeURIComponent(mode)}`,
       undefined,
       options
     ),
+    reparse: (url) => request<PreviewResult>(baseUrl, settings.token, "POST", "/api/clip/reparse", { url }, options),
     preview: (body) => request<PreviewResult>(baseUrl, settings.token, "POST", "/api/clip/preview", body, options),
     save: (body) => request<PreviewResult>(baseUrl, settings.token, "POST", "/api/clip/save", {
       ...body,
