@@ -10,7 +10,6 @@ const allowServerFetchInput = mustGet<HTMLInputElement>("allow-server-fetch");
 const autoRefreshInput = mustGet<HTMLInputElement>("auto-refresh");
 const healthCheckInput = mustGet<HTMLInputElement>("health-check-on-open");
 const requestTimeoutInput = mustGet<HTMLInputElement>("request-timeout-ms");
-const deleteFilesInput = mustGet<HTMLInputElement>("delete-files-by-default");
 const showParserInput = mustGet<HTMLInputElement>("show-parser-diagnostics");
 const savedListLimitInput = mustGet<HTMLInputElement>("saved-list-limit");
 const defaultPanelTabSelect = mustGet<HTMLSelectElement>("default-panel-tab");
@@ -62,7 +61,6 @@ function renderSettings(value: ExtensionSettings): void {
   autoRefreshInput.checked = value.autoRefresh;
   healthCheckInput.checked = value.healthCheckOnOpen;
   requestTimeoutInput.value = String(value.requestTimeoutMs);
-  deleteFilesInput.checked = value.deleteFilesByDefault;
   showParserInput.checked = value.showParserDiagnostics;
   savedListLimitInput.value = String(value.savedListLimit);
   defaultPanelTabSelect.value = value.defaultPanelTab;
@@ -78,7 +76,6 @@ function readSettingsFromForm(): ExtensionSettings {
     autoRefresh: autoRefreshInput.checked,
     healthCheckOnOpen: healthCheckInput.checked,
     requestTimeoutMs: clampNumber(requestTimeoutInput.value, DEFAULT_SETTINGS.requestTimeoutMs, 3000, 60000),
-    deleteFilesByDefault: deleteFilesInput.checked,
     showParserDiagnostics: showParserInput.checked,
     savedListLimit: clampNumber(savedListLimitInput.value, DEFAULT_SETTINGS.savedListLimit, 10, 200),
     defaultPanelTab: asPanelView(defaultPanelTabSelect.value)

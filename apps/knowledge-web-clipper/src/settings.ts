@@ -8,7 +8,6 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
   autoRefresh: true,
   healthCheckOnOpen: true,
   requestTimeoutMs: 15000,
-  deleteFilesByDefault: true,
   showParserDiagnostics: true,
   savedListLimit: 50,
   defaultPanelTab: "preview"
@@ -43,7 +42,6 @@ export function normalizeSettings(stored: Record<string, unknown> | null | undef
     autoRefresh: source.autoRefresh !== false,
     healthCheckOnOpen: source.healthCheckOnOpen !== false,
     requestTimeoutMs,
-    deleteFilesByDefault: source.deleteFilesByDefault !== false,
     showParserDiagnostics: source.showParserDiagnostics !== false,
     savedListLimit,
     defaultPanelTab: asPanelView(source.defaultPanelTab, DEFAULT_SETTINGS.defaultPanelTab)

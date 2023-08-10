@@ -148,6 +148,12 @@ export class KnowledgeStore {
     const normalized = normalizeUrlForKnowledge(params.normalizedUrl);
     const hash = urlHash(normalized);
     const previous = this.findClip(hash);
+    const replacedDocId = previous?.active_doc_id && previous.active_doc_id !== params.document.doc_id
+      ? previous.active_doc_id
+      : undefined;
+    const replacedRawdocId = previous && previous.rawdoc_id !== params.rawdoc.rawdoc_id
+      ? previous.rawdoc_id
+      : undefined;
     const paths = pathsFor(params.document.doc_id, params.rawdoc.rawdoc_id);
     const parserInfo = parserInfoFor(params.document, params.rawdoc);
     const now = new Date().toISOString();
@@ -289,19 +295,24 @@ export class KnowledgeStore {
         now,
         now
       );
+
+      if (replacedDocId) {
+        this.database!.prepare("DELETE FROM documents WHERE doc_id = ?").run(replacedDocId);
+      }
+      if (replacedRawdocId) {
+        this.database!.prepare("DELETE FROM rawdocs WHERE rawdoc_id = ?").run(replacedRawdocId);
+      }
       this.database!.exec("COMMIT");
     } catch (error) {
       this.database!.exec("ROLLBACK");
       throw error;
     }
 
-    if (previous) {
-      if (previous.active_doc_id && previous.active_doc_id !== params.document.doc_id) {
-        await this.deleteDerivedArtifacts(previous.active_doc_id);
-      }
-      if (previous.rawdoc_id !== params.rawdoc.rawdoc_id) {
-        await this.deleteCaptureArtifacts(previous.rawdoc_id);
-      }
+    if (replacedDocId) {
+      await this.deleteDerivedArtifacts(replacedDocId);
+    }
+    if (replacedRawdocId) {
+      await this.deleteCaptureArtifacts(replacedRawdocId);
     }
 
     return paths;
@@ -419,9 +430,6 @@ export class KnowledgeStore {
           capture_updated_at TEXT NOT NULL,
           parse_updated_at TEXT
         );
-
-        CREATE INDEX idx_clips_rawdoc_id ON clips(rawdoc_id);
-        CREATE INDEX idx_clips_active_doc_id ON clips(active_doc_id);
       `);
       this.database!.exec(`
         INSERT INTO clips (

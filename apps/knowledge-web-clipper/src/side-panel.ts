@@ -2,6 +2,7 @@ import { createKnowledgeApiClient } from "./api-client.js";
 import { getSettings, saveSettings } from "./settings.js";
 import {
   ActiveTabInfo,
+  ClipDeleteMode,
   ClipListItem,
   ClipRequestBody,
   ExtensionSettings,
@@ -40,7 +41,8 @@ const settingsButton = mustGet<HTMLButtonElement>("settings-button");
 const refreshButton = mustGet<HTMLButtonElement>("refresh-button");
 const saveButton = mustGet<HTMLButtonElement>("save-button");
 const copyButton = mustGet<HTMLButtonElement>("copy-button");
-const deleteButton = mustGet<HTMLButtonElement>("delete-button");
+const removeButton = mustGet<HTMLButtonElement>("remove-button");
+const purgeButton = mustGet<HTMLButtonElement>("purge-button");
 const modeBrowserButton = mustGet<HTMLButtonElement>("mode-browser");
 const modeFetchButton = mustGet<HTMLButtonElement>("mode-fetch");
 const tabPreviewButton = mustGet<HTMLButtonElement>("tab-preview");
@@ -65,12 +67,14 @@ setMode(currentInputMode, false);
 setView(activeView, false);
 await refreshActiveTab();
 await preview();
+updateActionButtons();
 
 refreshButton.addEventListener("click", () => preview());
 settingsButton.addEventListener("click", () => chrome.runtime.openOptionsPage());
 saveButton.addEventListener("click", () => save());
 copyButton.addEventListener("click", () => copyMarkdown());
-deleteButton.addEventListener("click", () => deleteCurrentClip());
+removeButton.addEventListener("click", () => deleteCurrentClip("remove"));
+purgeButton.addEventListener("click", () => deleteCurrentClip("purge"));
 modeBrowserButton.addEventListener("click", () => setMode("browser_html"));
 modeFetchButton.addEventListener("click", () => setMode("server_fetch"));
 tabPreviewButton.addEventListener("click", () => setView("preview", true));
@@ -113,6 +117,7 @@ async function refreshActiveTab(): Promise<void> {
   } else {
     modeFetchButton.disabled = !settings.allowServerFetch;
   }
+  updateActionButtons();
 }
 
 async function preview(): Promise<void> {
@@ -128,12 +133,14 @@ async function preview(): Promise<void> {
     lastPreview = await createKnowledgeApiClient(settings).preview(body);
     setStatus(statusLabel(lastPreview.status));
     renderOutput();
+    updateActionButtons();
     if (lastPreview.status.state !== "empty") {
       void loadSavedClips();
     }
   } catch (error) {
     setStatus("Error");
     renderError(error);
+    updateActionButtons();
   }
 }
 
@@ -151,9 +158,11 @@ async function save(): Promise<void> {
     await notifyBadgeRefresh();
     setStatus(statusLabel(lastPreview.status));
     renderOutput();
+    updateActionButtons();
   } catch (error) {
     setStatus("Error");
     renderError(error);
+    updateActionButtons();
   }
 }
 
@@ -167,15 +176,25 @@ async function copyMarkdown(): Promise<void> {
   setStatus("Copied");
 }
 
-async function deleteCurrentClip(): Promise<void> {
+async function deleteCurrentClip(mode: ClipDeleteMode): Promise<void> {
   await refreshActiveTab();
   if (!activeTab) {
     return;
   }
 
-  setStatus("Deleting");
+  if (mode === "remove" && lastPreview?.status.state !== "parsed") {
+    setStatus("Nothing to remove");
+    updateActionButtons();
+    return;
+  }
+  if (mode === "purge" && lastPreview?.status.state === "empty") {
+    setStatus("Nothing to purge");
+    updateActionButtons();
+    return;
+  }
+
+  setStatus(mode === "remove" ? "Removing parsed result" : "Purging capture");
   try {
-    const mode = lastPreview?.status.state === "captured" ? "purge" : "remove";
     const deleted = await createKnowledgeApiClient(settings).deleteClip(activeTab.url, mode);
     lastPreview = lastPreview
       ? { ...lastPreview, status: clipStatusFromDelete(deleted) }
@@ -184,9 +203,11 @@ async function deleteCurrentClip(): Promise<void> {
     await notifyBadgeRefresh();
     setStatus(deleted.deleted ? statusLabel(deleted) : "Not saved");
     renderOutput();
+    updateActionButtons();
   } catch (error) {
     setStatus("Error");
     renderError(error);
+    updateActionButtons();
   }
 }
 
@@ -287,6 +308,7 @@ function setView(view: PanelView, persist = false): void {
     void saveSettings({ defaultPanelTab: view });
   }
   renderOutput();
+  updateActionButtons();
   if (view === "saved") {
     void loadSavedClips();
   }
@@ -380,6 +402,7 @@ async function reloadSettings(): Promise<void> {
   }
   setMode(currentInputMode, false);
   setView(settings.defaultPanelTab, false);
+  updateActionButtons();
 }
 
 function applySettingsToUi(): void {
@@ -400,7 +423,6 @@ function hasSettingsChange(changes: Record<string, chrome.storage.StorageChange>
     "autoRefresh",
     "healthCheckOnOpen",
     "requestTimeoutMs",
-    "deleteFilesByDefault",
     "showParserDiagnostics",
     "savedListLimit",
     "defaultPanelTab"
@@ -438,6 +460,14 @@ function renderError(error: unknown): void {
 
 function statusLabel(status: { state: "empty" | "captured" | "parsed" }): string {
   return status.state === "parsed" ? "Parsed" : status.state === "captured" ? "Raw only" : "Not saved";
+}
+
+function updateActionButtons(): void {
+  const state = lastPreview?.status.state ?? "empty";
+  copyButton.disabled = !lastPreview?.markdown;
+  saveButton.disabled = !activeTab;
+  removeButton.disabled = state !== "parsed";
+  purgeButton.disabled = state === "empty";
 }
 
 function clipStatusFromDelete(deleted: {

@@ -146,8 +146,24 @@ button[data-active="true"] {
 
 #save-button,
 #copy-button,
-#delete-button {
+#remove-button,
+#purge-button {
   min-width: 72px;
+}
+
+#purge-button {
+  border-color: #d48d8d;
+  color: #8f1d1d;
+}
+
+#purge-button:hover {
+  border-color: #b84848;
+}
+
+button:disabled {
+  border-color: #d9e1ea;
+  color: #8a96a8;
+  cursor: not-allowed;
 }
 
 .code-output,

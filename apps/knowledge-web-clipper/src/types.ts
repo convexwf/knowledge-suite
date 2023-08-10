@@ -22,7 +22,6 @@ export interface ExtensionSettings {
   autoRefresh: boolean;
   healthCheckOnOpen: boolean;
   requestTimeoutMs: number;
-  deleteFilesByDefault: boolean;
   showParserDiagnostics: boolean;
   savedListLimit: number;
   defaultPanelTab: PanelView;

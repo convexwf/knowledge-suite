@@ -37,6 +37,9 @@ describe("KnowledgeStore", () => {
     expect(documentJson.meta.source).not.toHaveProperty("path");
 
     const secondPaths = await store.save(second);
+    expect(tableCount(storeRoot, "clips")).toBe(1);
+    expect(tableCount(storeRoot, "documents")).toBe(1);
+    expect(tableCount(storeRoot, "rawdocs")).toBe(1);
     await expect(access(join(storeRoot, firstPaths.documentPath))).rejects.toThrow();
     await expect(access(join(storeRoot, firstPaths.markdownPath))).rejects.toThrow();
     await expect(access(join(storeRoot, firstPaths.rawHtmlPath))).rejects.toThrow();
