@@ -40,6 +40,7 @@ describe("KnowledgeStore", () => {
     expect(tableCount(storeRoot, "clips")).toBe(1);
     expect(tableCount(storeRoot, "documents")).toBe(1);
     expect(tableCount(storeRoot, "rawdocs")).toBe(1);
+    expect(tableCount(storeRoot, "chunks")).toBeGreaterThan(0);
     await expect(access(join(storeRoot, firstPaths.documentPath))).rejects.toThrow();
     await expect(access(join(storeRoot, firstPaths.markdownPath))).rejects.toThrow();
     await expect(access(join(storeRoot, firstPaths.rawHtmlPath))).rejects.toThrow();
@@ -83,6 +84,7 @@ describe("KnowledgeStore", () => {
     expect(tableCount(storeRoot, "clips")).toBe(1);
     expect(tableCount(storeRoot, "documents")).toBe(1);
     expect(tableCount(storeRoot, "rawdocs")).toBe(1);
+    expect(tableCount(storeRoot, "chunks")).toBeGreaterThan(0);
 
     const result = await store.deleteByUrl(clip.normalizedUrl, "remove");
 
@@ -104,6 +106,7 @@ describe("KnowledgeStore", () => {
     expect(tableCount(storeRoot, "clips")).toBe(1);
     expect(tableCount(storeRoot, "documents")).toBe(0);
     expect(tableCount(storeRoot, "rawdocs")).toBe(1);
+    expect(tableCount(storeRoot, "chunks")).toBe(0);
     await expect(access(join(storeRoot, paths.documentPath))).rejects.toThrow();
     await expect(access(join(storeRoot, paths.markdownPath))).rejects.toThrow();
     await expect(access(join(storeRoot, paths.rawHtmlPath))).resolves.toBeUndefined();
@@ -153,6 +156,7 @@ describe("KnowledgeStore", () => {
     expect(tableCount(storeRoot, "clips")).toBe(0);
     expect(tableCount(storeRoot, "documents")).toBe(0);
     expect(tableCount(storeRoot, "rawdocs")).toBe(0);
+    expect(tableCount(storeRoot, "chunks")).toBe(0);
     await expect(access(join(storeRoot, paths.rawHtmlPath))).rejects.toThrow();
     await expect(access(join(storeRoot, paths.rawdocPath))).rejects.toThrow();
 
@@ -164,6 +168,28 @@ describe("KnowledgeStore", () => {
     await store.ensure();
 
     expectStoreSchema(storeRoot);
+
+    store.close();
+  });
+
+  it("builds searchable chunks and returns section-level search results", async () => {
+    const store = new KnowledgeStore(storeRoot);
+    const clip = fixture("55555555-5555-4555-8555-555555555555", "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", "Retrieval Title");
+
+    await store.save(clip);
+
+    const results = await store.search("retrieval systems", { limit: 5 });
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({
+      docId: clip.document.doc_id,
+      rawdocId: clip.rawdoc.rawdoc_id,
+      title: "Retrieval Title",
+      sourceUrl: "https://example.com/article",
+      normalizedUrl: "https://example.com/article",
+      parserMethod: "defuddle"
+    });
+    expect(results[0].sectionIds.length).toBeGreaterThan(0);
+    expect(results[0].snippet.toLowerCase()).toContain("retrieval");
 
     store.close();
   });
@@ -317,7 +343,8 @@ function expectStoreSchema(root: string): void {
       .all()
       .map((row) => (row as { name: string }).name);
 
-    expect(tables).toEqual(["clips", "documents", "rawdocs"]);
+    const publicTables = tables.filter((table) => !table.startsWith("chunks_fts_"));
+    expect(publicTables).toEqual(["chunks", "chunks_fts", "clips", "documents", "rawdocs"]);
 
     const columnsByTable = Object.fromEntries(
       tables.map((table) => [
@@ -369,12 +396,32 @@ function expectStoreSchema(root: string): void {
       "fetched_at",
       "created_at"
     ]);
+    expect(columnsByTable.chunks).toEqual([
+      "chunk_id",
+      "doc_id",
+      "rawdoc_id",
+      "chunk_index",
+      "title",
+      "source_url",
+      "normalized_url",
+      "heading_path",
+      "section_ids_json",
+      "text",
+      "token_estimate",
+      "char_count",
+      "parser_version",
+      "parser_method",
+      "parser_profile",
+      "content_hash",
+      "created_at",
+      "updated_at"
+    ]);
 
     const userVersion = database.prepare("PRAGMA user_version").get() as { user_version: number };
-    expect(userVersion.user_version).toBe(3);
+    expect(userVersion.user_version).toBe(5);
 
     for (const columns of Object.values(columnsByTable)) {
-      expect(columns.filter((column) => column.includes("path"))).toEqual([]);
+      expect(columns.filter((column) => column.endsWith("_path") && column !== "heading_path")).toEqual([]);
     }
   } finally {
     database.close();
@@ -431,8 +478,20 @@ function fixture(docId: string, rawdocId: string, title: string): {
         ingested_at: "2026-05-12T00:00:00.000Z",
         parser_version: "knowledge-ingest-server/0.1:defuddle"
       },
-      sections: [{ type: "paragraph", content: title }]
+      sections: [
+        { section_id: "heading-1", type: "heading", level: 1, content: "Intro" },
+        {
+          section_id: "para-1",
+          type: "paragraph",
+          content: `${title} explains how retrieval systems use chunking and citations to return grounded answers.`
+        },
+        {
+          section_id: "para-2",
+          type: "paragraph",
+          content: "A second section mentions SQLite FTS search, parser diagnostics, and evaluation loops."
+        }
+      ]
     },
-    markdown: `# ${title}\n`
+    markdown: `# ${title}\n\n${title} explains how retrieval systems use chunking and citations to return grounded answers.\n`
   };
 }

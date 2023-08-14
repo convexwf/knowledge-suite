@@ -155,6 +155,30 @@ describe("knowledge ingest server", () => {
       title: "Example Article"
     });
 
+    const search = await app.inject({
+      method: "GET",
+      url: "/api/search?q=Second%20point&limit=5",
+      headers: { authorization: "Bearer test-token" }
+    });
+    expect(search.statusCode).toBe(200);
+    expect(search.json()).toMatchObject({
+      query: "Second point",
+      retriever: "sqlite_fts"
+    });
+    expect(search.json().results).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          docId: save.json().document.doc_id,
+          title: "Example Article",
+          sourceUrl: "https://example.com/a",
+          normalizedUrl: "https://example.com/a",
+          parserMethod: "defuddle"
+        })
+      ])
+    );
+    expect(search.json().results[0].sectionIds.length).toBeGreaterThan(0);
+    expect(String(search.json().results[0].snippet)).toContain("Second");
+
     const markdownPath = save.json().paths.markdownPath;
     await expect(access(join(storeRoot, markdownPath))).resolves.toBeUndefined();
 

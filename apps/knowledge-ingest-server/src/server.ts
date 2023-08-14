@@ -90,6 +90,30 @@ export async function buildServer(config: ServerConfig = loadConfig()) {
     };
   });
 
+  app.get("/api/search", async (request) => {
+    const query = request.query as {
+      q?: string;
+      limit?: string;
+      docId?: string;
+      url?: string;
+      parserMethod?: string;
+    };
+    if (!query.q?.trim()) {
+      throw new Error("q is required");
+    }
+
+    return {
+      query: query.q,
+      retriever: "sqlite_fts" as const,
+      results: await store.search(query.q, {
+        limit: query.limit ? Number(query.limit) : undefined,
+        docId: query.docId,
+        url: query.url,
+        parserMethod: query.parserMethod
+      })
+    };
+  });
+
   app.delete("/api/clip", async (request) => {
     const query = request.query as { url?: string; mode?: "purge" | "remove" };
     if (!query.url) {

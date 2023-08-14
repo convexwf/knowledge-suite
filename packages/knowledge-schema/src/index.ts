@@ -177,6 +177,28 @@ export interface ClipListResponse {
   clips: ClipListItem[];
 }
 
+export interface SearchResultItem {
+  chunkId: string;
+  docId: string;
+  rawdocId: string;
+  sectionIds: string[];
+  title: string;
+  sourceUrl?: string;
+  normalizedUrl?: string;
+  headingPath?: string;
+  snippet: string;
+  score: number;
+  parserVersion?: string;
+  parserMethod?: string;
+  parserProfile?: string;
+}
+
+export interface SearchResponse {
+  query: string;
+  retriever: "sqlite_fts";
+  results: SearchResultItem[];
+}
+
 export function makeId(): string {
   return randomUUID();
 }
