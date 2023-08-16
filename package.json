@@ -14,6 +14,7 @@
     "test": "npm run test --workspaces --if-present",
     "smoke:ingest": "node scripts/smoke-ingest.mjs",
     "smoke:retrieval": "node scripts/smoke-retrieval.mjs",
+    "ingest:retrieval-corpus": "node scripts/ingest-retrieval-corpus.mjs",
     "e2e:extension": "node scripts/e2e-extension.mjs",
     "dev:server": "npm run dev -w @uknowledge/knowledge-ingest-server",
     "build:extension": "npm run build -w @uknowledge/knowledge-web-clipper"

@@ -1014,16 +1014,15 @@ function safeJsonArray(input: string): string[] {
 }
 
 function toFtsQuery(input: string): string {
-  const tokens = input
-    .split(/\s+/)
-    .map((token) => token.trim().replace(/"/g, ""))
+  const tokens = Array.from(input.matchAll(/[A-Za-z][A-Za-z0-9_.-]*|[0-9]+/g))
+    .map((match) => match[0].replace(/"/g, ""))
     .filter(Boolean);
 
   if (tokens.length === 0) {
-    return "\"\"";
+    return input.trim().replace(/"/g, " ");
   }
 
-  return tokens.map((token) => `"${token}"`).join(" ");
+  return tokens.map((token) => `"${token}"`).join(" OR ");
 }
 
 function ignoreMissing(error: unknown): void {
