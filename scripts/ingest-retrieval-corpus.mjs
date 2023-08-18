@@ -23,13 +23,13 @@ const corpus = [
     id: "openai-retrieval-guide",
     priority: "P0",
     title: "OpenAI Retrieval Guide",
-    url: "https://platform.openai.com/docs/guides/retrieval"
+    url: "https://developers.openai.com/api/docs/guides/retrieval"
   },
   {
     id: "openai-optimizing-llm-accuracy",
     priority: "P0",
     title: "OpenAI Optimizing LLM Accuracy",
-    url: "https://platform.openai.com/docs/guides/optimizing-llm-accuracy/understanding-the-tools"
+    url: "https://developers.openai.com/api/docs/guides/optimizing-llm-accuracy"
   },
   {
     id: "cohere-rerank-overview",
