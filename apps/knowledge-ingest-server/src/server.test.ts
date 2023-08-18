@@ -820,6 +820,71 @@ describe("knowledge ingest server", () => {
     await app.close();
   });
 
+  it("uses the final server_fetch response URL as the primary clip identity", async () => {
+    globalThis.fetch = async () => {
+      const response = new Response(html, {
+        status: 200,
+        headers: {
+          "content-type": "text/html; charset=utf-8"
+        }
+      });
+      Object.defineProperty(response, "url", {
+        value: "https://docs.example.com/docs/reranking?utm_source=feed#intro"
+      });
+      return response;
+    };
+
+    const app = await buildServer({
+      host: "127.0.0.1",
+      port: 0,
+      token: "test-token",
+      storeRoot,
+      fetchTimeoutMs: 1000,
+      maxHtmlBytes: 1024 * 1024
+    });
+
+    const saveResponse = await app.inject({
+      method: "POST",
+      url: "/api/clip/save",
+      headers: { authorization: "Bearer test-token" },
+      payload: {
+        inputMode: "server_fetch",
+        url: "https://docs.example.com/docs/rerank-overview"
+      }
+    });
+
+    expect(saveResponse.statusCode).toBe(200);
+    const saved = saveResponse.json();
+    expect(saved.status.normalizedUrl).toBe("https://docs.example.com/docs/reranking");
+    expect(saved.status.originalUrl).toBe("https://docs.example.com/docs/rerank-overview");
+    expect(saved.rawdoc.metadata.canonicalUrl).toBe(
+      "https://docs.example.com/docs/reranking?utm_source=feed#intro"
+    );
+    expect(saved.rawdoc.metadata.fetchUrl).toBe(
+      "https://docs.example.com/docs/reranking?utm_source=feed#intro"
+    );
+
+    const finalStatusResponse = await app.inject({
+      method: "GET",
+      url: `/api/clip/status?url=${encodeURIComponent("https://docs.example.com/docs/reranking")}`,
+      headers: { authorization: "Bearer test-token" }
+    });
+    expect(finalStatusResponse.statusCode).toBe(200);
+    expect(finalStatusResponse.json().state).toBe("parsed");
+    expect(finalStatusResponse.json().normalizedUrl).toBe("https://docs.example.com/docs/reranking");
+
+    const originalStatusResponse = await app.inject({
+      method: "GET",
+      url: `/api/clip/status?url=${encodeURIComponent("https://docs.example.com/docs/rerank-overview")}`,
+      headers: { authorization: "Bearer test-token" }
+    });
+    expect(originalStatusResponse.statusCode).toBe(200);
+    expect(originalStatusResponse.json().state).toBe("parsed");
+    expect(originalStatusResponse.json().normalizedUrl).toBe("https://docs.example.com/docs/reranking");
+
+    await app.close();
+  });
+
   it("rejects non-HTML server_fetch responses", async () => {
     globalThis.fetch = async () => new Response("{}", {
       status: 200,

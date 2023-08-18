@@ -35,10 +35,10 @@ export async function resolveClipInput(input: ClipInput, config: ServerConfig): 
   const timeout = setTimeout(() => controller.abort(), config.fetchTimeoutMs);
   let response: Response;
 
-  const fetchUrl = resolveFetchUrl(input.url);
+  const requestedFetchUrl = resolveFetchUrl(input.url);
 
   try {
-    response = await fetch(fetchUrl, {
+    response = await fetch(requestedFetchUrl, {
       headers: {
         accept: "text/html,application/xhtml+xml;q=0.9,*/*;q=0.1",
         "user-agent": "knowledge-ingest-server/0.1"
@@ -54,26 +54,28 @@ export async function resolveClipInput(input: ClipInput, config: ServerConfig): 
     clearTimeout(timeout);
   }
 
+  const finalFetchUrl = response.url || requestedFetchUrl;
+
   if (!response.ok) {
-    throw new Error(`Failed to fetch ${fetchUrl}: ${response.status} ${response.statusText}`);
+    throw new Error(`Failed to fetch ${finalFetchUrl}: ${response.status} ${response.statusText}`);
   }
 
   const contentType = response.headers.get("content-type") ?? "";
   if (contentType && !isHtmlContentType(contentType)) {
-    throw new Error(`Expected HTML from ${fetchUrl}, got ${contentType}`);
+    throw new Error(`Expected HTML from ${finalFetchUrl}, got ${contentType}`);
   }
 
   const contentLength = Number(response.headers.get("content-length") ?? 0);
   if (contentLength > config.maxHtmlBytes) {
     throw new Error(
-      `HTML response from ${fetchUrl} is too large: ${contentLength} bytes. Server Fetch cannot process this page unless KNOWLEDGE_MAX_HTML_BYTES is increased.`
+      `HTML response from ${finalFetchUrl} is too large: ${contentLength} bytes. Server Fetch cannot process this page unless KNOWLEDGE_MAX_HTML_BYTES is increased.`
     );
   }
 
   const html = await response.text();
   if (Buffer.byteLength(html) > config.maxHtmlBytes) {
     throw new Error(
-      `HTML response from ${input.url} is too large: ${Buffer.byteLength(
+      `HTML response from ${finalFetchUrl} is too large: ${Buffer.byteLength(
         html
       )} bytes. Server Fetch cannot process this page unless KNOWLEDGE_MAX_HTML_BYTES is increased.`
     );
@@ -81,11 +83,11 @@ export async function resolveClipInput(input: ClipInput, config: ServerConfig): 
 
   return {
     inputMode: "server_fetch",
-    url: input.url,
+    url: finalFetchUrl,
     originalUrl: input.url,
-    canonicalUrl: input.url,
-    fetchUrl,
-    normalizedUrl: normalizeUrlForKnowledge(input.url),
+    canonicalUrl: finalFetchUrl,
+    fetchUrl: finalFetchUrl,
+    normalizedUrl: normalizeUrlForKnowledge(finalFetchUrl),
     html,
     meta: {},
     capturedAt: nowIso()
