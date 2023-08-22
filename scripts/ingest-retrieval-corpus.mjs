@@ -260,6 +260,22 @@ try {
       continue;
     }
 
+    const status = await getClipStatus(item);
+    if (status.saved === true && options.overwriteExisting !== true) {
+      const result = {
+        ...baseIngestResult(item),
+        status: "preexisting",
+        normalizedUrl: status.normalizedUrl,
+        docId: status.docId,
+        rawdocId: status.rawdocId,
+        outputTitle: status.title,
+        reason: "Already saved before this corpus run; left untouched."
+      };
+      ingestResults.push(result);
+      printIngest(result);
+      continue;
+    }
+
     const result = await ingestOne(item);
     ingestResults.push(result);
     printIngest(result);
@@ -267,7 +283,7 @@ try {
 
   const ingestedById = new Map(
     ingestResults
-      .filter((result) => result.status === "saved")
+      .filter((result) => result.status === "saved" || result.status === "preexisting")
       .map((result) => [result.id, result])
   );
   const evalResults = [];
@@ -294,7 +310,8 @@ try {
     printEval(result);
   }
 
-  const report = buildReport({ ingestResults, evalResults, storeRoot });
+  const cleanupResults = await cleanupIngestedArtifacts(ingestResults);
+  const report = buildReport({ ingestResults, evalResults, cleanupResults, storeRoot });
   await writeReports(report, options.reportDir ?? "knowledge-store/reports");
   printSummary(report);
 } finally {
@@ -365,6 +382,18 @@ async function ingestOne(item) {
   }
 }
 
+async function getClipStatus(item) {
+  const response = await app.inject({
+    method: "GET",
+    url: `/api/clip/status?url=${encodeURIComponent(item.url)}`,
+    headers: authHeaders()
+  });
+  if (response.statusCode !== 200) {
+    return { saved: false };
+  }
+  return response.json();
+}
+
 async function evaluateOne(evalCase, expectedReady, ingestedById) {
   const response = await app.inject({
     method: "GET",
@@ -418,6 +447,51 @@ async function evaluateOne(evalCase, expectedReady, ingestedById) {
   };
 }
 
+async function cleanupIngestedArtifacts(ingestResults) {
+  const saved = ingestResults.filter((item) => item.status === "saved");
+  const cleanupResults = [];
+
+  for (const item of saved) {
+    const started = Date.now();
+    try {
+      const response = await app.inject({
+        method: "DELETE",
+        url: `/api/clip?url=${encodeURIComponent(item.url)}&mode=purge`,
+        headers: authHeaders()
+      });
+      const body = tryJson(response.body);
+      const result = {
+        id: item.id,
+        title: item.title,
+        url: item.url,
+        status: response.statusCode === 200 && body.deleted === true ? "purged" : "error",
+        statusCode: response.statusCode,
+        durationMs: Date.now() - started,
+        deletedFiles: asArray(body.deletedFiles),
+        removedDocId: body.removedDocId,
+        removedRawdocId: body.removedRawdocId,
+        error: response.statusCode === 200 ? undefined : response.body
+      };
+      cleanupResults.push(result);
+      printCleanup(result);
+    } catch (error) {
+      const result = {
+        id: item.id,
+        title: item.title,
+        url: item.url,
+        status: "error",
+        durationMs: Date.now() - started,
+        deletedFiles: [],
+        error: error instanceof Error ? error.message : String(error)
+      };
+      cleanupResults.push(result);
+      printCleanup(result);
+    }
+  }
+
+  return cleanupResults;
+}
+
 function baseIngestResult(item) {
   return {
     id: item.id,
@@ -455,12 +529,16 @@ function scoreIngestQuality({ textLength, sectionCount, markdownLength, parserWa
   return Math.max(0, Math.min(100, score));
 }
 
-function buildReport({ ingestResults, evalResults, storeRoot }) {
+function buildReport({ ingestResults, evalResults, cleanupResults, storeRoot }) {
   const successful = ingestResults.filter((item) => item.status === "saved");
+  const preexisting = ingestResults.filter((item) => item.status === "preexisting");
+  const ready = ingestResults.filter((item) => item.status === "saved" || item.status === "preexisting");
   const skippedPdf = ingestResults.filter((item) => item.status === "skipped_pdf");
   const failed = ingestResults.filter((item) => item.status === "error");
   const evaluated = evalResults.filter((item) => item.status === "evaluated");
   const blocked = evalResults.filter((item) => item.status === "blocked");
+  const purged = cleanupResults.filter((item) => item.status === "purged");
+  const cleanupFailed = cleanupResults.filter((item) => item.status !== "purged");
   const hitAt1 = ratio(evaluated.filter((item) => item.hitAt1).length, evaluated.length);
   const hitAt3 = ratio(evaluated.filter((item) => item.hitAt3).length, evaluated.length);
   const hitAt5 = ratio(evaluated.filter((item) => item.hitAt5).length, evaluated.length);
@@ -474,22 +552,27 @@ function buildReport({ ingestResults, evalResults, storeRoot }) {
     summary: {
       corpusCount: ingestResults.length,
       savedCount: successful.length,
+      preexistingCount: preexisting.length,
       skippedPdfCount: skippedPdf.length,
       failedCount: failed.length,
-      ingestSuccessRate: ratio(successful.length, ingestResults.length - skippedPdf.length),
+      ingestSuccessRate: ratio(ready.length, ingestResults.length - skippedPdf.length),
       averageQualityScore: average(successful.map((item) => item.qualityScore)),
       evalCount: evalResults.length,
       evaluatedCount: evaluated.length,
       blockedCount: blocked.length,
+      cleanupPurgedCount: purged.length,
+      cleanupFailedCount: cleanupFailed.length,
       hitAt1,
       hitAt3,
       hitAt5
     },
     ingestResults,
     evalResults,
+    cleanupResults,
     missedEvalCases: evaluated.filter((item) => !item.hitAt5),
     failedIngestItems: failed,
-    skippedPdfItems: skippedPdf
+    skippedPdfItems: skippedPdf,
+    failedCleanupItems: cleanupFailed
   };
 }
 
@@ -516,12 +599,15 @@ function renderMarkdownReport(report) {
     "## Summary",
     "",
     `- Saved: ${report.summary.savedCount}`,
+    `- Preexisting: ${report.summary.preexistingCount}`,
     `- Skipped PDF: ${report.summary.skippedPdfCount}`,
     `- Failed ingest: ${report.summary.failedCount}`,
     `- Ingest success rate: ${formatPercent(report.summary.ingestSuccessRate)}`,
     `- Average ingest quality: ${formatNumber(report.summary.averageQualityScore)}`,
     `- Evaluated cases: ${report.summary.evaluatedCount}`,
     `- Blocked cases: ${report.summary.blockedCount}`,
+    `- Cleanup purged: ${report.summary.cleanupPurgedCount}`,
+    `- Cleanup failed: ${report.summary.cleanupFailedCount}`,
     `- Hit@1: ${formatPercent(report.summary.hitAt1)}`,
     `- Hit@3: ${formatPercent(report.summary.hitAt3)}`,
     `- Hit@5: ${formatPercent(report.summary.hitAt5)}`,
@@ -562,6 +648,19 @@ function renderMarkdownReport(report) {
         item.sectionCount ?? "",
         asArray(item.parserWarnings).join("; ")
       ])
+    ),
+    "",
+    "## Cleanup Results",
+    "",
+    ...table(
+      ["ID", "Status", "Deleted Files", "Removed Doc", "Removed RawDoc"],
+      report.cleanupResults.map((item) => [
+        item.id,
+        item.status,
+        item.deletedFiles.length,
+        item.removedDocId ?? "",
+        item.removedRawdocId ?? ""
+      ])
     )
   ];
   return `${lines.join("\n")}\n`;
@@ -587,9 +686,17 @@ function printEval(result) {
   console.log(`[eval] ${result.id}: ${hit} bestRank=${result.bestRank ?? "-"} results=${result.resultCount}`);
 }
 
+function printCleanup(result) {
+  const label = result.status === "purged"
+    ? `purged files=${result.deletedFiles.length}`
+    : `error ${truncate(result.error ?? "", 120)}`;
+  console.log(`[cleanup] ${result.id}: ${label}`);
+}
+
 function printSummary(report) {
   console.log("\nRetrieval corpus run complete");
-  console.log(`saved=${report.summary.savedCount} skipped_pdf=${report.summary.skippedPdfCount} failed=${report.summary.failedCount}`);
+  console.log(`saved=${report.summary.savedCount} preexisting=${report.summary.preexistingCount} skipped_pdf=${report.summary.skippedPdfCount} failed=${report.summary.failedCount}`);
+  console.log(`cleanup_purged=${report.summary.cleanupPurgedCount} cleanup_failed=${report.summary.cleanupFailedCount}`);
   console.log(`ingest_success=${formatPercent(report.summary.ingestSuccessRate)} avg_quality=${formatNumber(report.summary.averageQualityScore)}`);
   console.log(`eval=${report.summary.evaluatedCount} blocked=${report.summary.blockedCount} hit@1=${formatPercent(report.summary.hitAt1)} hit@3=${formatPercent(report.summary.hitAt3)} hit@5=${formatPercent(report.summary.hitAt5)}`);
   console.log(`json=${report.reportPaths.jsonPath}`);
@@ -654,6 +761,14 @@ function average(values) {
 
 function asArray(value) {
   return Array.isArray(value) ? value : [];
+}
+
+function tryJson(value) {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return {};
+  }
 }
 
 function table(headers, rows) {
