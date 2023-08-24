@@ -71,7 +71,7 @@ const corpus = [
     id: "langgraph-examples-overview",
     priority: "P1",
     title: "LangGraph Examples Overview",
-    url: "https://langchain-ai.github.io/langgraph/tutorials/overview/"
+    url: "https://docs.langchain.com/oss/python/langgraph/overview"
   },
   {
     id: "langgraph-js-api-reference",
