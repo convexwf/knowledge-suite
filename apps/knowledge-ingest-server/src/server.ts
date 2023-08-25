@@ -142,6 +142,12 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
     await reply.type("text/markdown; charset=utf-8").send(await store.loadMarkdown(params.docId));
   });
 
+  app.get("/api/assets/:assetId", async (request, reply) => {
+    const params = request.params as { assetId: string };
+    const asset = await store.loadAsset(params.assetId);
+    await reply.type(asset.contentType).send(asset.bytes);
+  });
+
   app.get("/api/collections", async (request) => {
     const query = request.query as { limit?: string };
     return {
@@ -755,6 +761,7 @@ function isClientInputError(message: string): boolean {
     "multipart",
     "Knowledge item does not exist",
     "Document does not exist",
+    "Asset does not exist",
     "reparse currently supports epub items only",
     "store clear confirmation is required",
     "store parsed-results clear confirmation is required"

@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Knowledge Reader</title>
+    <link rel="stylesheet" href="reader.css" />
+  </head>
+  <body>
+    <main class="reader-shell">
+      <header class="reader-header">
+        <div class="title-block">
+          <p id="reader-kicker">Reader</p>
+          <h1 id="reader-title">Loading...</h1>
+          <div id="reader-meta" class="reader-meta"></div>
+        </div>
+        <div class="reader-actions">
+          <button id="back-to-items" type="button">Items</button>
+          <button id="copy-markdown" type="button">Copy Markdown</button>
+          <button id="reparse-item" type="button">Reparse</button>
+        </div>
+      </header>
+
+      <section class="reader-layout">
+        <aside class="outline-panel" aria-label="Document outline">
+          <h2>Outline</h2>
+          <nav id="outline-list"></nav>
+        </aside>
+        <article id="reader-content" class="reader-content"></article>
+      </section>
+    </main>
+    <script type="module" src="reader.js"></script>
+  </body>
+</html>

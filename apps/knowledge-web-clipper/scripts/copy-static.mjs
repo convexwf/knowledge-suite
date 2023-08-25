@@ -8,6 +8,10 @@ const files = [
   ["public/side-panel.css", "dist/side-panel.css"],
   ["public/options.html", "dist/options.html"],
   ["public/options.css", "dist/options.css"],
+  ["public/items.html", "dist/items.html"],
+  ["public/items.css", "dist/items.css"],
+  ["public/reader.html", "dist/reader.html"],
+  ["public/reader.css", "dist/reader.css"],
   ["../../node_modules/katex/dist/katex.min.css", "dist/vendor/katex/katex.min.css"],
   ["../../node_modules/katex/dist/katex.min.js", "dist/vendor/katex/katex.min.js"],
   ["../../node_modules/katex/dist/fonts", "dist/vendor/katex/fonts"]

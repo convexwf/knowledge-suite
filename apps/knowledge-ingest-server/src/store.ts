@@ -1418,6 +1418,19 @@ export class KnowledgeStore {
     return this.readText(markdownPath(docId));
   }
 
+  async loadAsset(assetId: string): Promise<{ bytes: Buffer; contentType: string }> {
+    await this.ensure();
+    const safeAssetId = sanitizeAssetId(assetId);
+    if (!safeAssetId) {
+      throw new Error("Asset does not exist");
+    }
+    const contentType = assetContentType(safeAssetId);
+    return {
+      bytes: await this.readBuffer(`assets/${safeAssetId}`),
+      contentType
+    };
+  }
+
   async loadRawContentForItem(itemId: string): Promise<{ item: KnowledgeItem; rawdoc: RawDoc; content: Buffer; contentExt: string }> {
     const item = await this.loadItem(itemId);
     const rawdoc = await this.loadRawdoc(item.activeRawdocId);
@@ -2707,6 +2720,35 @@ function sha256Buffer(content: Buffer): string {
 
 function sanitizeExtension(input: string): string {
   return input.replace(/^\./, "").toLowerCase().replace(/[^a-z0-9]+/g, "").slice(0, 12);
+}
+
+function sanitizeAssetId(input: string): string | undefined {
+  const value = input.trim();
+  if (!/^[a-f0-9]{8,64}\.[a-z0-9]{1,12}$/i.test(value)) {
+    return undefined;
+  }
+  return value;
+}
+
+function assetContentType(assetId: string): string {
+  const extension = assetId.split(".").pop()?.toLowerCase();
+  switch (extension) {
+    case "avif":
+      return "image/avif";
+    case "gif":
+      return "image/gif";
+    case "jpg":
+    case "jpeg":
+      return "image/jpeg";
+    case "png":
+      return "image/png";
+    case "svg":
+      return "image/svg+xml";
+    case "webp":
+      return "image/webp";
+    default:
+      return "application/octet-stream";
+  }
 }
 
 function safeJsonArray(input: string): string[] {

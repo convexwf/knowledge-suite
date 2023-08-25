@@ -1,0 +1,294 @@
+:root {
+  color-scheme: light dark;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background: #f6f8fb;
+  color: #172033;
+  margin: 0;
+}
+
+button {
+  background: #ffffff;
+  border: 1px solid #c9d4e2;
+  border-radius: 6px;
+  color: #172033;
+  cursor: pointer;
+  font: inherit;
+  min-height: 38px;
+  padding: 8px 12px;
+}
+
+button:hover {
+  border-color: #4869d6;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.reader-shell {
+  margin: 0 auto;
+  max-width: 1240px;
+  padding: 24px;
+}
+
+.reader-header {
+  align-items: start;
+  display: grid;
+  gap: 18px;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.title-block {
+  min-width: 0;
+}
+
+#reader-kicker,
+.reader-meta {
+  color: #526174;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+#reader-kicker {
+  margin: 0 0 6px;
+}
+
+h1,
+h2,
+p {
+  margin: 0;
+}
+
+h1 {
+  color: #172033;
+  font-size: 28px;
+  line-height: 1.18;
+  overflow-wrap: anywhere;
+}
+
+h2 {
+  font-size: 14px;
+  line-height: 1.3;
+}
+
+.reader-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin-top: 10px;
+}
+
+.reader-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: end;
+}
+
+.reader-layout {
+  align-items: start;
+  display: grid;
+  gap: 22px;
+  grid-template-columns: 240px minmax(0, 1fr);
+  margin-top: 24px;
+}
+
+.outline-panel {
+  background: #ffffff;
+  border: 1px solid #d9e1ea;
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  max-height: calc(100vh - 120px);
+  overflow: auto;
+  padding: 14px;
+  position: sticky;
+  top: 16px;
+}
+
+#outline-list {
+  display: grid;
+  gap: 4px;
+}
+
+#outline-list a {
+  border-radius: 6px;
+  color: #42526a;
+  display: block;
+  font-size: 13px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  padding: 6px 8px;
+  text-decoration: none;
+}
+
+#outline-list a:hover {
+  background: #eef3f8;
+  color: #172033;
+}
+
+.reader-content {
+  background: #ffffff;
+  border: 1px solid #d9e1ea;
+  border-radius: 8px;
+  display: grid;
+  gap: 14px;
+  min-height: 360px;
+  padding: 28px;
+}
+
+.reader-content h1,
+.reader-content h2,
+.reader-content h3,
+.reader-content h4,
+.reader-content h5,
+.reader-content h6 {
+  color: #172033;
+  line-height: 1.25;
+  margin: 12px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.reader-content h1 {
+  font-size: 26px;
+}
+
+.reader-content h2 {
+  font-size: 22px;
+}
+
+.reader-content h3 {
+  font-size: 18px;
+}
+
+.reader-content p,
+.reader-content li,
+.reader-content blockquote {
+  color: #26354a;
+  font-size: 16px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+
+.reader-content ul,
+.reader-content ol {
+  margin: 0;
+  padding-left: 22px;
+}
+
+.reader-content blockquote {
+  border-left: 3px solid #c9d4e2;
+  margin: 0;
+  padding-left: 14px;
+}
+
+.reader-content pre,
+.reader-content code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.reader-content code {
+  background: #eef3f8;
+  border-radius: 4px;
+  font-size: 0.92em;
+  padding: 1px 4px;
+}
+
+.reader-content pre {
+  background: #172033;
+  border-radius: 8px;
+  color: #f8fafc;
+  font-size: 13px;
+  line-height: 1.55;
+  margin: 0;
+  overflow-x: auto;
+  padding: 14px;
+}
+
+.reader-content pre code {
+  background: transparent;
+  color: inherit;
+  padding: 0;
+}
+
+.reader-content img {
+  border: 1px solid #d9e1ea;
+  border-radius: 8px;
+  display: block;
+  height: auto;
+  max-width: 100%;
+}
+
+.reader-content figure {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.reader-content figcaption {
+  color: #526174;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.reader-content table {
+  border-collapse: collapse;
+  display: block;
+  overflow-x: auto;
+  width: 100%;
+}
+
+.reader-content th,
+.reader-content td {
+  border: 1px solid #d9e1ea;
+  padding: 8px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.reader-content a {
+  color: #315bdc;
+}
+
+.message-state {
+  align-items: center;
+  color: #526174;
+  display: flex;
+  min-height: 240px;
+}
+
+@media (max-width: 840px) {
+  .reader-shell {
+    padding: 16px;
+  }
+
+  .reader-header,
+  .reader-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .reader-actions {
+    justify-content: start;
+  }
+
+  .outline-panel {
+    max-height: none;
+    position: static;
+  }
+
+  .reader-content {
+    padding: 18px;
+  }
+}

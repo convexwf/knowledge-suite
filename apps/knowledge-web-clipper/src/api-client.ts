@@ -7,6 +7,13 @@ import {
   ClipStatusResult,
   ExtensionSettings,
   HealthResult,
+  EpubImportResult,
+  KnowledgeDocument,
+  KnowledgeItemDeleteMode,
+  KnowledgeItemDeleteResult,
+  KnowledgeItemDetailResult,
+  KnowledgeItemListResult,
+  KnowledgeSourceType,
   PreviewResult,
   BatchCandidate,
   BatchDiscoverResult,
@@ -25,6 +32,19 @@ export interface KnowledgeApiClient {
   clearParsedResults(): Promise<StoreClearParsedResult>;
   status(url: string): Promise<ClipStatusResult>;
   list(limit?: number): Promise<ClipListResult>;
+  listItems(sourceType?: KnowledgeSourceType, limit?: number): Promise<KnowledgeItemListResult>;
+  item(itemId: string): Promise<KnowledgeItemDetailResult>;
+  importEpub(body: {
+    file: File;
+    sourceUri?: string;
+    titleHint?: string;
+    tags?: string[];
+  }): Promise<EpubImportResult>;
+  reparseItem(itemId: string): Promise<EpubImportResult>;
+  deleteItem(itemId: string, mode?: KnowledgeItemDeleteMode): Promise<KnowledgeItemDeleteResult>;
+  document(docId: string): Promise<KnowledgeDocument>;
+  documentMarkdown(docId: string): Promise<string>;
+  assetBlobUrl(assetId: string): Promise<string>;
   deleteClip(url: string, mode?: ClipDeleteMode): Promise<ClipDeleteResult>;
   reparse(url: string): Promise<PreviewResult>;
   preview(body: ClipRequestBody): Promise<PreviewResult>;
@@ -107,6 +127,75 @@ export function createKnowledgeApiClient(settings: ExtensionSettings): Knowledge
       undefined,
       options
     ),
+    listItems: (sourceType, limit = settings.savedListLimit) => {
+      const params = new URLSearchParams();
+      if (sourceType) {
+        params.set("sourceType", sourceType);
+      }
+      params.set("limit", String(limit));
+      return request<KnowledgeItemListResult>(
+        baseUrl,
+        settings.token,
+        "GET",
+        `/api/items?${params.toString()}`,
+        undefined,
+        options
+      );
+    },
+    item: (itemId) => request<KnowledgeItemDetailResult>(
+      baseUrl,
+      settings.token,
+      "GET",
+      `/api/items/${encodeURIComponent(itemId)}`,
+      undefined,
+      options
+    ),
+    importEpub: (body) => {
+      const form = new FormData();
+      form.append("file", body.file, body.file.name);
+      form.append("sourceUri", body.sourceUri?.trim() || body.file.name);
+      if (body.titleHint?.trim()) {
+        form.append("titleHint", body.titleHint.trim());
+      }
+      if (body.tags?.length) {
+        form.append("tags", body.tags.join(","));
+      }
+      return requestForm<EpubImportResult>(baseUrl, settings.token, "/api/import/epub", form, options);
+    },
+    reparseItem: (itemId) => request<EpubImportResult>(
+      baseUrl,
+      settings.token,
+      "POST",
+      `/api/items/${encodeURIComponent(itemId)}/reparse`,
+      {},
+      options
+    ),
+    deleteItem: (itemId, mode = "remove") => request<KnowledgeItemDeleteResult>(
+      baseUrl,
+      settings.token,
+      "DELETE",
+      `/api/items/${encodeURIComponent(itemId)}?mode=${encodeURIComponent(mode)}`,
+      undefined,
+      options
+    ),
+    document: (docId) => request<KnowledgeDocument>(
+      baseUrl,
+      settings.token,
+      "GET",
+      `/api/documents/${encodeURIComponent(docId)}`,
+      undefined,
+      options
+    ),
+    documentMarkdown: (docId) => requestText(
+      baseUrl,
+      settings.token,
+      `/api/documents/${encodeURIComponent(docId)}/markdown`,
+      options
+    ),
+    assetBlobUrl: async (assetId) => {
+      const blob = await requestBlob(baseUrl, settings.token, `/api/assets/${encodeURIComponent(assetId)}`, options);
+      return URL.createObjectURL(blob);
+    },
     deleteClip: (url, mode = "remove") => request<ClipDeleteResult>(
       baseUrl,
       settings.token,
@@ -199,6 +288,73 @@ async function request<T>(
   }
 
   return response.json() as Promise<T>;
+}
+
+async function requestText(
+  baseUrl: string,
+  token: string,
+  path: string,
+  options?: { timeoutMs: number }
+): Promise<string> {
+  const response = await fetchWithTimeout(baseUrl, token, "GET", path, undefined, options);
+  return response.text();
+}
+
+async function requestBlob(
+  baseUrl: string,
+  token: string,
+  path: string,
+  options?: { timeoutMs: number }
+): Promise<Blob> {
+  const response = await fetchWithTimeout(baseUrl, token, "GET", path, undefined, options);
+  return response.blob();
+}
+
+async function requestForm<T>(
+  baseUrl: string,
+  token: string,
+  path: string,
+  body: FormData,
+  options?: { timeoutMs: number }
+): Promise<T> {
+  const response = await fetchWithTimeout(baseUrl, token, "POST", path, body, options);
+  return response.json() as Promise<T>;
+}
+
+async function fetchWithTimeout(
+  baseUrl: string,
+  token: string,
+  method: "DELETE" | "GET" | "POST",
+  path: string,
+  body?: BodyInit,
+  options?: { timeoutMs: number }
+): Promise<Response> {
+  const abortController = new AbortController();
+  const timeout = globalThis.setTimeout(() => abortController.abort(), options?.timeoutMs ?? 15000);
+  let response: Response;
+  try {
+    response = await fetch(`${baseUrl}${path}`, {
+      method,
+      headers: {
+        authorization: `Bearer ${token}`
+      },
+      body,
+      signal: abortController.signal
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new Error(`Request timed out after ${options?.timeoutMs ?? 15000}ms`);
+    }
+    throw error;
+  } finally {
+    globalThis.clearTimeout(timeout);
+  }
+
+  if (!response.ok) {
+    throw new Error(`${response.status} ${response.statusText}: ${await response.text()}`);
+  }
+
+  return response;
 }
 
 function defaultPathPrefix(pageUrl: string): string {

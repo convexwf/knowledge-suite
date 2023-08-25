@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Knowledge Items</title>
+    <link rel="stylesheet" href="items.css" />
+  </head>
+  <body>
+    <main class="items-shell">
+      <header class="page-header">
+        <div>
+          <h1>Knowledge Items</h1>
+          <p>Import EPUB files and open parsed documents in reader mode.</p>
+        </div>
+        <div class="header-actions">
+          <button id="refresh-items" type="button">Refresh</button>
+          <button id="open-settings" type="button">Settings</button>
+        </div>
+      </header>
+
+      <section class="workspace-grid">
+        <form id="upload-form" class="panel upload-panel">
+          <div>
+            <h2>Import EPUB</h2>
+            <p class="panel-description">Saved files use the same rawdocs, documents, chunks, and assets pipeline.</p>
+          </div>
+          <label>
+            EPUB file
+            <input id="epub-file" type="file" accept=".epub,application/epub+zip" />
+          </label>
+          <label>
+            Title hint
+            <input id="title-hint" type="text" autocomplete="off" placeholder="Optional" />
+          </label>
+          <label>
+            Tags
+            <input id="tags-input" type="text" autocomplete="off" placeholder="comma separated" />
+          </label>
+          <button id="upload-button" type="submit">Import</button>
+          <div id="status-output" class="status-output" role="status"></div>
+        </form>
+
+        <section class="panel list-panel">
+          <div class="list-toolbar">
+            <div>
+              <h2>Saved Items</h2>
+              <p class="panel-description">EPUB items are shown by default; switch filters when common items grow.</p>
+            </div>
+            <label>
+              Source
+              <select id="source-filter">
+                <option value="epub">EPUB</option>
+                <option value="">All</option>
+                <option value="url">Web</option>
+                <option value="pdf">PDF</option>
+              </select>
+            </label>
+          </div>
+          <div id="item-list" class="item-list" aria-live="polite"></div>
+        </section>
+      </section>
+    </main>
+    <script type="module" src="items.js"></script>
+  </body>
+</html>

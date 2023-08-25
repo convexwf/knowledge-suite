@@ -2,6 +2,8 @@ export type InputMode = "browser_html" | "server_fetch";
 export type PanelView = "preview" | "json" | "rawdoc" | "parser" | "saved" | "batch";
 export type ClipState = "empty" | "captured" | "parsed";
 export type ClipDeleteMode = "remove" | "purge";
+export type KnowledgeSourceType = "url" | "singlefile_html" | "pdf" | "epub";
+export type KnowledgeItemDeleteMode = "remove" | "purge";
 export const STORE_CLEAR_CONFIRMATION = "CLEAR KNOWLEDGE STORE";
 export const STORE_CLEAR_PARSED_CONFIRMATION = "CLEAR PARSED RESULTS";
 
@@ -78,7 +80,7 @@ export interface CandidatePreview {
 
 export interface RawDoc {
   rawdoc_id: string;
-  source_type: string;
+  source_type: KnowledgeSourceType;
   source_uri: string;
   fetch_time: string;
   content_type?: string;
@@ -106,9 +108,15 @@ export interface KnowledgeDocument {
   meta: {
     title: string;
     page_title?: string;
-    source?: Record<string, unknown>;
+    source?: {
+      type?: "html" | "pdf" | "epub";
+      url?: string | null;
+      rawdoc_id?: string;
+      [key: string]: unknown;
+    };
     authors?: string[];
     published_at?: string | null;
+    updated_at?: string | null;
     ingested_at?: string;
     language?: string;
     tags?: string[];
@@ -116,10 +124,71 @@ export interface KnowledgeDocument {
   };
   sections: Array<{
     type: string;
+    level?: number;
     content?: string;
-    items?: unknown[];
+    items?: Array<string | { text: string; items?: string[] }>;
+    rows?: unknown[];
+    assets?: Array<{
+      asset_id?: string;
+      path?: string;
+      source_url?: string;
+      alt?: string;
+      caption?: string | null;
+    }>;
     [key: string]: unknown;
   }>;
+}
+
+export interface KnowledgeItem {
+  itemId: string;
+  sourceType: KnowledgeSourceType;
+  identityHash: string;
+  activeRawdocId: string;
+  activeDocId?: string;
+  title?: string;
+  subtitle?: string;
+  creators: string[];
+  language?: string;
+  tags: string[];
+  state: "captured" | "parsed";
+  createdAt: string;
+  updatedAt: string;
+  parsedAt?: string;
+}
+
+export interface KnowledgeItemListResult {
+  items: KnowledgeItem[];
+}
+
+export interface KnowledgeItemDetailResult {
+  item: KnowledgeItem;
+  rawdoc?: RawDoc;
+  document?: KnowledgeDocument;
+}
+
+export interface KnowledgeItemDeleteResult {
+  itemId: string;
+  deleted: boolean;
+  mode: KnowledgeItemDeleteMode;
+  previousState: "captured" | "parsed";
+  currentState: "empty" | "captured";
+  deletedFiles: string[];
+  removedDocId?: string;
+  removedRawdocId?: string;
+}
+
+export interface EpubImportResult {
+  knowledgeItem: KnowledgeItem;
+  rawdoc: RawDoc;
+  document: KnowledgeDocument;
+  markdown: string;
+  saved: true;
+  paths: {
+    rawContentPath: string;
+    rawdocPath: string;
+    documentPath: string;
+    markdownPath: string;
+  };
 }
 
 export interface ClipListItem {
@@ -164,7 +233,9 @@ export interface StoreMaintenanceScan {
     sizeBytes: number;
   };
   tables: {
+    knowledgeItems?: number;
     clips: number;
+    epubMetadata?: number;
     rawdocs: number;
     documents: number;
     chunks: number;
@@ -185,6 +256,7 @@ export interface StoreMaintenanceScan {
     contentFiles: number;
   };
   parsedResults?: {
+    parsedItems?: number;
     parsedClips: number;
     documentRows: number;
     chunkRows: number;
@@ -239,6 +311,7 @@ export interface HealthResult {
   limits: {
     fetchTimeoutMs: number;
     maxHtmlBytes: number;
+    maxImportBytes?: number;
   };
 }
 

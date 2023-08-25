@@ -18,6 +18,7 @@ const requestTimeoutInput = mustGet<HTMLInputElement>("request-timeout-ms");
 const showParserInput = mustGet<HTMLInputElement>("show-parser-diagnostics");
 const savedListLimitInput = mustGet<HTMLInputElement>("saved-list-limit");
 const defaultPanelTabSelect = mustGet<HTMLSelectElement>("default-panel-tab");
+const openItemsButton = mustGet<HTMLButtonElement>("open-items");
 const testButton = mustGet<HTMLButtonElement>("test-connection");
 const resetButton = mustGet<HTMLButtonElement>("reset-settings");
 const scanStoreButton = mustGet<HTMLButtonElement>("scan-store");
@@ -35,6 +36,9 @@ renderSettings(settings);
 form.addEventListener("submit", (event) => {
   event.preventDefault();
   void saveCurrentSettings();
+});
+openItemsButton.addEventListener("click", () => {
+  void chrome.tabs.create({ url: chrome.runtime.getURL("items.html") });
 });
 testButton.addEventListener("click", () => testConnection());
 resetButton.addEventListener("click", () => resetToDefaults());
@@ -228,8 +232,8 @@ function formatStoreScan(scan: StoreMaintenanceScan): string {
     `Database: ${scan.database.exists ? "present" : "missing"} (${scan.database.sizeBytes} bytes)`,
     `Rows: ${scan.totals.rows}`,
     `Content files: ${scan.totals.contentFiles}`,
-    `Parsed impact: clips=${impact.clips}, rows=${impact.rows}, files=${impact.files}, collectionRefs=${impact.collectionItemRefs}, batchRefs=${impact.batchItemRefs}`,
-    `Tables: clips=${scan.tables.clips}, rawdocs=${scan.tables.rawdocs}, documents=${scan.tables.documents}, chunks=${scan.tables.chunks}, collections=${scan.tables.collections}, collectionItems=${scan.tables.collectionItems}, batchJobs=${scan.tables.batchJobs}, batchItems=${scan.tables.batchItems}`,
+    `Parsed impact: items=${impact.items}, clips=${impact.clips}, rows=${impact.rows}, files=${impact.files}, collectionRefs=${impact.collectionItemRefs}, batchRefs=${impact.batchItemRefs}`,
+    `Tables: knowledgeItems=${scan.tables.knowledgeItems ?? 0}, clips=${scan.tables.clips}, epubMetadata=${scan.tables.epubMetadata ?? 0}, rawdocs=${scan.tables.rawdocs}, documents=${scan.tables.documents}, chunks=${scan.tables.chunks}, collections=${scan.tables.collections}, collectionItems=${scan.tables.collectionItems}, batchJobs=${scan.tables.batchJobs}, batchItems=${scan.tables.batchItems}`,
     `Files: rawdocs=${scan.files.rawdocs}, documents=${scan.files.documents}, markdown=${scan.files.markdown}, assets=${scan.files.assets}`,
     `Scanned at: ${scan.scannedAt}`
   ].join("\n");
@@ -237,6 +241,7 @@ function formatStoreScan(scan: StoreMaintenanceScan): string {
 
 function parsedImpact(scan: StoreMaintenanceScan): {
   clips: number;
+  items: number;
   rows: number;
   files: number;
   collectionItemRefs: number;
@@ -245,6 +250,7 @@ function parsedImpact(scan: StoreMaintenanceScan): {
   const parsedResults = scan.parsedResults;
   if (parsedResults) {
     return {
+      items: parsedResults.parsedItems ?? 0,
       clips: parsedResults.parsedClips,
       rows: parsedResults.documentRows + parsedResults.chunkRows,
       files: parsedResults.derivedFiles,
@@ -254,6 +260,7 @@ function parsedImpact(scan: StoreMaintenanceScan): {
   }
 
   return {
+    items: scan.tables.knowledgeItems ?? 0,
     clips: scan.tables.documents,
     rows: scan.tables.documents + scan.tables.chunks,
     files: scan.files.documents + scan.files.markdown + scan.files.assets,
