@@ -59,6 +59,8 @@ const tabRawdocButton = mustGet<HTMLButtonElement>("tab-rawdoc");
 const tabParserButton = mustGet<HTMLButtonElement>("tab-parser");
 const tabSavedButton = mustGet<HTMLButtonElement>("tab-saved");
 const tabBatchButton = mustGet<HTMLButtonElement>("tab-batch");
+const candidateControl = mustGet<HTMLElement>("candidate-control");
+const candidateSelect = mustGet<HTMLSelectElement>("candidate-select");
 const savedList = mustGet<HTMLDivElement>("saved-list");
 const batchOutput = mustGet<HTMLDivElement>("batch-output");
 
@@ -99,6 +101,10 @@ tabRawdocButton.addEventListener("click", () => setView("rawdoc", true));
 tabParserButton.addEventListener("click", () => setView("parser", true));
 tabSavedButton.addEventListener("click", () => setView("saved", true));
 tabBatchButton.addEventListener("click", () => setView("batch", true));
+candidateSelect.addEventListener("change", () => {
+  activeCandidateId = candidateSelect.value;
+  renderOutput();
+});
 autoRefreshInput.addEventListener("change", () => persistPanelSettings());
 chrome.storage.onChanged.addListener((changes, areaName) => {
   if (areaName === "local" && hasSettingsChange(changes)) {
@@ -455,6 +461,7 @@ function renderOutput(): void {
   parserOutput.hidden = activeView !== "parser";
   savedList.hidden = activeView !== "saved";
   batchOutput.hidden = activeView !== "batch";
+  renderCandidateControl();
   if (activeView === "saved") {
     renderSavedList();
     return;
@@ -477,6 +484,25 @@ function renderOutput(): void {
   codeOutput.textContent = JSON.stringify(candidate?.document ?? lastPreview.document, null, 2);
   rawdocOutput.textContent = JSON.stringify(lastPreview.rawdoc, null, 2);
   parserOutput.replaceChildren(renderParserDiagnostics(lastPreview));
+}
+
+function renderCandidateControl(): void {
+  const candidates = lastPreview?.candidatePreviews ?? [];
+  const shouldShow = activeView === "preview" && candidates.length > 1;
+  candidateControl.hidden = !shouldShow;
+  if (!shouldShow) {
+    candidateSelect.replaceChildren();
+    return;
+  }
+
+  const activeId = activeCandidate(lastPreview!)?.id ?? candidates[0].id;
+  candidateSelect.replaceChildren(...candidates.map((candidate) => {
+    const option = document.createElement("option");
+    option.value = candidate.id;
+    option.textContent = candidateOptionLabel(candidate);
+    option.selected = candidate.id === activeId;
+    return option;
+  }));
 }
 
 function setMode(mode: InputMode, persist = true): void {
@@ -746,6 +772,7 @@ function renderError(error: unknown): void {
   parserOutput.hidden = true;
   savedList.hidden = true;
   batchOutput.hidden = true;
+  candidateControl.hidden = true;
   activeView = "preview";
   tabPreviewButton.dataset.active = "true";
   tabJsonButton.dataset.active = "false";
@@ -944,11 +971,6 @@ function renderParserDiagnostics(preview: PreviewResult): DocumentFragment {
     ])
   );
 
-  const switcher = makeCandidateSwitcher(preview);
-  if (switcher) {
-    fragment.append(switcher);
-  }
-
   fragment.append(
     makeParserGroup("Defuddle", Object.entries(defuddle).map(([key, value]) => [key, value]))
   );
@@ -1005,67 +1027,19 @@ function renderParserDiagnostics(preview: PreviewResult): DocumentFragment {
   return fragment;
 }
 
-function makeCandidateSwitcher(preview: PreviewResult): HTMLElement | undefined {
-  const candidates = preview.candidatePreviews ?? [];
-  if (candidates.length === 0) {
-    return undefined;
-  }
-
-  const group = document.createElement("section");
-  group.className = "parser-group";
-
-  const heading = document.createElement("div");
-  heading.className = "parser-heading";
-  heading.textContent = "Candidate Previews";
-  group.append(heading);
-
-  const list = document.createElement("div");
-  list.className = "candidate-list";
-  for (const candidate of candidates) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "candidate-button";
-    button.dataset.active = String(candidate.id === activeCandidateId);
-    button.addEventListener("click", () => {
-      activeCandidateId = candidate.id;
-      renderOutput();
-    });
-
-    const title = document.createElement("span");
-    title.className = "candidate-title";
-    title.textContent = candidateLabel(candidate);
-
-    const meta = document.createElement("span");
-    meta.className = "candidate-meta";
-    meta.textContent = [
-      `score ${candidate.score}`,
-      metricText(candidate.metrics),
-      candidate.serverSelected ? "server selected" : "",
-      candidate.warnings.length > 0 ? `${candidate.warnings.length} warnings` : ""
-    ].filter(Boolean).join(" | ");
-
-    button.append(title, meta);
-    list.append(button);
-  }
-
-  group.append(list);
-  return group;
-}
-
-function candidateLabel(candidate: CandidatePreview): string {
+function candidateOptionLabel(candidate: CandidatePreview): string {
   return [
-    candidate.method,
-    candidate.adapterId,
-    candidate.selector
-  ].filter(Boolean).join(" / ");
-}
-
-function metricText(metrics: Record<string, unknown>): string {
-  return [
-    metrics.sectionCount !== undefined ? `sections ${metrics.sectionCount}` : "",
-    metrics.textLength !== undefined ? `text ${metrics.textLength}` : "",
-    metrics.linkCount !== undefined ? `links ${metrics.linkCount}` : ""
-  ].filter(Boolean).join(", ");
+    [
+      candidate.method,
+      candidate.adapterId,
+      candidate.selector
+    ].filter(Boolean).join(" / "),
+    `score ${candidate.score}`,
+    candidate.metrics.sectionCount !== undefined ? `${candidate.metrics.sectionCount} sections` : "",
+    candidate.metrics.textLength !== undefined ? `${candidate.metrics.textLength} chars` : "",
+    candidate.serverSelected ? "server selected" : "",
+    candidate.warnings.length > 0 ? `${candidate.warnings.length} warnings` : ""
+  ].filter(Boolean).join(" | ");
 }
 
 function collectParserWarnings(preview: PreviewResult): string[] {
