@@ -723,6 +723,55 @@ describe("knowledge ingest server", () => {
     await app.close();
   });
 
+  it("keeps Fern docs main content when layout classes mention header height", async () => {
+    const app = await buildServer({
+      host: "127.0.0.1",
+      port: 0,
+      token: "test-token",
+      storeRoot,
+      fetchTimeoutMs: 1000,
+      maxHtmlBytes: 1024 * 1024
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/clip/preview",
+      headers: { authorization: "Bearer test-token" },
+      payload: {
+        inputMode: "browser_html",
+        snapshot: {
+          pageUrl: "https://docs.cohere.com/docs/rerank-overview",
+          title: "An Overview of Cohere's Rerank Model",
+          html: `<!doctype html>
+            <html>
+              <head><title>An Overview of Cohere's Rerank Model</title></head>
+              <body id="fern-docs">
+                <main class="fern-main relative z-0 flex transition-all duration-500 ease-out mt-(--header-height)">
+                  <article class="w-content-width mx-auto max-w-full">
+                    <h1>An Overview of Cohere's Rerank Model</h1>
+                    <h2>How Rerank Works</h2>
+                    <p>The Rerank API endpoint is a simple and very powerful tool for semantic search.</p>
+                    <h2>Get Started</h2>
+                    <p>In this example, documents are indexed from most to least relevant to the query.</p>
+                  </article>
+                </main>
+              </body>
+            </html>`,
+          capturedAt: "2026-05-20T02:00:00.000Z",
+          meta: {}
+        }
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().rawdoc.metadata.parserProfile).not.toBe("dom_fallback");
+    expect(response.json().markdown).toContain("## How Rerank Works");
+    expect(response.json().markdown).toContain("Rerank API endpoint");
+    expect(response.json().markdown).toContain("## Get Started");
+
+    await app.close();
+  });
+
   it("restricts CORS to extension and localhost origins", async () => {
     const app = await buildServer({
       host: "127.0.0.1",

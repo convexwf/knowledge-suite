@@ -647,10 +647,15 @@ function cleanDocumentForExtraction(document: Document): void {
     node.removeAttribute("style");
     const className = node.getAttribute("class") ?? "";
     const id = node.getAttribute("id") ?? "";
-    if (isLikelyNoise(`${className} ${id}`)) {
+    if (isLikelyNoise(`${className} ${id}`) && !isReadableSemanticRoot(node)) {
       node.remove();
     }
   });
+}
+
+function isReadableSemanticRoot(node: Element): boolean {
+  const tagName = node.tagName.toLowerCase();
+  return tagName === "main" || tagName === "article" || node.getAttribute("role") === "main";
 }
 
 function applyAdapterCleanup(document: Document, adapter: SiteAdapter, baseUrl: string): void {
