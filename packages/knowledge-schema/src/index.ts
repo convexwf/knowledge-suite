@@ -10,6 +10,11 @@ export const PageSnapshotSchema = z.object({
   title: z.string().optional(),
   html: z.string().min(1),
   text: z.string().optional(),
+  diagnostics: z.object({
+    htmlLength: z.number(),
+    textLength: z.number(),
+    shadowRootCount: z.number()
+  }).optional(),
   capturedAt: z.string().datetime(),
   meta: z.record(z.string(), z.string()).default({}),
   selectionHtml: z.string().optional()

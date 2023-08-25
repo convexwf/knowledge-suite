@@ -765,9 +765,52 @@ describe("knowledge ingest server", () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.json().rawdoc.metadata.parserProfile).not.toBe("dom_fallback");
+    expect(response.json().rawdoc.metadata.matchedAdapters[0].id).toBe("fern_docs");
+    expect(response.json().rawdoc.metadata.parserDiagnostics.cleanup.cleanedReadableRoot.tag).toBe("article");
     expect(response.json().markdown).toContain("## How Rerank Works");
     expect(response.json().markdown).toContain("Rerank API endpoint");
     expect(response.json().markdown).toContain("## Get Started");
+
+    await app.close();
+  });
+
+  it("uses rendered browser text when serialized HTML has no readable content", async () => {
+    const app = await buildServer({
+      host: "127.0.0.1",
+      port: 0,
+      token: "test-token",
+      storeRoot,
+      fetchTimeoutMs: 1000,
+      maxHtmlBytes: 1024 * 1024
+    });
+
+    const renderedText = [
+      "Rendered Only Article",
+      "Client-rendered applications can expose useful text through the live browser body even when serialized HTML only contains an empty application root.",
+      "The parser keeps this as a low-confidence fallback so the clipper does not return an empty document."
+    ].join("\n\n");
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/clip/preview",
+      headers: { authorization: "Bearer test-token" },
+      payload: {
+        inputMode: "browser_html",
+        snapshot: {
+          pageUrl: "https://example.com/rendered-only",
+          title: "Rendered Only Article",
+          html: `<!doctype html><html><head><title>Rendered Only Article</title></head><body><div id="root"></div></body></html>`,
+          text: renderedText,
+          capturedAt: "2026-05-20T02:10:00.000Z",
+          meta: {}
+        }
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().rawdoc.metadata.parserProfile).toBe("rendered_text_fallback");
+    expect(response.json().rawdoc.metadata.parserDiagnostics.input.browserTextLength).toBeGreaterThan(80);
+    expect(response.json().markdown).toContain("Client-rendered applications");
 
     await app.close();
   });

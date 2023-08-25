@@ -3,6 +3,7 @@ import { arxivHtmlAdapter } from "./arxiv.js";
 import { blogGoogleAdapter } from "./blog-google.js";
 import { brendanGreggBlogAdapter } from "./brendan-gregg-blog.js";
 import { engineeringFbAdapter } from "./engineering-fb.js";
+import { fernDocsAdapter } from "./fern-docs.js";
 import { freediumAdapter } from "./freedium.js";
 import { juejinAdapter } from "./juejin.js";
 import { mediumAdapter } from "./medium.js";
@@ -16,6 +17,7 @@ export const configAdapters: SiteAdapter[] = [
   blogGoogleAdapter,
   brendanGreggBlogAdapter,
   engineeringFbAdapter,
+  fernDocsAdapter,
   freediumAdapter,
   juejinAdapter,
   mediumAdapter,

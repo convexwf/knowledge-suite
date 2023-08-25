@@ -18,7 +18,13 @@ interface ParsePageOptions {
   rawdocId?: string;
 }
 
-type ParserMethod = "selection" | "defuddle" | "site_adapter" | "schema_org" | "dom_fallback";
+type ParserMethod =
+  | "selection"
+  | "defuddle"
+  | "site_adapter"
+  | "schema_org"
+  | "dom_fallback"
+  | "rendered_text_fallback";
 
 interface CandidateMetrics {
   textLength: number;
@@ -51,9 +57,23 @@ interface ParserCandidate {
   reason: string;
 }
 
+interface DefuddleRunDiagnostics {
+  attempted: boolean;
+  mode?: "async" | "sync";
+  asyncTimedOut?: boolean;
+  useful?: boolean;
+  contentTextLength?: number;
+  wordCount?: number;
+  error?: string;
+}
+
 const PARSER_VERSION = "knowledge-ingest-server/0.2";
+const DEFUDDLE_ASYNC_TIMEOUT_MS = 5000;
 const DefuddleClass = DefuddleDefault as unknown as {
-  new (doc: Document, options?: DefuddleOptions): { parse(): DefuddleResponse };
+  new (doc: Document, options?: DefuddleOptions): {
+    parse(): DefuddleResponse;
+    parseAsync(): Promise<DefuddleResponse>;
+  };
 };
 
 export async function parsePage(input: ResolvedInput, options: ParsePageOptions = {}): Promise<ParsedPage> {
@@ -65,15 +85,19 @@ export async function parsePage(input: ResolvedInput, options: ParsePageOptions 
   const htmlBaseUrl = htmlBaseUrlFor(input);
   applyMatchedAdapterCleanup(baseDocument, matchedAdapters, htmlBaseUrl, "defuddle");
   applyDefuddleRootHints(baseDocument, matchedAdapters);
-  const defuddleResult = runDefuddle(baseDocument, input);
+  const defuddleRun = await runDefuddle(baseDocument, input);
+  const defuddleResult = defuddleRun.result;
   const title = input.title || defuddleResult?.title || readTitle(baseDocument) || input.normalizedUrl;
   const candidates = buildCandidates(input, title, defuddleResult, matchedAdapters);
   const selected = selectCandidate(candidates);
-  const fallbackText = baseDocument.body?.textContent?.trim() ?? "";
+  const fallbackText = normalizeText(input.bodyText || baseDocument.body?.textContent || "");
   const sections = selected.sections.length > 0
     ? selected.sections
-    : [{ section_id: makeId(), type: "paragraph" as const, content: fallbackText }];
+    : fallbackText
+      ? [{ section_id: makeId(), type: "paragraph" as const, content: fallbackText }]
+      : [];
   const parserWarnings = collectParserWarnings(selected, candidates);
+  const parserDiagnostics = buildParserDiagnostics(input, selected, candidates, defuddleRun.diagnostics);
   const selectedTitle = selected.title || title;
 
   const rawdoc: RawDoc = {
@@ -118,9 +142,11 @@ export async function parsePage(input: ResolvedInput, options: ParsePageOptions 
             image: defuddleResult.image,
             language: defuddleResult.language,
             site: defuddleResult.site,
-            wordCount: defuddleResult.wordCount
+            wordCount: defuddleResult.wordCount,
+            diagnostics: defuddleRun.diagnostics
           }
-        : undefined,
+        : { diagnostics: defuddleRun.diagnostics },
+      parserDiagnostics,
       meta: input.meta
     }
   };
@@ -196,6 +222,11 @@ function buildCandidates(
     candidates.push(schemaCandidate);
   }
 
+  const renderedTextCandidate = buildRenderedTextFallbackCandidate(input, title);
+  if (renderedTextCandidate) {
+    candidates.push(renderedTextCandidate);
+  }
+
   const fallbackDocument = parseCleanDocument(input.html);
   const htmlBaseUrl = htmlBaseUrlFor(input);
   applyMatchedAdapterCleanup(fallbackDocument, matchedAdapters, htmlBaseUrl, "fallback");
@@ -213,6 +244,29 @@ function buildCandidates(
   }));
 
   return candidates;
+}
+
+function buildRenderedTextFallbackCandidate(input: ResolvedInput, title: string): ParserCandidate | undefined {
+  const text = normalizeText(input.bodyText ?? "");
+  if (text.length < 80) {
+    return undefined;
+  }
+
+  const sections = textToParagraphSections(input.bodyText ?? "", title);
+  if (sections.length === 0) {
+    return undefined;
+  }
+
+  return makeCandidate({
+    id: "rendered_text_fallback",
+    method: "rendered_text_fallback",
+    title,
+    sections,
+    metadata: {},
+    reason: "Browser-rendered body innerText fallback",
+    baseScore: -15,
+    warnings: ["Rendered text fallback loses links, images, tables, and code structure."]
+  });
 }
 
 function buildSelectionCandidate(input: ResolvedInput, title: string): ParserCandidate | undefined {
@@ -372,7 +426,33 @@ function selectCandidate(candidates: ParserCandidate[]): ParserCandidate {
   };
 }
 
-function runDefuddle(document: Document, input: ResolvedInput): DefuddleResponse | undefined {
+async function runDefuddle(
+  document: Document,
+  input: ResolvedInput
+): Promise<{ result?: DefuddleResponse; diagnostics: DefuddleRunDiagnostics }> {
+  const diagnostics: DefuddleRunDiagnostics = {
+    attempted: true
+  };
+
+  try {
+    const asyncDefuddle = new DefuddleClass(document.cloneNode(true) as Document, {
+      url: input.url,
+      language: input.meta.language,
+      useAsync: true
+    });
+    const result = await withTimeout(asyncDefuddle.parseAsync(), DEFUDDLE_ASYNC_TIMEOUT_MS);
+    diagnostics.mode = "async";
+    diagnostics.useful = isUsefulExtraction(result);
+    diagnostics.contentTextLength = normalizeText(result.content).length;
+    diagnostics.wordCount = result.wordCount;
+    if (diagnostics.useful) {
+      return { result, diagnostics };
+    }
+  } catch (error) {
+    diagnostics.asyncTimedOut = error instanceof Error && error.message === "Defuddle parseAsync timeout";
+    diagnostics.error = error instanceof Error ? error.message : String(error);
+  }
+
   try {
     const defuddle = new DefuddleClass(document, {
       url: input.url,
@@ -380,10 +460,32 @@ function runDefuddle(document: Document, input: ResolvedInput): DefuddleResponse
       useAsync: false
     });
     const result = defuddle.parse();
-    return isUsefulExtraction(result) ? result : undefined;
-  } catch {
-    return undefined;
+    diagnostics.mode = "sync";
+    diagnostics.useful = isUsefulExtraction(result);
+    diagnostics.contentTextLength = normalizeText(result.content).length;
+    diagnostics.wordCount = result.wordCount;
+    return diagnostics.useful ? { result, diagnostics } : { diagnostics };
+  } catch (error) {
+    diagnostics.mode = diagnostics.mode ?? "sync";
+    diagnostics.error = error instanceof Error ? error.message : String(error);
+    return { diagnostics };
   }
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error("Defuddle parseAsync timeout")), timeoutMs);
+    promise.then(
+      (value) => {
+        clearTimeout(timeout);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timeout);
+        reject(error);
+      }
+    );
+  });
 }
 
 function isUsefulExtraction(result: DefuddleResponse): boolean {
@@ -867,6 +969,19 @@ function extractSections(root: Element, title: string): KnowledgeDocument["secti
   return dedupeAdjacent(sections);
 }
 
+function textToParagraphSections(text: string, title: string): KnowledgeDocument["sections"] {
+  return text
+    .split(/\n{2,}|\r?\n/)
+    .map(normalizeText)
+    .filter((paragraph) => paragraph && paragraph !== title)
+    .slice(0, 200)
+    .map((paragraph) => ({
+      section_id: makeId(),
+      type: "paragraph" as const,
+      content: paragraph
+    }));
+}
+
 function inlineToMarkdown(node: Element): string {
   return normalizeMarkdown(renderInlineChildren(node));
 }
@@ -978,7 +1093,9 @@ function scoreCandidate(method: ParserMethod, metrics: CandidateMetrics, baseSco
         ? 35
         : method === "schema_org"
           ? 15
-          : 0;
+          : method === "rendered_text_fallback"
+            ? 5
+            : 0;
   const lengthScore = Math.min(metrics.textLength / 20, 80);
   const structureScore = Math.min(metrics.sectionCount * 5, 40) +
     metrics.headingCount * 4 +
@@ -1010,6 +1127,9 @@ function collectParserWarnings(selected: ParserCandidate, candidates: ParserCand
   if (selected.method === "dom_fallback") {
     warnings.push("Generic DOM fallback selected after candidate scoring.");
   }
+  if (selected.method === "rendered_text_fallback") {
+    warnings.push("Browser rendered text fallback selected after structured extraction failed.");
+  }
   if (candidates.some((candidate) => candidate.method === "defuddle") && selected.method !== "defuddle") {
     warnings.push("Defuddle was available but another candidate scored higher.");
   }
@@ -1017,6 +1137,71 @@ function collectParserWarnings(selected: ParserCandidate, candidates: ParserCand
     warnings.push("Only one parser candidate was available.");
   }
   return unique(warnings);
+}
+
+function buildParserDiagnostics(
+  input: ResolvedInput,
+  selected: ParserCandidate,
+  candidates: ParserCandidate[],
+  defuddle: DefuddleRunDiagnostics
+): Record<string, unknown> {
+  const htmlDiagnostics = summarizeHtmlDiagnostics(input.html);
+  const candidateSummary = candidates.map((candidate) => ({
+    id: candidate.id,
+    method: candidate.method,
+    selected: candidate.id === selected.id,
+    textLength: candidate.metrics.textLength,
+    sectionCount: candidate.metrics.sectionCount,
+    score: round(candidate.score),
+    warnings: candidate.warnings
+  }));
+
+  return {
+    input: {
+      mode: input.inputMode,
+      htmlBytes: Buffer.byteLength(input.html),
+      browserTextLength: normalizeText(input.bodyText ?? "").length,
+      snapshot: input.snapshotDiagnostics,
+      title: input.title
+    },
+    cleanup: htmlDiagnostics,
+    defuddle,
+    selected: {
+      id: selected.id,
+      method: selected.method,
+      adapterId: selected.adapterId,
+      reason: selected.reason,
+      score: round(selected.score),
+      metrics: selected.metrics
+    },
+    candidates: candidateSummary
+  };
+}
+
+function summarizeHtmlDiagnostics(html: string): Record<string, unknown> {
+  const rawDocument = parseHTML(html).document;
+  const cleanedDocument = parseCleanDocument(html);
+  const rawRoot = pickReadableRoot(rawDocument);
+  const cleanedRoot = pickReadableRoot(cleanedDocument);
+
+  return {
+    rawTextLength: normalizeText(rawDocument.body?.textContent ?? "").length,
+    cleanedTextLength: normalizeText(cleanedDocument.body?.textContent ?? "").length,
+    rawReadableRoot: describeElement(rawRoot),
+    cleanedReadableRoot: describeElement(cleanedRoot)
+  };
+}
+
+function describeElement(element: Element | undefined): Record<string, unknown> | undefined {
+  if (!element) {
+    return undefined;
+  }
+  return {
+    tag: element.tagName.toLowerCase(),
+    id: element.getAttribute("id") || undefined,
+    className: element.getAttribute("class") || undefined,
+    textLength: normalizeText(element.textContent ?? "").length
+  };
 }
 
 function emptyMetrics(): CandidateMetrics {

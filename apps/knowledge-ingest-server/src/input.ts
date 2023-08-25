@@ -16,6 +16,8 @@ export interface ResolvedInput {
   fetchUrl?: string;
   normalizedUrl: string;
   html: string;
+  bodyText?: string;
+  snapshotDiagnostics?: PageSnapshot["diagnostics"];
   title?: string;
   meta: Record<string, string>;
   capturedAt: string;
@@ -111,6 +113,8 @@ function fromSnapshot(snapshot: PageSnapshot, config: ServerConfig): ResolvedInp
     canonicalUrl,
     normalizedUrl: normalizeUrlForKnowledge(url),
     html: snapshot.html,
+    bodyText: snapshot.text,
+    snapshotDiagnostics: snapshot.diagnostics,
     title: snapshot.title,
     meta: snapshot.meta,
     capturedAt: snapshot.capturedAt,

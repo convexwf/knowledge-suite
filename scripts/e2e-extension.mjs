@@ -28,6 +28,7 @@ const html = (title, paragraph) => `<!doctype html>
       <p>$$</p>
       <p>\\frac{a+b}{c}</p>
       <p>$$</p>
+      <knowledge-shadow-card></knowledge-shadow-card>
       <p><img src="http://127.0.0.1:${pagePort}/chart.png" alt="progress chart"></p>
       <table>
         <tr><th>Metric</th><th>Value</th></tr>
@@ -35,6 +36,15 @@ const html = (title, paragraph) => `<!doctype html>
       </table>
       <ul><li>Content script collection</li><li>Local ingest server preview</li></ul>
     </article>
+    <script>
+      customElements.define("knowledge-shadow-card", class extends HTMLElement {
+        connectedCallback() {
+          if (!this.shadowRoot) {
+            this.attachShadow({ mode: "open" }).innerHTML = "<p>Shadow DOM captured content</p>";
+          }
+        }
+      });
+    </script>
   </body>
 </html>`;
 
@@ -126,6 +136,7 @@ try {
   await sidePanel.evaluate(() => document.querySelector("#refresh-button")?.click());
   await expectOutput(sidePanel, "Knowledge extension E2E page");
   await expectOutput(sidePanel, "Content script collection");
+  await expectOutput(sidePanel, "Shadow DOM captured content");
   await sidePanel.locator("#preview-output .math-inline .katex").waitFor({ timeout: 10000 });
   await sidePanel.locator("#preview-output .math-display .katex").waitFor({ timeout: 10000 });
   await sidePanel.locator('#preview-output a[href^="http://127.0.0.1:"]').filter({ hasText: "source article" }).waitFor({ timeout: 10000 });
@@ -136,13 +147,13 @@ try {
   await sidePanel.locator("#status-pill").filter({ hasText: "Saved" }).waitFor({ timeout: 10000 });
 
   const status = await get(`/api/clip/status?url=${encodeURIComponent(`http://127.0.0.1:${pagePort}/article?utm_source=e2e#top`)}`);
-  if (status.saved !== true) {
-    throw new Error(`Expected saved=true from backend status, got ${JSON.stringify(status)}`);
+  if (status.state !== "parsed" || status.hasDocument !== true) {
+    throw new Error(`Expected parsed saved document from backend status, got ${JSON.stringify(status)}`);
   }
 
   await sidePanel.evaluate(() => document.querySelector("#tab-saved")?.click());
   await sidePanel.locator("#saved-list").filter({ hasText: "E2E Article" }).waitFor({ timeout: 10000 });
-  await sidePanel.locator("#saved-list").filter({ hasText: "knowledge-ingest-server" }).waitFor({ timeout: 10000 });
+  await sidePanel.locator("#saved-list").filter({ hasText: "Parsed" }).waitFor({ timeout: 10000 });
 
   await sidePanel.evaluate(() => document.querySelector("#tab-preview")?.click());
   const secondArticle = await context.newPage();
@@ -157,11 +168,12 @@ try {
   await sidePanel.locator("#status-pill").filter({ hasText: "Copied" }).waitFor({ timeout: 10000 });
 
   await activateTab(sidePanel, articleTabId);
-  await sidePanel.evaluate(() => document.querySelector("#delete-button")?.click());
-  await sidePanel.locator("#status-pill").filter({ hasText: "Deleted" }).waitFor({ timeout: 10000 });
+  await expectOutput(sidePanel, "E2E Article");
+  await sidePanel.evaluate(() => document.querySelector("#remove-button")?.click());
+  await expectStatus(sidePanel, "Deleted");
   const deletedStatus = await get(`/api/clip/status?url=${encodeURIComponent(`http://127.0.0.1:${pagePort}/article?utm_source=e2e#top`)}`);
-  if (deletedStatus.saved !== false) {
-    throw new Error(`Expected saved=false after delete, got ${JSON.stringify(deletedStatus)}`);
+  if (deletedStatus.state !== "captured" || deletedStatus.hasDocument !== false) {
+    throw new Error(`Expected captured-only status after delete, got ${JSON.stringify(deletedStatus)}`);
   }
 
   console.log("knowledge extension e2e passed");
@@ -241,6 +253,21 @@ async function expectOutput(page, text) {
     throw new Error(`Expected side panel output to include "${text}". Diagnostics: ${JSON.stringify(diagnostics)}`, {
       cause: error
     });
+  }
+}
+
+async function expectStatus(page, text) {
+  try {
+    await page.locator("#status-pill").filter({ hasText: text }).waitFor({ timeout: 10000 });
+  } catch (error) {
+    const diagnostics = await page.evaluate(() => ({
+      status: document.querySelector("#status-pill")?.textContent,
+      detail: document.querySelector("#status-detail")?.textContent,
+      removeDisabled: document.querySelector("#remove-button")?.disabled,
+      purgeDisabled: document.querySelector("#purge-button")?.disabled,
+      output: document.querySelector("#preview-output")?.textContent || document.querySelector("#code-output")?.textContent
+    }));
+    throw new Error(`Timed out waiting for status ${text}: ${JSON.stringify(diagnostics)}`, { cause: error });
   }
 }
 

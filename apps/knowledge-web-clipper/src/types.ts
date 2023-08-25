@@ -9,6 +9,11 @@ export interface PageSnapshot {
   title?: string;
   html: string;
   text?: string;
+  diagnostics?: {
+    htmlLength: number;
+    textLength: number;
+    shadowRootCount: number;
+  };
   capturedAt: string;
   meta: Record<string, string>;
   selectionHtml?: string;

@@ -176,7 +176,7 @@ async function save(): Promise<void> {
     lastPreview = await createKnowledgeApiClient(settings).save(body);
     await loadSavedClips();
     await notifyBadgeRefresh();
-    setStatus(statusLabel(lastPreview.status), summarizeSave(previousStatus, lastPreview));
+    setStatus("Saved", summarizeSave(previousStatus, lastPreview));
     renderOutput();
   } catch (error) {
     setStatus("Error");
@@ -234,7 +234,7 @@ async function deleteCurrentClip(mode: ClipDeleteMode): Promise<void> {
     await loadSavedClips();
     await notifyBadgeRefresh();
     setStatus(
-      deleted.deleted ? statusLabel(deleted) : "Not saved",
+      deleted.deleted ? "Deleted" : "Not saved",
       summarizeDelete(mode, deleted.deleted)
     );
     renderOutput();
@@ -593,6 +593,7 @@ function renderParserDiagnostics(preview: PreviewResult): DocumentFragment {
   const fragment = document.createDocumentFragment();
   const metadata = preview.rawdoc.metadata ?? {};
   const defuddle = metadata.defuddle ?? {};
+  const parserDiagnostics = metadata.parserDiagnostics as Record<string, unknown> | undefined;
   const matchedAdapters = Array.isArray(metadata.matchedAdapters) ? metadata.matchedAdapters : [];
   const parserCandidates = Array.isArray(metadata.parserCandidates) ? metadata.parserCandidates : [];
   const warnings = collectParserWarnings(preview);
@@ -628,6 +629,16 @@ function renderParserDiagnostics(preview: PreviewResult): DocumentFragment {
   fragment.append(
     makeParserGroup("Defuddle", Object.entries(defuddle).map(([key, value]) => [key, value]))
   );
+
+  if (parserDiagnostics) {
+    fragment.append(
+      makeParserGroup("Diagnostics", [
+        ["input", parserDiagnostics.input],
+        ["cleanup", parserDiagnostics.cleanup],
+        ["selected", parserDiagnostics.selected]
+      ])
+    );
+  }
 
   fragment.append(
     makeParserGroup("Adapters", matchedAdapters.flatMap((adapter, index) => {
