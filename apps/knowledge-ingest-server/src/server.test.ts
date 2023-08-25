@@ -9,7 +9,7 @@ import { buildServer } from "./server.js";
 const html = `<!doctype html>
 <html lang="en">
   <head>
-    <title>Example Article</title>
+    <title>Example Article - Example Site</title>
     <meta name="author" content="Ada">
   </head>
   <body>
@@ -82,7 +82,8 @@ describe("knowledge ingest server", () => {
       snapshot: {
         pageUrl: "https://example.com/a?utm_source=x#top",
         canonicalUrl: "https://example.com/a",
-        title: "Example Article",
+        pageTitle: "Example Article - Example Site",
+        title: "Example Article - Example Site",
         html,
         capturedAt: "2026-05-11T02:00:00.000Z",
         meta: { author: "Ada" }
@@ -100,6 +101,11 @@ describe("knowledge ingest server", () => {
     expect(preview.json().rawdoc.metadata.defuddle.wordCount).toBeGreaterThan(0);
     expect(preview.json().rawdoc.metadata.originalUrl).toBe("https://example.com/a?utm_source=x#top");
     expect(preview.json().rawdoc.metadata.canonicalUrl).toBe("https://example.com/a");
+    expect(preview.json().rawdoc.metadata.pageTitle).toBe("Example Article - Example Site");
+    expect(preview.json().rawdoc.metadata.contentTitle).toBe("Example Article");
+    expect(preview.json().document.meta.title).toBe("Example Article");
+    expect(preview.json().document.meta.page_title).toBe("Example Article - Example Site");
+    expect(preview.json().markdown).toContain("page_title: \"Example Article - Example Site\"");
     expect(preview.json().status).toMatchObject({
       state: "empty",
       hasRawdoc: false,
@@ -134,7 +140,11 @@ describe("knowledge ingest server", () => {
       hasRawdoc: true,
       hasDocument: true,
       originalUrl: "https://example.com/a?utm_source=x#top",
-      canonicalUrl: "https://example.com/a"
+      canonicalUrl: "https://example.com/a",
+      title: "Example Article - Example Site",
+      pageTitle: "Example Article - Example Site",
+      contentTitle: "Example Article",
+      displayTitle: "Example Article - Example Site"
     });
 
     const list = await app.inject({
@@ -153,7 +163,10 @@ describe("knowledge ingest server", () => {
       canonicalUrl: "https://example.com/a",
       captureSavedAt: expect.any(String),
       captureUpdatedAt: expect.any(String),
-      title: "Example Article"
+      title: "Example Article - Example Site",
+      pageTitle: "Example Article - Example Site",
+      contentTitle: "Example Article",
+      displayTitle: "Example Article - Example Site"
     });
 
     const search = await app.inject({
@@ -170,7 +183,10 @@ describe("knowledge ingest server", () => {
       expect.arrayContaining([
         expect.objectContaining({
           docId: save.json().document.doc_id,
-          title: "Example Article",
+          title: "Example Article - Example Site",
+          pageTitle: "Example Article - Example Site",
+          contentTitle: "Example Article",
+          displayTitle: "Example Article - Example Site",
           sourceUrl: "https://example.com/a",
           normalizedUrl: "https://example.com/a",
           parserMethod: "defuddle"

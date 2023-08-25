@@ -7,6 +7,7 @@ export type InputMode = z.infer<typeof InputModeSchema>;
 export const PageSnapshotSchema = z.object({
   pageUrl: z.string().min(1),
   canonicalUrl: z.string().optional(),
+  pageTitle: z.string().optional(),
   title: z.string().optional(),
   html: z.string().min(1),
   text: z.string().optional(),
@@ -145,6 +146,7 @@ export interface KnowledgeDocument {
   doc_id: string;
   meta: {
     title: string;
+    page_title?: string;
     source: {
       type: "html" | "pdf" | "epub";
       url?: string | null;
@@ -179,6 +181,9 @@ export interface ClipStatus {
   captureUpdatedAt?: string;
   parseUpdatedAt?: string;
   title?: string;
+  pageTitle?: string;
+  contentTitle?: string;
+  displayTitle?: string;
   docId?: string;
   rawdocId?: string;
 }
@@ -224,6 +229,9 @@ export interface ClipListItem {
   captureUpdatedAt: string;
   parseUpdatedAt?: string;
   title?: string;
+  pageTitle?: string;
+  contentTitle?: string;
+  displayTitle?: string;
   docId?: string;
   rawdocId?: string;
 }
@@ -238,6 +246,9 @@ export interface SearchResultItem {
   rawdocId: string;
   sectionIds: string[];
   title: string;
+  pageTitle?: string;
+  contentTitle?: string;
+  displayTitle?: string;
   sourceUrl?: string;
   normalizedUrl?: string;
   headingPath?: string;
@@ -297,6 +308,9 @@ export interface CollectionItem {
   docId?: string;
   rawdocId?: string;
   title?: string;
+  pageTitle?: string;
+  contentTitle?: string;
+  displayTitle?: string;
   orderIndex: number;
   depth: number;
   parentItemId?: string;

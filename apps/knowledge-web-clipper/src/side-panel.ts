@@ -811,7 +811,7 @@ function collectionTitle(): string {
     return activeTab.title.trim();
   }
   if (lastPreview?.document.meta.title) {
-    return lastPreview.document.meta.title;
+    return lastPreview.document.meta.page_title ?? lastPreview.document.meta.title;
   }
   return "Knowledge collection";
 }
@@ -849,6 +849,9 @@ function clipStatusFromDelete(deleted: {
   originalUrl?: string;
   canonicalUrl?: string;
   title?: string;
+  pageTitle?: string;
+  contentTitle?: string;
+  displayTitle?: string;
   rawdocId?: string;
   captureSavedAt?: string;
   captureUpdatedAt?: string;
@@ -862,7 +865,7 @@ function clipStatusFromDelete(deleted: {
     hasDocument: deleted.hasDocument,
     originalUrl: deleted.originalUrl,
     canonicalUrl: deleted.canonicalUrl,
-    title: deleted.title,
+    title: deleted.displayTitle ?? deleted.title,
     rawdocId: deleted.rawdocId,
     captureSavedAt: deleted.captureSavedAt,
     captureUpdatedAt: deleted.captureUpdatedAt,
@@ -897,7 +900,9 @@ function renderParserDiagnostics(preview: PreviewResult): DocumentFragment {
   fragment.append(
     makeParserGroup("Document", [
       ["doc_id", preview.document.doc_id],
-      ["title", preview.document.meta.title],
+      ["page_title", preview.document.meta.page_title],
+      ["content_title", preview.document.meta.title],
+      ["display_title", preview.status.displayTitle ?? preview.status.title],
       ["authors", preview.document.meta.authors?.join(", ")],
       ["published_at", preview.document.meta.published_at],
       ["language", preview.document.meta.language],

@@ -4,6 +4,7 @@ export function documentToMarkdown(document: KnowledgeDocument): string {
   const lines: string[] = [
     "---",
     `title: ${yamlString(document.meta.title)}`,
+    document.meta.page_title ? `page_title: ${yamlString(document.meta.page_title)}` : undefined,
     document.meta.source.url ? `url: ${yamlString(document.meta.source.url)}` : undefined,
     `ingested_at: ${yamlString(document.meta.ingested_at)}`,
     document.meta.language ? `language: ${yamlString(document.meta.language)}` : undefined,

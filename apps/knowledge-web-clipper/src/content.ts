@@ -27,6 +27,7 @@
     return {
       pageUrl: location.href,
       canonicalUrl: document.querySelector<HTMLLinkElement>('link[rel="canonical"]')?.href,
+      pageTitle: document.title,
       title: document.title,
       html: snapshotHtml.html,
       text: bodyText,

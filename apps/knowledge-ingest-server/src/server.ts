@@ -358,7 +358,8 @@ export async function buildServer(config: ServerConfig = loadConfig()) {
             normalizedUrl: existing.normalizedUrl,
             rawdocId: existing.rawdocId,
             docId: existing.docId,
-            title: existing.title
+            title: existing.contentTitle ?? existing.title,
+            pageTitle: existing.pageTitle
           });
           return;
         }
@@ -383,7 +384,8 @@ export async function buildServer(config: ServerConfig = loadConfig()) {
         normalizedUrl: resolved.normalizedUrl,
         rawdocId: parsed.rawdoc.rawdoc_id,
         docId: parsed.document.doc_id,
-        title: parsed.document.meta.title
+        title: parsed.document.meta.title,
+        pageTitle: parsed.document.meta.page_title
       });
     } catch (error) {
       await store.updateBatchItem({
@@ -407,6 +409,11 @@ function resolvedInputFromCapture(rawdoc: RawDoc, html: string): ResolvedInput {
     fetchUrl: typeof metadata.fetchUrl === "string" ? metadata.fetchUrl : undefined,
     normalizedUrl,
     html,
+    pageTitle: typeof metadata.pageTitle === "string"
+      ? metadata.pageTitle
+      : typeof metadata.title === "string"
+        ? metadata.title
+        : undefined,
     title: typeof metadata.title === "string" ? metadata.title : undefined,
     meta: isStringRecord(metadata.meta) ? metadata.meta : {},
     capturedAt: typeof metadata.capturedAt === "string" ? metadata.capturedAt : rawdoc.fetch_time,

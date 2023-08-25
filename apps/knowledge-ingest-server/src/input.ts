@@ -18,6 +18,7 @@ export interface ResolvedInput {
   html: string;
   bodyText?: string;
   snapshotDiagnostics?: PageSnapshot["diagnostics"];
+  pageTitle?: string;
   title?: string;
   meta: Record<string, string>;
   capturedAt: string;
@@ -115,6 +116,7 @@ function fromSnapshot(snapshot: PageSnapshot, config: ServerConfig): ResolvedInp
     html: snapshot.html,
     bodyText: snapshot.text,
     snapshotDiagnostics: snapshot.diagnostics,
+    pageTitle: snapshot.pageTitle ?? snapshot.title,
     title: snapshot.title,
     meta: snapshot.meta,
     capturedAt: snapshot.capturedAt,

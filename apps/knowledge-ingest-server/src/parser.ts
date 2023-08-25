@@ -88,8 +88,9 @@ export async function parsePage(input: ResolvedInput, options: ParsePageOptions 
   applyDefuddleRootHints(baseDocument, matchedAdapters);
   const defuddleRun = await runDefuddle(baseDocument, input);
   const defuddleResult = defuddleRun.result;
-  const title = input.title || defuddleResult?.title || readTitle(baseDocument) || input.normalizedUrl;
-  const candidates = buildCandidates(input, title, defuddleResult, matchedAdapters);
+  const pageTitle = input.pageTitle || input.title || readPageTitle(baseDocument) || input.normalizedUrl;
+  const title = readContentTitle(baseDocument) || defuddleResult?.title || pageTitle;
+  const candidates = buildCandidates(input, title, pageTitle, defuddleResult, matchedAdapters);
   const selected = selectCandidate(candidates);
   const fallbackText = normalizeText(input.bodyText || baseDocument.body?.textContent || "");
   const sections = selected.sections.length > 0
@@ -100,6 +101,7 @@ export async function parsePage(input: ResolvedInput, options: ParsePageOptions 
   const parserWarnings = collectParserWarnings(selected, candidates);
   const parserDiagnostics = buildParserDiagnostics(input, selected, candidates, defuddleRun.diagnostics);
   const selectedTitle = selected.title || title;
+  const displayTitle = displayTitleFor(pageTitle, selectedTitle, input.normalizedUrl);
 
   const rawdoc: RawDoc = {
     rawdoc_id: rawdocId,
@@ -114,7 +116,10 @@ export async function parsePage(input: ResolvedInput, options: ParsePageOptions 
       originalUrl: input.originalUrl,
       canonicalUrl: input.canonicalUrl,
       fetchUrl: input.fetchUrl,
-      title: selectedTitle,
+      title: pageTitle,
+      pageTitle,
+      contentTitle: selectedTitle,
+      displayTitle,
       parserMethod: selected.method,
       parserProfile: selected.adapterId ?? selected.method,
       parserWarnings,
@@ -154,10 +159,11 @@ export async function parsePage(input: ResolvedInput, options: ParsePageOptions 
   };
 
   const knowledgeDocument: KnowledgeDocument = {
-    doc_id: docId,
-    meta: {
-      title: selectedTitle,
-      source: {
+      doc_id: docId,
+      meta: {
+        title: selectedTitle,
+        page_title: pageTitle,
+        source: {
         type: "html",
         url: input.url,
         rawdoc_id: rawdocId
@@ -184,6 +190,7 @@ export async function parsePage(input: ResolvedInput, options: ParsePageOptions 
 function buildCandidates(
   input: ResolvedInput,
   title: string,
+  pageTitle: string,
   defuddleResult: DefuddleResponse | undefined,
   matchedAdapters: MatchedAdapter[]
 ): ParserCandidate[] {
@@ -199,7 +206,7 @@ function buildCandidates(
     candidates.push(makeCandidate({
       id: "defuddle",
       method: "defuddle",
-      title: defuddleResult.title || title,
+      title: defuddleResult.title && defuddleResult.title !== pageTitle ? defuddleResult.title : title,
       sections,
       metadata: {
         authors: defuddleResult.author ? [defuddleResult.author] : undefined,
@@ -551,10 +558,18 @@ function pickParsedContentRoot(document: Document): Element | undefined {
   return document.documentElement || document.body || undefined;
 }
 
-function readTitle(document: Document): string | undefined {
-  const ogTitle = document.querySelector('meta[property="og:title"]')?.getAttribute("content")?.trim();
+function readPageTitle(document: Document): string | undefined {
   const title = document.querySelector("title")?.textContent?.trim();
-  return ogTitle || title || undefined;
+  const ogTitle = document.querySelector('meta[property="og:title"]')?.getAttribute("content")?.trim();
+  return title || ogTitle || undefined;
+}
+
+function readContentTitle(document: Document): string | undefined {
+  return document.querySelector("h1")?.textContent?.trim() || undefined;
+}
+
+function displayTitleFor(pageTitle: string | undefined, contentTitle: string | undefined, fallback: string): string {
+  return pageTitle || contentTitle || fallback;
 }
 
 function readAuthors(document: Document, meta: Record<string, string>, defuddleResult?: DefuddleResponse): string[] {
@@ -1203,6 +1218,7 @@ function buildParserDiagnostics(
       htmlBytes: Buffer.byteLength(input.html),
       browserTextLength: normalizeText(input.bodyText ?? "").length,
       snapshot: input.snapshotDiagnostics,
+      pageTitle: input.pageTitle,
       title: input.title
     },
     cleanup: htmlDiagnostics,

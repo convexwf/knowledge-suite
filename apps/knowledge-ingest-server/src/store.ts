@@ -32,6 +32,7 @@ interface ClipRow {
   rawdoc_id: string;
   active_doc_id: string | null;
   page_title: string | null;
+  content_title: string | null;
   capture_saved_at: string;
   capture_updated_at: string;
   parse_updated_at: string | null;
@@ -40,6 +41,8 @@ interface ClipRow {
 interface DocumentRow {
   doc_id: string;
   rawdoc_id: string;
+  title: string;
+  page_title: string | null;
 }
 
 interface BatchJobRow {
@@ -96,6 +99,7 @@ interface CollectionItemRow {
   doc_id: string | null;
   rawdoc_id: string | null;
   title: string | null;
+  page_title: string | null;
   order_index: number;
   depth: number;
   parent_item_id: string | null;
@@ -111,6 +115,7 @@ interface SearchRow {
   rawdoc_id: string;
   section_ids_json: string;
   title: string;
+  page_title: string | null;
   source_url: string | null;
   normalized_url: string | null;
   heading_path: string | null;
@@ -134,6 +139,9 @@ interface SearchResultItem {
   rawdocId: string;
   sectionIds: string[];
   title: string;
+  pageTitle?: string;
+  contentTitle?: string;
+  displayTitle?: string;
   sourceUrl?: string;
   normalizedUrl?: string;
   headingPath?: string;
@@ -151,7 +159,7 @@ interface SavePaths {
   markdownPath: string;
 }
 
-const STORE_SCHEMA_VERSION = 6;
+const STORE_SCHEMA_VERSION = 7;
 
 interface SearchOptions {
   limit?: number;
@@ -201,7 +209,7 @@ export class KnowledgeStore {
     await this.ensure();
     const boundedLimit = Math.min(Math.max(Math.trunc(limit) || 50, 1), 200);
     const rows = this.database!.prepare(`
-      SELECT url_hash, normalized_url, original_url, canonical_url, rawdoc_id, active_doc_id, page_title,
+      SELECT url_hash, normalized_url, original_url, canonical_url, rawdoc_id, active_doc_id, page_title, content_title,
         capture_saved_at, capture_updated_at, parse_updated_at
       FROM clips
       ORDER BY COALESCE(parse_updated_at, capture_updated_at) DESC
@@ -219,7 +227,7 @@ export class KnowledgeStore {
       captureSavedAt: row.capture_saved_at,
       captureUpdatedAt: row.capture_updated_at,
       parseUpdatedAt: row.parse_updated_at ?? undefined,
-      title: row.page_title ?? undefined,
+      ...titleFields(row.page_title, row.content_title, row.normalized_url),
       docId: row.active_doc_id ?? undefined,
       rawdocId: row.rawdoc_id
     }));
@@ -258,6 +266,7 @@ export class KnowledgeStore {
         c.rawdoc_id,
         c.section_ids_json,
         c.title,
+        c.page_title,
         c.source_url,
         c.normalized_url,
         c.heading_path,
@@ -278,7 +287,10 @@ export class KnowledgeStore {
       docId: row.doc_id,
       rawdocId: row.rawdoc_id,
       sectionIds: safeJsonArray(row.section_ids_json),
-      title: row.title,
+      title: titleFields(row.page_title, row.title, row.normalized_url ?? row.source_url ?? row.doc_id).title,
+      pageTitle: row.page_title ?? undefined,
+      contentTitle: row.title,
+      displayTitle: titleFields(row.page_title, row.title, row.normalized_url ?? row.source_url ?? row.doc_id).displayTitle,
       sourceUrl: row.source_url ?? undefined,
       normalizedUrl: row.normalized_url ?? undefined,
       headingPath: row.heading_path ?? undefined,
@@ -363,7 +375,7 @@ export class KnowledgeStore {
     await this.ensure();
     const collection = this.loadCollectionSummary(collectionId);
     const rows = this.database!.prepare(`
-      SELECT collection_item_id, collection_id, normalized_url, doc_id, rawdoc_id, title,
+      SELECT collection_item_id, collection_id, normalized_url, doc_id, rawdoc_id, title, page_title,
         order_index, depth, parent_item_id, source, state, created_at, updated_at
       FROM collection_items
       WHERE collection_id = ?
@@ -378,6 +390,7 @@ export class KnowledgeStore {
   async replaceCollectionItems(collectionId: string, items: Array<{
     normalizedUrl: string;
     title?: string;
+    pageTitle?: string;
     source?: string;
     orderIndex: number;
     depth: number;
@@ -395,6 +408,7 @@ export class KnowledgeStore {
           collection_id,
           normalized_url,
           title,
+          page_title,
           order_index,
           depth,
           source,
@@ -402,7 +416,7 @@ export class KnowledgeStore {
           created_at,
           updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
       for (const item of items) {
         insert.run(
@@ -410,6 +424,7 @@ export class KnowledgeStore {
           collectionId,
           item.normalizedUrl,
           item.title ?? null,
+          item.pageTitle ?? null,
           item.orderIndex,
           item.depth,
           item.source ?? null,
@@ -548,6 +563,7 @@ export class KnowledgeStore {
     rawdocId?: string;
     docId?: string;
     title?: string;
+    pageTitle?: string;
     errorCode?: string;
     errorMessage?: string;
     incrementAttempt?: boolean;
@@ -592,6 +608,7 @@ export class KnowledgeStore {
             rawdoc_id = COALESCE(?, rawdoc_id),
             doc_id = COALESCE(?, doc_id),
             title = COALESCE(?, title),
+            page_title = COALESCE(?, page_title),
             updated_at = ?
         WHERE collection_id = ?
           AND normalized_url = ?
@@ -601,6 +618,7 @@ export class KnowledgeStore {
         params.rawdocId ?? null,
         params.docId ?? null,
         params.title ?? null,
+        params.pageTitle ?? null,
         now,
         item.collection_id,
         previousNormalizedUrl
@@ -664,6 +682,8 @@ export class KnowledgeStore {
     const contentHash = sha256(params.markdown);
     const authorsJson = JSON.stringify(params.document.meta.authors ?? []);
     const rawMetadata = params.rawdoc.metadata ?? {};
+    const contentTitle = params.document.meta.title;
+    const pageTitle = pageTitleFor(params.document, params.rawdoc);
     const originalUrl = typeof rawMetadata.originalUrl === "string"
       ? rawMetadata.originalUrl
       : params.rawdoc.source_uri;
@@ -689,11 +709,12 @@ export class KnowledgeStore {
           content_type,
           content_length,
           html_hash,
+          page_title,
           captured_at,
           fetched_at,
           created_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(rawdoc_id) DO UPDATE SET
           source_uri = excluded.source_uri,
           normalized_url = excluded.normalized_url,
@@ -701,6 +722,7 @@ export class KnowledgeStore {
           content_type = excluded.content_type,
           content_length = excluded.content_length,
           html_hash = excluded.html_hash,
+          page_title = excluded.page_title,
           captured_at = excluded.captured_at,
           fetched_at = excluded.fetched_at
       `).run(
@@ -711,6 +733,7 @@ export class KnowledgeStore {
         params.rawdoc.content_type ?? "text/html",
         params.rawdoc.content_length ?? Buffer.byteLength(params.html),
         sha256(params.html),
+        pageTitle,
         typeof rawMetadata.capturedAt === "string" ? rawMetadata.capturedAt : null,
         params.rawdoc.fetch_time,
         previous && previous.rawdoc_id === params.rawdoc.rawdoc_id ? previous.capture_saved_at : now
@@ -721,6 +744,7 @@ export class KnowledgeStore {
           doc_id,
           rawdoc_id,
           title,
+          page_title,
           source_url,
           normalized_url,
           language,
@@ -733,10 +757,11 @@ export class KnowledgeStore {
           created_at,
           updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(doc_id) DO UPDATE SET
           rawdoc_id = excluded.rawdoc_id,
           title = excluded.title,
+          page_title = excluded.page_title,
           source_url = excluded.source_url,
           normalized_url = excluded.normalized_url,
           language = excluded.language,
@@ -750,7 +775,8 @@ export class KnowledgeStore {
       `).run(
         params.document.doc_id,
         params.rawdoc.rawdoc_id,
-        params.document.meta.title,
+        contentTitle,
+        pageTitle,
         params.document.meta.source.url ?? params.rawdoc.source_uri,
         normalized,
         params.document.meta.language ?? null,
@@ -775,11 +801,12 @@ export class KnowledgeStore {
           rawdoc_id,
           active_doc_id,
           page_title,
+          content_title,
           capture_saved_at,
           capture_updated_at,
           parse_updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(url_hash) DO UPDATE SET
           normalized_url = excluded.normalized_url,
           original_url = excluded.original_url,
@@ -787,6 +814,7 @@ export class KnowledgeStore {
           rawdoc_id = excluded.rawdoc_id,
           active_doc_id = excluded.active_doc_id,
           page_title = excluded.page_title,
+          content_title = excluded.content_title,
           capture_updated_at = excluded.capture_updated_at,
           parse_updated_at = excluded.parse_updated_at
       `).run(
@@ -796,7 +824,8 @@ export class KnowledgeStore {
         canonicalUrl,
         params.rawdoc.rawdoc_id,
         params.document.doc_id,
-        params.document.meta.title,
+        pageTitle,
+        contentTitle,
         previous?.capture_saved_at ?? now,
         now,
         now
@@ -857,6 +886,7 @@ export class KnowledgeStore {
         rawdoc_id TEXT NOT NULL,
         active_doc_id TEXT,
         page_title TEXT,
+        content_title TEXT,
         capture_saved_at TEXT NOT NULL,
         capture_updated_at TEXT NOT NULL,
         parse_updated_at TEXT
@@ -866,6 +896,7 @@ export class KnowledgeStore {
         doc_id TEXT PRIMARY KEY,
         rawdoc_id TEXT NOT NULL,
         title TEXT NOT NULL,
+        page_title TEXT,
         source_url TEXT,
         normalized_url TEXT,
         language TEXT,
@@ -887,6 +918,7 @@ export class KnowledgeStore {
         content_type TEXT,
         content_length INTEGER,
         html_hash TEXT,
+        page_title TEXT,
         captured_at TEXT,
         fetched_at TEXT,
         created_at TEXT NOT NULL
@@ -898,6 +930,7 @@ export class KnowledgeStore {
         rawdoc_id TEXT NOT NULL,
         chunk_index INTEGER NOT NULL,
         title TEXT NOT NULL,
+        page_title TEXT,
         source_url TEXT,
         normalized_url TEXT,
         heading_path TEXT,
@@ -932,6 +965,7 @@ export class KnowledgeStore {
         doc_id TEXT,
         rawdoc_id TEXT,
         title TEXT,
+        page_title TEXT,
         order_index INTEGER NOT NULL,
         depth INTEGER NOT NULL DEFAULT 0,
         parent_item_id TEXT,
@@ -1021,6 +1055,7 @@ export class KnowledgeStore {
     const hasLegacyV2 = clipsColumns.some((column) => column.name === "doc_id");
     if (!hasLegacyV2) {
       if ((userVersion?.user_version ?? 0) < STORE_SCHEMA_VERSION) {
+        this.ensureTitleColumns();
         this.rebuildChunksFtsIndex();
       }
       this.database!.exec(`PRAGMA user_version = ${STORE_SCHEMA_VERSION}`);
@@ -1039,6 +1074,7 @@ export class KnowledgeStore {
           rawdoc_id TEXT NOT NULL,
           active_doc_id TEXT,
           page_title TEXT,
+          content_title TEXT,
           capture_saved_at TEXT NOT NULL,
           capture_updated_at TEXT NOT NULL,
           parse_updated_at TEXT
@@ -1053,6 +1089,7 @@ export class KnowledgeStore {
           rawdoc_id,
           active_doc_id,
           page_title,
+          content_title,
           capture_saved_at,
           capture_updated_at,
           parse_updated_at
@@ -1065,18 +1102,41 @@ export class KnowledgeStore {
           rawdoc_id,
           doc_id,
           page_title,
+          page_title,
           saved_at,
           updated_at,
           updated_at
         FROM clips_old
       `);
       this.database!.exec("DROP TABLE clips_old");
+      this.ensureTitleColumns();
       this.rebuildChunksFtsIndex();
       this.database!.exec(`PRAGMA user_version = ${STORE_SCHEMA_VERSION}`);
       this.database!.exec("COMMIT");
     } catch (error) {
       this.database!.exec("ROLLBACK");
       throw error;
+    }
+  }
+
+  private ensureTitleColumns(): void {
+    this.addColumnIfMissing("clips", "content_title", "TEXT");
+    this.addColumnIfMissing("documents", "page_title", "TEXT");
+    this.addColumnIfMissing("rawdocs", "page_title", "TEXT");
+    this.addColumnIfMissing("chunks", "page_title", "TEXT");
+    this.addColumnIfMissing("collection_items", "page_title", "TEXT");
+    this.database!.exec(`
+      UPDATE clips SET content_title = COALESCE(content_title, page_title);
+      UPDATE documents SET page_title = COALESCE(page_title, title);
+      UPDATE chunks SET page_title = COALESCE(page_title, title);
+      UPDATE collection_items SET page_title = COALESCE(page_title, title);
+    `);
+  }
+
+  private addColumnIfMissing(table: string, column: string, definition: string): void {
+    const columns = this.database!.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+    if (!columns.some((item) => item.name === column)) {
+      this.database!.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
     }
   }
 
@@ -1128,7 +1188,7 @@ export class KnowledgeStore {
 
   private findClip(hash: string): ClipRow | undefined {
     return this.database!.prepare(`
-      SELECT url_hash, normalized_url, original_url, canonical_url, rawdoc_id, active_doc_id, page_title,
+      SELECT url_hash, normalized_url, original_url, canonical_url, rawdoc_id, active_doc_id, page_title, content_title,
         capture_saved_at, capture_updated_at, parse_updated_at
       FROM clips
       WHERE url_hash = ?
@@ -1137,7 +1197,7 @@ export class KnowledgeStore {
 
   private findClipByOriginalUrl(input: string): ClipRow | undefined {
     return this.database!.prepare(`
-      SELECT url_hash, normalized_url, original_url, canonical_url, rawdoc_id, active_doc_id, page_title,
+      SELECT url_hash, normalized_url, original_url, canonical_url, rawdoc_id, active_doc_id, page_title, content_title,
         capture_saved_at, capture_updated_at, parse_updated_at
       FROM clips
       WHERE original_url = ?
@@ -1146,7 +1206,7 @@ export class KnowledgeStore {
 
   private findDocument(docId: string): DocumentRow | undefined {
     return this.database!.prepare(`
-      SELECT doc_id, rawdoc_id
+      SELECT doc_id, rawdoc_id, title, page_title
       FROM documents
       WHERE doc_id = ?
     `).get(docId) as DocumentRow | undefined;
@@ -1282,7 +1342,7 @@ export class KnowledgeStore {
       captureSavedAt: row.capture_saved_at,
       captureUpdatedAt: row.capture_updated_at,
       parseUpdatedAt: row.parse_updated_at ?? undefined,
-      title: row.page_title ?? undefined,
+      ...titleFields(row.page_title, row.content_title, row.normalized_url),
       docId: row.active_doc_id ?? undefined,
       rawdocId: row.rawdoc_id
     };
@@ -1309,6 +1369,7 @@ export class KnowledgeStore {
       this.database!.prepare(`
         UPDATE clips
         SET active_doc_id = NULL,
+            content_title = NULL,
             capture_updated_at = ?,
             parse_updated_at = NULL
         WHERE url_hash = ?
@@ -1329,7 +1390,7 @@ export class KnowledgeStore {
       canonicalUrl: row.canonical_url ?? undefined,
       captureSavedAt: row.capture_saved_at,
       captureUpdatedAt: now,
-      title: row.page_title ?? undefined,
+      ...titleFields(row.page_title, null, row.normalized_url),
       rawdocId: row.rawdoc_id,
       deleted: true,
       mode: "remove",
@@ -1422,6 +1483,7 @@ export class KnowledgeStore {
         rawdoc_id,
         chunk_index,
         title,
+        page_title,
         source_url,
         normalized_url,
         heading_path,
@@ -1436,7 +1498,7 @@ export class KnowledgeStore {
         created_at,
         updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const insertFts = this.database!.prepare("INSERT INTO chunks_fts (rowid, title, heading_path, text) VALUES (?, ?, ?, ?)");
 
@@ -1447,6 +1509,7 @@ export class KnowledgeStore {
         rawdoc.rawdoc_id,
         chunk.chunkIndex,
         document.meta.title,
+        document.meta.page_title ?? null,
         document.meta.source.url ?? rawdoc.source_uri,
         normalizedUrl,
         chunk.headingPath,
@@ -1559,13 +1622,14 @@ function toCollectionSummary(row: CollectionRow): CollectionSummary {
 }
 
 function toCollectionItem(row: CollectionItemRow): CollectionItem {
+  const titles = titleFields(row.page_title, row.title, row.normalized_url);
   return {
     collectionItemId: row.collection_item_id,
     collectionId: row.collection_id,
     normalizedUrl: row.normalized_url,
     docId: row.doc_id ?? undefined,
     rawdocId: row.rawdoc_id ?? undefined,
-    title: row.title ?? undefined,
+    ...titles,
     orderIndex: row.order_index,
     depth: row.depth,
     parentItemId: row.parent_item_id ?? undefined,
@@ -1574,6 +1638,35 @@ function toCollectionItem(row: CollectionItemRow): CollectionItem {
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };
+}
+
+function pageTitleFor(document: KnowledgeDocument, rawdoc: RawDoc): string {
+  const metadata = rawdoc.metadata ?? {};
+  return stringMeta(metadata.pageTitle) ||
+    stringMeta(metadata.title) ||
+    document.meta.page_title ||
+    document.meta.title ||
+    rawdoc.source_uri;
+}
+
+function titleFields(
+  pageTitle: string | null | undefined,
+  contentTitle: string | null | undefined,
+  fallback: string
+): { title: string; pageTitle?: string; contentTitle?: string; displayTitle: string } {
+  const normalizedPageTitle = pageTitle?.trim() || undefined;
+  const normalizedContentTitle = contentTitle?.trim() || undefined;
+  const displayTitle = normalizedPageTitle || normalizedContentTitle || fallback;
+  return {
+    title: displayTitle,
+    pageTitle: normalizedPageTitle,
+    contentTitle: normalizedContentTitle,
+    displayTitle
+  };
+}
+
+function stringMeta(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
 function toBatchJobItem(row: BatchItemRow): BatchJobItem {

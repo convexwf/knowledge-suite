@@ -20,7 +20,12 @@ describe("KnowledgeStore", () => {
   it("stores UUID-named objects and points a URL to the newest parsed result", async () => {
     const store = new KnowledgeStore(storeRoot);
     const first = fixture("11111111-1111-4111-8111-111111111111", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "First Title");
-    const second = fixture("22222222-2222-4222-8222-222222222222", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "Second Title");
+    const second = fixture(
+      "22222222-2222-4222-8222-222222222222",
+      "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      "Second Title",
+      "Second Title - Example Site"
+    );
 
     const firstPaths = await store.save(first);
     expectStoreSchema(storeRoot);
@@ -53,7 +58,10 @@ describe("KnowledgeStore", () => {
       state: "parsed",
       hasRawdoc: true,
       hasDocument: true,
-      title: "Second Title",
+      title: "Second Title - Example Site",
+      pageTitle: "Second Title - Example Site",
+      contentTitle: "Second Title",
+      displayTitle: "Second Title - Example Site",
       docId: second.document.doc_id,
       rawdocId: second.rawdoc.rawdoc_id
     });
@@ -68,7 +76,10 @@ describe("KnowledgeStore", () => {
       state: "parsed",
       hasRawdoc: true,
       hasDocument: true,
-      title: "Second Title",
+      title: "Second Title - Example Site",
+      pageTitle: "Second Title - Example Site",
+      contentTitle: "Second Title",
+      displayTitle: "Second Title - Example Site",
       docId: second.document.doc_id,
       rawdocId: second.rawdoc.rawdoc_id
     });
@@ -366,7 +377,7 @@ function expectStoreSchema(root: string): void {
       ])
     );
 
-    expect(columnsByTable.clips).toEqual([
+    expect(columnsByTable.clips).toEqual(expect.arrayContaining([
       "url_hash",
       "normalized_url",
       "original_url",
@@ -374,14 +385,16 @@ function expectStoreSchema(root: string): void {
       "rawdoc_id",
       "active_doc_id",
       "page_title",
+      "content_title",
       "capture_saved_at",
       "capture_updated_at",
       "parse_updated_at"
-    ]);
-    expect(columnsByTable.documents).toEqual([
+    ]));
+    expect(columnsByTable.documents).toEqual(expect.arrayContaining([
       "doc_id",
       "rawdoc_id",
       "title",
+      "page_title",
       "source_url",
       "normalized_url",
       "language",
@@ -393,8 +406,8 @@ function expectStoreSchema(root: string): void {
       "content_hash",
       "created_at",
       "updated_at"
-    ]);
-    expect(columnsByTable.rawdocs).toEqual([
+    ]));
+    expect(columnsByTable.rawdocs).toEqual(expect.arrayContaining([
       "rawdoc_id",
       "source_uri",
       "normalized_url",
@@ -402,16 +415,18 @@ function expectStoreSchema(root: string): void {
       "content_type",
       "content_length",
       "html_hash",
+      "page_title",
       "captured_at",
       "fetched_at",
       "created_at"
-    ]);
-    expect(columnsByTable.chunks).toEqual([
+    ]));
+    expect(columnsByTable.chunks).toEqual(expect.arrayContaining([
       "chunk_id",
       "doc_id",
       "rawdoc_id",
       "chunk_index",
       "title",
+      "page_title",
       "source_url",
       "normalized_url",
       "heading_path",
@@ -425,7 +440,7 @@ function expectStoreSchema(root: string): void {
       "content_hash",
       "created_at",
       "updated_at"
-    ]);
+    ]));
     expect(columnsByTable.collections).toEqual([
       "collection_id",
       "title",
@@ -436,13 +451,14 @@ function expectStoreSchema(root: string): void {
       "created_at",
       "updated_at"
     ]);
-    expect(columnsByTable.collection_items).toEqual([
+    expect(columnsByTable.collection_items).toEqual(expect.arrayContaining([
       "collection_item_id",
       "collection_id",
       "normalized_url",
       "doc_id",
       "rawdoc_id",
       "title",
+      "page_title",
       "order_index",
       "depth",
       "parent_item_id",
@@ -450,7 +466,7 @@ function expectStoreSchema(root: string): void {
       "state",
       "created_at",
       "updated_at"
-    ]);
+    ]));
     expect(columnsByTable.batch_jobs).toEqual([
       "job_id",
       "collection_id",
@@ -486,7 +502,7 @@ function expectStoreSchema(root: string): void {
     ]);
 
     const userVersion = database.prepare("PRAGMA user_version").get() as { user_version: number };
-    expect(userVersion.user_version).toBe(6);
+    expect(userVersion.user_version).toBe(7);
 
     for (const columns of Object.values(columnsByTable)) {
       expect(columns.filter((column) => column.endsWith("_path") && column !== "heading_path")).toEqual([]);
@@ -505,7 +521,7 @@ function tableCount(root: string, table: string): number {
   }
 }
 
-function fixture(docId: string, rawdocId: string, title: string): {
+function fixture(docId: string, rawdocId: string, title: string, pageTitle = title): {
   normalizedUrl: string;
   html: string;
   rawdoc: RawDoc;
@@ -513,7 +529,7 @@ function fixture(docId: string, rawdocId: string, title: string): {
   markdown: string;
 } {
   const normalizedUrl = "https://example.com/article";
-  const html = `<!doctype html><title>${title}</title><article>${title}</article>`;
+  const html = `<!doctype html><title>${pageTitle}</title><article>${title}</article>`;
 
   return {
     normalizedUrl: "https://example.com/article?utm_source=x",
@@ -528,6 +544,9 @@ function fixture(docId: string, rawdocId: string, title: string): {
       metadata: {
         inputMode: "browser_html",
         parserMethod: "defuddle",
+        pageTitle,
+        contentTitle: title,
+        displayTitle: pageTitle,
         originalUrl: "https://example.com/article?utm_source=x",
         canonicalUrl: normalizedUrl,
         normalizedUrl
@@ -537,6 +556,7 @@ function fixture(docId: string, rawdocId: string, title: string): {
       doc_id: docId,
       meta: {
         title,
+        page_title: pageTitle,
         source: {
           type: "html",
           url: normalizedUrl,

@@ -6,6 +6,7 @@ export type ClipDeleteMode = "remove" | "purge";
 export interface PageSnapshot {
   pageUrl: string;
   canonicalUrl?: string;
+  pageTitle?: string;
   title?: string;
   html: string;
   text?: string;
@@ -61,6 +62,9 @@ export interface RawDoc {
     inputMode?: InputMode;
     normalizedUrl?: string;
     title?: string;
+    pageTitle?: string;
+    contentTitle?: string;
+    displayTitle?: string;
     parserMethod?: string;
     parserProfile?: string;
     parserWarnings?: string[];
@@ -76,6 +80,7 @@ export interface KnowledgeDocument {
   doc_id: string;
   meta: {
     title: string;
+    page_title?: string;
     source?: Record<string, unknown>;
     authors?: string[];
     published_at?: string | null;
@@ -104,6 +109,9 @@ export interface ClipListItem {
   captureUpdatedAt: string;
   parseUpdatedAt?: string;
   title?: string;
+  pageTitle?: string;
+  contentTitle?: string;
+  displayTitle?: string;
   docId?: string;
   rawdocId?: string;
 }
@@ -134,6 +142,9 @@ export interface ClipStatusResult {
   captureUpdatedAt?: string;
   parseUpdatedAt?: string;
   title?: string;
+  pageTitle?: string;
+  contentTitle?: string;
+  displayTitle?: string;
   docId?: string;
   rawdocId?: string;
 }
@@ -173,6 +184,18 @@ export interface BatchDiscoverItem {
   status: ClipState;
   docId?: string;
   rawdocId?: string;
+}
+
+export interface CollectionItem {
+  collectionItemId: string;
+  collectionId: string;
+  normalizedUrl: string;
+  docId?: string;
+  rawdocId?: string;
+  title?: string;
+  pageTitle?: string;
+  contentTitle?: string;
+  displayTitle?: string;
 }
 
 export interface BatchDiscoverResult {
