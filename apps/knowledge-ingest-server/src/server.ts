@@ -9,22 +9,42 @@ import {
   ClipSaveRequestSchema,
   normalizeUrlForKnowledge,
   RawDoc,
+  EpubImportResponse,
   StoreClearParsedRequestSchema,
   StoreClearRequestSchema
 } from "@uknowledge/knowledge-schema";
 import { loadConfig, ServerConfig } from "./config.js";
+import { parseEpub, type PandocRunner } from "./epub.js";
 import { ResolvedInput, resolveClipInput } from "./input.js";
 import { documentToMarkdown } from "./markdown.js";
 import { parsePage, type ParsedPage } from "./parser.js";
 import { KnowledgeStore } from "./store.js";
 
-export async function buildServer(config: ServerConfig = loadConfig()) {
+type RuntimeServerConfig = Omit<ServerConfig, "maxImportBytes"> & {
+  maxImportBytes?: number;
+  epubPandocRunner?: PandocRunner;
+};
+
+export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
+  const maxImportBytes = config.maxImportBytes ?? 100 * 1024 * 1024;
+  const effectiveConfig: ServerConfig = { ...config, maxImportBytes };
   const app = fastify({
     logger: true,
-    bodyLimit: config.maxHtmlBytes
+    bodyLimit: Math.max(config.maxHtmlBytes, maxImportBytes)
   });
   const store = new KnowledgeStore(config.storeRoot);
   await store.ensure();
+
+  app.addContentTypeParser([
+    "application/epub+zip",
+    "application/octet-stream"
+  ], { parseAs: "buffer", bodyLimit: maxImportBytes }, (_request, body, done) => {
+    done(null, body);
+  });
+
+  app.addContentTypeParser(/^multipart\/form-data/i, { parseAs: "buffer", bodyLimit: maxImportBytes }, (_request, body, done) => {
+    done(null, body);
+  });
 
   app.addHook("onClose", async () => {
     store.close();
@@ -77,7 +97,8 @@ export async function buildServer(config: ServerConfig = loadConfig()) {
     },
     limits: {
       fetchTimeoutMs: config.fetchTimeoutMs,
-      maxHtmlBytes: config.maxHtmlBytes
+      maxHtmlBytes: config.maxHtmlBytes,
+      maxImportBytes
     }
   }));
 
@@ -94,6 +115,31 @@ export async function buildServer(config: ServerConfig = loadConfig()) {
     return {
       clips: await store.list(query.limit ? Number(query.limit) : undefined)
     };
+  });
+
+  app.get("/api/items", async (request) => {
+    const query = request.query as { sourceType?: string; limit?: string };
+    return {
+      items: await store.listItems({
+        sourceType: query.sourceType,
+        limit: query.limit ? Number(query.limit) : undefined
+      })
+    };
+  });
+
+  app.get("/api/items/:itemId", async (request) => {
+    const params = request.params as { itemId: string };
+    return store.loadItemDetail(params.itemId);
+  });
+
+  app.get("/api/documents/:docId", async (request) => {
+    const params = request.params as { docId: string };
+    return store.loadDocument(params.docId);
+  });
+
+  app.get("/api/documents/:docId/markdown", async (request, reply) => {
+    const params = request.params as { docId: string };
+    await reply.type("text/markdown; charset=utf-8").send(await store.loadMarkdown(params.docId));
   });
 
   app.get("/api/collections", async (request) => {
@@ -184,9 +230,9 @@ export async function buildServer(config: ServerConfig = loadConfig()) {
     return store.deleteByUrl(query.url, query.mode === "purge" ? "purge" : "remove");
   });
 
-  app.post("/api/clip/preview", async (request) => {
+  app.post("/api/clip/preview", { bodyLimit: config.maxHtmlBytes }, async (request) => {
     const input = ClipInputSchema.parse(request.body);
-    const resolved = await resolveClipInput(input, config);
+    const resolved = await resolveClipInput(input, effectiveConfig);
     const parsed = await parsePage(resolved);
     const status = await store.status(resolved.normalizedUrl);
     return {
@@ -195,9 +241,9 @@ export async function buildServer(config: ServerConfig = loadConfig()) {
     };
   });
 
-  app.post("/api/clip/save", async (request) => {
+  app.post("/api/clip/save", { bodyLimit: config.maxHtmlBytes }, async (request) => {
     const input = ClipSaveRequestSchema.parse(request.body);
-    const resolved = await resolveClipInput(input, config);
+    const resolved = await resolveClipInput(input, effectiveConfig);
     const parsed = await parsePage(resolved, { selectedCandidateId: input.candidateId });
     const markdown = documentToMarkdown(parsed.document);
     const paths = await store.save({
@@ -236,6 +282,90 @@ export async function buildServer(config: ServerConfig = loadConfig()) {
       saved: true,
       paths
     };
+  });
+
+  app.post("/api/import/epub", async (request): Promise<EpubImportResponse> => {
+    const input = parseEpubImportRequest(request.headers["content-type"], request.body);
+    const parsed = await parseEpub(input.file, {
+      sourceUri: input.sourceUri,
+      titleHint: input.titleHint,
+      tags: input.tags,
+      pandocRunner: config.epubPandocRunner
+    });
+    try {
+      const documentWithAssets = await store.prepareDocumentAssets(parsed.document);
+      const markdown = documentToMarkdown(documentWithAssets);
+      const paths = await store.saveImportItem({
+        itemId: parsed.itemId,
+        identityHash: parsed.identityHash,
+        rawContent: input.file,
+        rawdoc: parsed.rawdoc,
+        document: documentWithAssets,
+        markdown,
+        contentExt: "epub"
+      });
+      const knowledgeItem = await store.loadItem(parsed.itemId);
+      return {
+        knowledgeItem,
+        rawdoc: parsed.rawdoc,
+        document: documentWithAssets,
+        markdown,
+        saved: true,
+        paths
+      };
+    } finally {
+      await parsed.cleanup();
+    }
+  });
+
+  app.post("/api/items/:itemId/reparse", async (request): Promise<EpubImportResponse> => {
+    const params = request.params as { itemId: string };
+    const capture = await store.loadRawContentForItem(params.itemId);
+    if (capture.rawdoc.source_type !== "epub") {
+      throw new Error("reparse currently supports epub items only");
+    }
+    const parsed = await parseEpub(capture.content, {
+      rawdocId: capture.rawdoc.rawdoc_id,
+      sourceUri: capture.rawdoc.source_uri,
+      pandocRunner: config.epubPandocRunner
+    });
+    try {
+      const documentWithAssets = await store.prepareDocumentAssets(parsed.document);
+      const markdown = documentToMarkdown(documentWithAssets);
+      const rawdoc = {
+        ...parsed.rawdoc,
+        metadata: {
+          ...parsed.rawdoc.metadata,
+          reparsedFromItemId: capture.item.itemId
+        }
+      };
+      const paths = await store.saveImportItem({
+        itemId: capture.item.itemId,
+        identityHash: capture.item.identityHash,
+        rawContent: capture.content,
+        rawdoc,
+        document: documentWithAssets,
+        markdown,
+        contentExt: capture.contentExt
+      });
+      const knowledgeItem = await store.loadItem(capture.item.itemId);
+      return {
+        knowledgeItem,
+        rawdoc,
+        document: documentWithAssets,
+        markdown,
+        saved: true,
+        paths
+      };
+    } finally {
+      await parsed.cleanup();
+    }
+  });
+
+  app.delete("/api/items/:itemId", async (request) => {
+    const params = request.params as { itemId: string };
+    const query = request.query as { mode?: "purge" | "remove" };
+    return store.deleteItem(params.itemId, query.mode === "purge" ? "purge" : "remove");
   });
 
   app.post("/api/batch/discover", async (request) => {
@@ -408,7 +538,7 @@ export async function buildServer(config: ServerConfig = loadConfig()) {
       }
 
       await store.updateBatchItem({ itemId: item.itemId, state: "fetching", incrementAttempt: true });
-      const resolved = await resolveClipInput({ inputMode: "server_fetch", url: item.url }, config);
+      const resolved = await resolveClipInput({ inputMode: "server_fetch", url: item.url }, effectiveConfig);
       await store.updateBatchItem({ itemId: item.itemId, state: "parsing", normalizedUrl: resolved.normalizedUrl });
       const parsed = await parsePage(resolved);
       const markdown = documentToMarkdown(parsed.document);
@@ -487,6 +617,108 @@ function previewPayload(parsed: ParsedPage) {
   };
 }
 
+function parseEpubImportRequest(contentType: string | undefined, body: unknown): {
+  file: Buffer;
+  sourceUri?: string;
+  titleHint?: string;
+  tags?: string[];
+} {
+  if (Buffer.isBuffer(body)) {
+    if (contentType?.toLowerCase().startsWith("multipart/form-data")) {
+      return parseMultipartEpub(contentType, body);
+    }
+    return { file: body };
+  }
+
+  if (body && typeof body === "object") {
+    const record = body as Record<string, unknown>;
+    const encoded = typeof record.fileBase64 === "string" ? record.fileBase64 : undefined;
+    if (!encoded) {
+      throw new Error("fileBase64 is required");
+    }
+    return {
+      file: Buffer.from(encoded, "base64"),
+      sourceUri: stringValue(record.sourceUri),
+      titleHint: stringValue(record.titleHint),
+      tags: stringArray(record.tags)
+    };
+  }
+
+  throw new Error("EPUB file is required");
+}
+
+function parseMultipartEpub(contentType: string, body: Buffer): {
+  file: Buffer;
+  sourceUri?: string;
+  titleHint?: string;
+  tags?: string[];
+} {
+  const boundaryMatch = /boundary=(?:"([^"]+)"|([^;]+))/i.exec(contentType);
+  const boundary = boundaryMatch?.[1] ?? boundaryMatch?.[2];
+  if (!boundary) {
+    throw new Error("multipart boundary is required");
+  }
+
+  const delimiter = `--${boundary}`;
+  const raw = body.toString("binary");
+  const result: {
+    file?: Buffer;
+    sourceUri?: string;
+    titleHint?: string;
+    tags?: string[];
+  } = {};
+
+  for (const part of raw.split(delimiter)) {
+    if (!part || part === "--\r\n" || part === "--") {
+      continue;
+    }
+    const trimmed = part.replace(/^\r\n/, "").replace(/\r\n--$/, "");
+    const separator = trimmed.indexOf("\r\n\r\n");
+    if (separator < 0) {
+      continue;
+    }
+    const headerText = trimmed.slice(0, separator);
+    const dataText = trimmed.slice(separator + 4).replace(/\r\n$/, "");
+    const name = /name="([^"]+)"/i.exec(headerText)?.[1];
+    if (!name) {
+      continue;
+    }
+    if (name === "file") {
+      result.file = Buffer.from(dataText, "binary");
+      continue;
+    }
+    const value = Buffer.from(dataText, "binary").toString("utf8").trim();
+    if (name === "sourceUri") {
+      result.sourceUri = value;
+    } else if (name === "titleHint") {
+      result.titleHint = value;
+    } else if (name === "tags") {
+      result.tags = value ? value.split(",").map((item) => item.trim()).filter(Boolean) : [];
+    }
+  }
+
+  if (!result.file) {
+    throw new Error("multipart field file is required");
+  }
+  return {
+    file: result.file,
+    sourceUri: result.sourceUri,
+    titleHint: result.titleHint,
+    tags: result.tags
+  };
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function stringArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  return value.map(String).map((item) => item.trim()).filter(Boolean);
+}
+
 function isAllowedCorsOrigin(origin: string | undefined): boolean {
   if (!origin) {
     return true;
@@ -515,6 +747,15 @@ function isClientInputError(message: string): boolean {
     "Timed out fetching",
     "Path escapes knowledge store",
     "Unsafe relative path",
+    "unsupported_file_type",
+    "pandoc_missing",
+    "parse_failed",
+    "EPUB file is required",
+    "fileBase64 is required",
+    "multipart",
+    "Knowledge item does not exist",
+    "Document does not exist",
+    "reparse currently supports epub items only",
     "store clear confirmation is required",
     "store parsed-results clear confirmation is required"
   ].some((needle) => message.includes(needle));

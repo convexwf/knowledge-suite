@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
-import { access, mkdir, readFile, readdir, rm, stat, unlink, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { access, copyFile, mkdir, readFile, readdir, rm, stat, unlink, writeFile } from "node:fs/promises";
+import { dirname, extname, isAbsolute, join } from "node:path";
 import {
   ClipDeleteMode,
   ClipDeleteResponse,
@@ -15,6 +15,9 @@ import {
   CollectionItem,
   CollectionState,
   CollectionSummary,
+  KnowledgeItem,
+  KnowledgeItemDeleteMode,
+  KnowledgeItemDeleteResponse,
   KnowledgeDocument,
   makeId,
   normalizeUrlForKnowledge,
@@ -39,6 +42,23 @@ interface ClipRow {
   capture_saved_at: string;
   capture_updated_at: string;
   parse_updated_at: string | null;
+}
+
+interface KnowledgeItemRow {
+  item_id: string;
+  source_type: "url" | "singlefile_html" | "pdf" | "epub";
+  identity_hash: string;
+  active_rawdoc_id: string;
+  active_doc_id: string | null;
+  title: string | null;
+  subtitle: string | null;
+  creators_json: string;
+  language: string | null;
+  tags_json: string;
+  state: "captured" | "parsed";
+  created_at: string;
+  updated_at: string;
+  parsed_at: string | null;
 }
 
 interface DocumentRow {
@@ -216,7 +236,14 @@ interface SavePaths {
   markdownPath: string;
 }
 
-const STORE_SCHEMA_VERSION = 7;
+interface ImportSavePaths {
+  rawContentPath: string;
+  rawdocPath: string;
+  documentPath: string;
+  markdownPath: string;
+}
+
+const STORE_SCHEMA_VERSION = 8;
 
 interface SearchOptions {
   limit?: number;
@@ -817,6 +844,14 @@ export class KnowledgeStore {
     try {
       this.database!.exec("BEGIN");
       this.database!.prepare(`
+        UPDATE knowledge_items
+        SET active_doc_id = NULL,
+            state = 'captured',
+            updated_at = ?,
+            parsed_at = NULL
+        WHERE active_doc_id IS NOT NULL
+      `).run(now);
+      this.database!.prepare(`
         UPDATE clips
         SET active_doc_id = NULL,
             content_title = NULL,
@@ -901,6 +936,7 @@ export class KnowledgeStore {
 
     const normalized = normalizeUrlForKnowledge(params.normalizedUrl);
     const hash = urlHash(normalized);
+    const itemId = `url:sha256:${hash}`;
     const previous = this.findClip(hash);
     const replacedDocId = previous?.active_doc_id && previous.active_doc_id !== params.document.doc_id
       ? previous.active_doc_id
@@ -936,23 +972,29 @@ export class KnowledgeStore {
         INSERT INTO rawdocs (
           rawdoc_id,
           source_uri,
+          source_type,
           normalized_url,
           input_mode,
           content_type,
           content_length,
+          content_hash,
+          content_ext,
           html_hash,
           page_title,
           captured_at,
           fetched_at,
           created_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(rawdoc_id) DO UPDATE SET
           source_uri = excluded.source_uri,
+          source_type = excluded.source_type,
           normalized_url = excluded.normalized_url,
           input_mode = excluded.input_mode,
           content_type = excluded.content_type,
           content_length = excluded.content_length,
+          content_hash = excluded.content_hash,
+          content_ext = excluded.content_ext,
           html_hash = excluded.html_hash,
           page_title = excluded.page_title,
           captured_at = excluded.captured_at,
@@ -960,10 +1002,13 @@ export class KnowledgeStore {
       `).run(
         params.rawdoc.rawdoc_id,
         params.rawdoc.source_uri,
+        params.rawdoc.source_type,
         normalized,
         typeof rawMetadata.inputMode === "string" ? rawMetadata.inputMode : "browser_html",
         params.rawdoc.content_type ?? "text/html",
         params.rawdoc.content_length ?? Buffer.byteLength(params.html),
+        sha256(params.html),
+        "html",
         sha256(params.html),
         pageTitle,
         typeof rawMetadata.capturedAt === "string" ? rawMetadata.capturedAt : null,
@@ -1024,10 +1069,24 @@ export class KnowledgeStore {
 
       this.replaceChunks(params.document, params.rawdoc, normalized, parserInfo, now);
 
+      this.upsertKnowledgeItemRow({
+        itemId,
+        sourceType: params.rawdoc.source_type,
+        identityHash: hash,
+        rawdocId: params.rawdoc.rawdoc_id,
+        docId: params.document.doc_id,
+        title: pageTitle,
+        creators: params.document.meta.authors ?? [],
+        language: params.document.meta.language,
+        tags: params.document.meta.tags ?? [],
+        now
+      });
+
       this.database!.prepare(`
         INSERT INTO clips (
           url_hash,
           normalized_url,
+          item_id,
           original_url,
           canonical_url,
           rawdoc_id,
@@ -1038,9 +1097,10 @@ export class KnowledgeStore {
           capture_updated_at,
           parse_updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(url_hash) DO UPDATE SET
           normalized_url = excluded.normalized_url,
+          item_id = excluded.item_id,
           original_url = excluded.original_url,
           canonical_url = excluded.canonical_url,
           rawdoc_id = excluded.rawdoc_id,
@@ -1052,6 +1112,7 @@ export class KnowledgeStore {
       `).run(
         hash,
         normalized,
+        itemId,
         originalUrl,
         canonicalUrl,
         params.rawdoc.rawdoc_id,
@@ -1103,6 +1164,285 @@ export class KnowledgeStore {
     };
   }
 
+  async prepareDocumentAssets(document: KnowledgeDocument): Promise<KnowledgeDocument> {
+    await this.ensure();
+    const next: KnowledgeDocument = JSON.parse(JSON.stringify(document)) as KnowledgeDocument;
+    for (const section of next.sections) {
+      for (const asset of section.assets ?? []) {
+        if (!asset.path || !isAbsolute(asset.path)) {
+          continue;
+        }
+        const bytes = await readFile(asset.path).catch(() => undefined);
+        if (!bytes) {
+          continue;
+        }
+        const extension = sanitizeExtension(extname(asset.path)) || "bin";
+        const assetId = `${sha256Buffer(bytes).slice(0, 16)}.${extension}`;
+        const relativePath = `assets/${assetId}`;
+        const target = resolveInsideRoot(this.root, relativePath);
+        await mkdir(dirname(target), { recursive: true });
+        await copyFile(asset.path, target).catch(async (error: NodeJS.ErrnoException) => {
+          if (error.code !== "EEXIST") {
+            throw error;
+          }
+        });
+        asset.asset_id = assetId;
+        asset.path = relativePath;
+      }
+    }
+    return next;
+  }
+
+  async saveImportItem(params: {
+    itemId: string;
+    identityHash: string;
+    rawContent: Buffer;
+    rawdoc: RawDoc;
+    document: KnowledgeDocument;
+    markdown: string;
+    contentExt: string;
+  }): Promise<ImportSavePaths> {
+    await this.ensure();
+
+    const previous = this.findKnowledgeItem(params.itemId);
+    const replacedDocId = previous?.active_doc_id && previous.active_doc_id !== params.document.doc_id
+      ? previous.active_doc_id
+      : undefined;
+    const replacedRawdocId = previous && previous.active_rawdoc_id !== params.rawdoc.rawdoc_id
+      ? previous.active_rawdoc_id
+      : undefined;
+    const paths = importPathsFor(params.document.doc_id, params.rawdoc.rawdoc_id, params.contentExt);
+    const parserInfo = parserInfoFor(params.document, params.rawdoc);
+    const now = new Date().toISOString();
+    const contentHash = sha256(params.markdown);
+    const rawContentHash = sha256Buffer(params.rawContent);
+    const authorsJson = JSON.stringify(params.document.meta.authors ?? []);
+    const rawMetadata = params.rawdoc.metadata ?? {};
+
+    await Promise.all([
+      this.writeBuffer(paths.rawContentPath, params.rawContent),
+      this.writeJson(paths.rawdocPath, params.rawdoc),
+      this.writeJson(paths.documentPath, params.document),
+      this.writeText(paths.markdownPath, params.markdown)
+    ]);
+
+    try {
+      this.database!.exec("BEGIN");
+      this.database!.prepare(`
+        INSERT INTO rawdocs (
+          rawdoc_id,
+          source_uri,
+          source_type,
+          normalized_url,
+          input_mode,
+          content_type,
+          content_length,
+          content_hash,
+          content_ext,
+          html_hash,
+          page_title,
+          captured_at,
+          fetched_at,
+          created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(rawdoc_id) DO UPDATE SET
+          source_uri = excluded.source_uri,
+          source_type = excluded.source_type,
+          normalized_url = excluded.normalized_url,
+          input_mode = excluded.input_mode,
+          content_type = excluded.content_type,
+          content_length = excluded.content_length,
+          content_hash = excluded.content_hash,
+          content_ext = excluded.content_ext,
+          html_hash = excluded.html_hash,
+          page_title = excluded.page_title,
+          captured_at = excluded.captured_at,
+          fetched_at = excluded.fetched_at
+      `).run(
+        params.rawdoc.rawdoc_id,
+        params.rawdoc.source_uri,
+        params.rawdoc.source_type,
+        params.itemId,
+        "file_import",
+        params.rawdoc.content_type ?? "application/octet-stream",
+        params.rawdoc.content_length ?? params.rawContent.byteLength,
+        rawContentHash,
+        params.contentExt,
+        rawContentHash,
+        pageTitleFor(params.document, params.rawdoc),
+        typeof rawMetadata.capturedAt === "string" ? rawMetadata.capturedAt : null,
+        params.rawdoc.fetch_time,
+        previous && previous.active_rawdoc_id === params.rawdoc.rawdoc_id ? previous.created_at : now
+      );
+
+      this.database!.prepare(`
+        INSERT INTO documents (
+          doc_id,
+          rawdoc_id,
+          title,
+          page_title,
+          source_url,
+          normalized_url,
+          language,
+          authors_json,
+          published_at,
+          parser_version,
+          parser_method,
+          parser_profile,
+          content_hash,
+          created_at,
+          updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(doc_id) DO UPDATE SET
+          rawdoc_id = excluded.rawdoc_id,
+          title = excluded.title,
+          page_title = excluded.page_title,
+          source_url = excluded.source_url,
+          normalized_url = excluded.normalized_url,
+          language = excluded.language,
+          authors_json = excluded.authors_json,
+          published_at = excluded.published_at,
+          parser_version = excluded.parser_version,
+          parser_method = excluded.parser_method,
+          parser_profile = excluded.parser_profile,
+          content_hash = excluded.content_hash,
+          updated_at = excluded.updated_at
+      `).run(
+        params.document.doc_id,
+        params.rawdoc.rawdoc_id,
+        params.document.meta.title,
+        pageTitleFor(params.document, params.rawdoc),
+        params.document.meta.source.url ?? params.rawdoc.source_uri,
+        params.itemId,
+        params.document.meta.language ?? null,
+        authorsJson,
+        params.document.meta.published_at ?? null,
+        parserInfo.version,
+        parserInfo.method,
+        parserInfo.profile,
+        contentHash,
+        now,
+        now
+      );
+
+      this.replaceChunks(params.document, params.rawdoc, params.itemId, parserInfo, now);
+      this.upsertKnowledgeItemRow({
+        itemId: params.itemId,
+        sourceType: params.rawdoc.source_type,
+        identityHash: params.identityHash,
+        rawdocId: params.rawdoc.rawdoc_id,
+        docId: params.document.doc_id,
+        title: params.document.meta.title,
+        creators: params.document.meta.authors ?? [],
+        language: params.document.meta.language,
+        tags: params.document.meta.tags ?? [],
+        now
+      });
+
+      if (replacedDocId) {
+        this.deleteChunksByDocId(replacedDocId);
+        this.database!.prepare("DELETE FROM documents WHERE doc_id = ?").run(replacedDocId);
+      }
+      if (replacedRawdocId) {
+        this.database!.prepare("DELETE FROM rawdocs WHERE rawdoc_id = ?").run(replacedRawdocId);
+      }
+      this.database!.exec("COMMIT");
+    } catch (error) {
+      this.database!.exec("ROLLBACK");
+      throw error;
+    }
+
+    if (replacedDocId) {
+      await this.deleteDerivedArtifacts(replacedDocId);
+    }
+    if (replacedRawdocId) {
+      await this.deleteCaptureArtifacts(replacedRawdocId, params.contentExt);
+    }
+
+    return paths;
+  }
+
+  async listItems(params: { sourceType?: string; limit?: number } = {}): Promise<KnowledgeItem[]> {
+    await this.ensure();
+    const boundedLimit = Math.min(Math.max(Math.trunc(params.limit ?? 50) || 50, 1), 200);
+    const rows = params.sourceType
+      ? this.database!.prepare(`
+          SELECT item_id, source_type, identity_hash, active_rawdoc_id, active_doc_id, title, subtitle,
+            creators_json, language, tags_json, state, created_at, updated_at, parsed_at
+          FROM knowledge_items
+          WHERE source_type = ?
+          ORDER BY updated_at DESC
+          LIMIT ?
+        `).all(params.sourceType, boundedLimit)
+      : this.database!.prepare(`
+          SELECT item_id, source_type, identity_hash, active_rawdoc_id, active_doc_id, title, subtitle,
+            creators_json, language, tags_json, state, created_at, updated_at, parsed_at
+          FROM knowledge_items
+          ORDER BY updated_at DESC
+          LIMIT ?
+        `).all(boundedLimit);
+    return (rows as unknown as KnowledgeItemRow[]).map(toKnowledgeItem);
+  }
+
+  async loadItem(itemId: string): Promise<KnowledgeItem> {
+    await this.ensure();
+    const row = this.findKnowledgeItem(itemId);
+    if (!row) {
+      throw new Error("Knowledge item does not exist");
+    }
+    return toKnowledgeItem(row);
+  }
+
+  async loadItemDetail(itemId: string): Promise<{ item: KnowledgeItem; rawdoc?: RawDoc; document?: KnowledgeDocument }> {
+    const item = await this.loadItem(itemId);
+    const rawdoc = await this.loadRawdoc(item.activeRawdocId).catch(() => undefined);
+    const document = item.activeDocId ? await this.loadDocument(item.activeDocId).catch(() => undefined) : undefined;
+    return { item, rawdoc, document };
+  }
+
+  async loadDocument(docId: string): Promise<KnowledgeDocument> {
+    await this.ensure();
+    if (!this.findDocument(docId)) {
+      throw new Error("Document does not exist");
+    }
+    return JSON.parse(await this.readText(documentJsonPath(docId))) as KnowledgeDocument;
+  }
+
+  async loadMarkdown(docId: string): Promise<string> {
+    await this.ensure();
+    if (!this.findDocument(docId)) {
+      throw new Error("Document does not exist");
+    }
+    return this.readText(markdownPath(docId));
+  }
+
+  async loadRawContentForItem(itemId: string): Promise<{ item: KnowledgeItem; rawdoc: RawDoc; content: Buffer; contentExt: string }> {
+    const item = await this.loadItem(itemId);
+    const rawdoc = await this.loadRawdoc(item.activeRawdocId);
+    const contentExt = this.rawdocContentExt(item.activeRawdocId);
+    const content = await this.readBuffer(rawContentPath(item.activeRawdocId, contentExt));
+    return { item, rawdoc, content, contentExt };
+  }
+
+  async deleteItem(itemId: string, mode: KnowledgeItemDeleteMode): Promise<KnowledgeItemDeleteResponse> {
+    await this.ensure();
+    const row = this.findKnowledgeItem(itemId);
+    if (!row) {
+      return {
+        itemId,
+        deleted: false,
+        mode,
+        previousState: "captured",
+        currentState: "empty",
+        deletedFiles: []
+      };
+    }
+
+    return mode === "remove" ? this.removeKnowledgeItem(row) : this.purgeKnowledgeItem(row);
+  }
+
   private ensureDatabase(): void {
     if (this.database) {
       return;
@@ -1110,9 +1450,27 @@ export class KnowledgeStore {
 
     const database = new DatabaseSync(this.databasePath);
     database.exec(`
+      CREATE TABLE IF NOT EXISTS knowledge_items (
+        item_id TEXT PRIMARY KEY,
+        source_type TEXT NOT NULL,
+        identity_hash TEXT NOT NULL,
+        active_rawdoc_id TEXT NOT NULL,
+        active_doc_id TEXT,
+        title TEXT,
+        subtitle TEXT,
+        creators_json TEXT NOT NULL DEFAULT '[]',
+        language TEXT,
+        tags_json TEXT NOT NULL DEFAULT '[]',
+        state TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        parsed_at TEXT
+      );
+
       CREATE TABLE IF NOT EXISTS clips (
         url_hash TEXT PRIMARY KEY,
         normalized_url TEXT NOT NULL UNIQUE,
+        item_id TEXT,
         original_url TEXT,
         canonical_url TEXT,
         rawdoc_id TEXT NOT NULL,
@@ -1145,15 +1503,29 @@ export class KnowledgeStore {
       CREATE TABLE IF NOT EXISTS rawdocs (
         rawdoc_id TEXT PRIMARY KEY,
         source_uri TEXT NOT NULL,
+        source_type TEXT NOT NULL DEFAULT 'url',
         normalized_url TEXT,
         input_mode TEXT NOT NULL,
         content_type TEXT,
         content_length INTEGER,
+        content_hash TEXT,
+        content_ext TEXT NOT NULL DEFAULT 'html',
         html_hash TEXT,
         page_title TEXT,
         captured_at TEXT,
         fetched_at TEXT,
         created_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS epub_metadata (
+        item_id TEXT PRIMARY KEY,
+        isbn TEXT,
+        publisher TEXT,
+        published_at TEXT,
+        identifiers_json TEXT,
+        cover_asset_id TEXT,
+        chapter_count INTEGER,
+        metadata_json TEXT
       );
 
       CREATE TABLE IF NOT EXISTS chunks (
@@ -1257,13 +1629,19 @@ export class KnowledgeStore {
 
   private ensureIndexes(): void {
     this.database!.exec(`
+      CREATE INDEX IF NOT EXISTS idx_knowledge_items_source_type ON knowledge_items(source_type);
+      CREATE INDEX IF NOT EXISTS idx_knowledge_items_active_doc_id ON knowledge_items(active_doc_id);
+      CREATE INDEX IF NOT EXISTS idx_knowledge_items_active_rawdoc_id ON knowledge_items(active_rawdoc_id);
+      CREATE INDEX IF NOT EXISTS idx_knowledge_items_identity_hash ON knowledge_items(identity_hash);
       CREATE INDEX IF NOT EXISTS idx_clips_rawdoc_id ON clips(rawdoc_id);
+      CREATE INDEX IF NOT EXISTS idx_clips_item_id ON clips(item_id);
       CREATE INDEX IF NOT EXISTS idx_clips_active_doc_id ON clips(active_doc_id);
       CREATE INDEX IF NOT EXISTS idx_documents_rawdoc_id ON documents(rawdoc_id);
       CREATE INDEX IF NOT EXISTS idx_documents_normalized_url ON documents(normalized_url);
       CREATE INDEX IF NOT EXISTS idx_documents_content_hash ON documents(content_hash);
       CREATE INDEX IF NOT EXISTS idx_rawdocs_normalized_url ON rawdocs(normalized_url);
       CREATE INDEX IF NOT EXISTS idx_rawdocs_html_hash ON rawdocs(html_hash);
+      CREATE INDEX IF NOT EXISTS idx_rawdocs_content_hash ON rawdocs(content_hash);
       CREATE INDEX IF NOT EXISTS idx_chunks_doc_id ON chunks(doc_id);
       CREATE INDEX IF NOT EXISTS idx_chunks_rawdoc_id ON chunks(rawdoc_id);
       CREATE INDEX IF NOT EXISTS idx_chunks_normalized_url ON chunks(normalized_url);
@@ -1287,7 +1665,9 @@ export class KnowledgeStore {
     const hasLegacyV2 = clipsColumns.some((column) => column.name === "doc_id");
     if (!hasLegacyV2) {
       if ((userVersion?.user_version ?? 0) < STORE_SCHEMA_VERSION) {
+        this.ensureKnowledgeItemTables();
         this.ensureTitleColumns();
+        this.ensureRawContentColumns();
         this.rebuildChunksFtsIndex();
       }
       this.database!.exec(`PRAGMA user_version = ${STORE_SCHEMA_VERSION}`);
@@ -1341,7 +1721,9 @@ export class KnowledgeStore {
         FROM clips_old
       `);
       this.database!.exec("DROP TABLE clips_old");
+      this.ensureKnowledgeItemTables();
       this.ensureTitleColumns();
+      this.ensureRawContentColumns();
       this.rebuildChunksFtsIndex();
       this.database!.exec(`PRAGMA user_version = ${STORE_SCHEMA_VERSION}`);
       this.database!.exec("COMMIT");
@@ -1352,6 +1734,7 @@ export class KnowledgeStore {
   }
 
   private ensureTitleColumns(): void {
+    this.addColumnIfMissing("clips", "item_id", "TEXT");
     this.addColumnIfMissing("clips", "content_title", "TEXT");
     this.addColumnIfMissing("documents", "page_title", "TEXT");
     this.addColumnIfMissing("rawdocs", "page_title", "TEXT");
@@ -1362,6 +1745,50 @@ export class KnowledgeStore {
       UPDATE documents SET page_title = COALESCE(page_title, title);
       UPDATE chunks SET page_title = COALESCE(page_title, title);
       UPDATE collection_items SET page_title = COALESCE(page_title, title);
+    `);
+  }
+
+  private ensureKnowledgeItemTables(): void {
+    this.database!.exec(`
+      CREATE TABLE IF NOT EXISTS knowledge_items (
+        item_id TEXT PRIMARY KEY,
+        source_type TEXT NOT NULL,
+        identity_hash TEXT NOT NULL,
+        active_rawdoc_id TEXT NOT NULL,
+        active_doc_id TEXT,
+        title TEXT,
+        subtitle TEXT,
+        creators_json TEXT NOT NULL DEFAULT '[]',
+        language TEXT,
+        tags_json TEXT NOT NULL DEFAULT '[]',
+        state TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        parsed_at TEXT
+      );
+
+      CREATE TABLE IF NOT EXISTS epub_metadata (
+        item_id TEXT PRIMARY KEY,
+        isbn TEXT,
+        publisher TEXT,
+        published_at TEXT,
+        identifiers_json TEXT,
+        cover_asset_id TEXT,
+        chapter_count INTEGER,
+        metadata_json TEXT
+      );
+    `);
+  }
+
+  private ensureRawContentColumns(): void {
+    this.addColumnIfMissing("rawdocs", "source_type", "TEXT NOT NULL DEFAULT 'url'");
+    this.addColumnIfMissing("rawdocs", "content_hash", "TEXT");
+    this.addColumnIfMissing("rawdocs", "content_ext", "TEXT NOT NULL DEFAULT 'html'");
+    this.database!.exec(`
+      UPDATE rawdocs
+      SET source_type = COALESCE(source_type, 'url'),
+          content_ext = COALESCE(content_ext, 'html'),
+          content_hash = COALESCE(content_hash, html_hash);
     `);
   }
 
@@ -1436,12 +1863,174 @@ export class KnowledgeStore {
     `).get(input) as ClipRow | undefined;
   }
 
+  private findKnowledgeItem(itemId: string): KnowledgeItemRow | undefined {
+    return this.database!.prepare(`
+      SELECT item_id, source_type, identity_hash, active_rawdoc_id, active_doc_id, title, subtitle,
+        creators_json, language, tags_json, state, created_at, updated_at, parsed_at
+      FROM knowledge_items
+      WHERE item_id = ?
+    `).get(itemId) as KnowledgeItemRow | undefined;
+  }
+
   private findDocument(docId: string): DocumentRow | undefined {
     return this.database!.prepare(`
       SELECT doc_id, rawdoc_id, title, page_title
       FROM documents
       WHERE doc_id = ?
     `).get(docId) as DocumentRow | undefined;
+  }
+
+  private async loadRawdoc(rawdocId: string): Promise<RawDoc> {
+    return JSON.parse(await this.readText(rawdocMetaPath(rawdocId))) as RawDoc;
+  }
+
+  private rawdocContentExt(rawdocId: string): string {
+    const row = this.database!.prepare(`
+      SELECT content_ext
+      FROM rawdocs
+      WHERE rawdoc_id = ?
+    `).get(rawdocId) as { content_ext: string | null } | undefined;
+    return sanitizeExtension(row?.content_ext ?? "") || "html";
+  }
+
+  private upsertKnowledgeItemRow(params: {
+    itemId: string;
+    sourceType: RawDoc["source_type"];
+    identityHash: string;
+    rawdocId: string;
+    docId?: string;
+    title?: string;
+    subtitle?: string;
+    creators?: string[];
+    language?: string;
+    tags?: string[];
+    now: string;
+  }): void {
+    const previous = this.findKnowledgeItem(params.itemId);
+    this.database!.prepare(`
+      INSERT INTO knowledge_items (
+        item_id,
+        source_type,
+        identity_hash,
+        active_rawdoc_id,
+        active_doc_id,
+        title,
+        subtitle,
+        creators_json,
+        language,
+        tags_json,
+        state,
+        created_at,
+        updated_at,
+        parsed_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(item_id) DO UPDATE SET
+        source_type = excluded.source_type,
+        identity_hash = excluded.identity_hash,
+        active_rawdoc_id = excluded.active_rawdoc_id,
+        active_doc_id = excluded.active_doc_id,
+        title = excluded.title,
+        subtitle = excluded.subtitle,
+        creators_json = excluded.creators_json,
+        language = excluded.language,
+        tags_json = excluded.tags_json,
+        state = excluded.state,
+        updated_at = excluded.updated_at,
+        parsed_at = excluded.parsed_at
+    `).run(
+      params.itemId,
+      params.sourceType,
+      params.identityHash,
+      params.rawdocId,
+      params.docId ?? null,
+      params.title ?? null,
+      params.subtitle ?? null,
+      JSON.stringify(params.creators ?? []),
+      params.language ?? null,
+      JSON.stringify(params.tags ?? []),
+      params.docId ? "parsed" : "captured",
+      previous?.created_at ?? params.now,
+      params.now,
+      params.docId ? params.now : null
+    );
+  }
+
+  private async removeKnowledgeItem(row: KnowledgeItemRow): Promise<KnowledgeItemDeleteResponse> {
+    if (!row.active_doc_id) {
+      return {
+        itemId: row.item_id,
+        deleted: false,
+        mode: "remove",
+        previousState: "captured",
+        currentState: "captured",
+        deletedFiles: []
+      };
+    }
+
+    const now = new Date().toISOString();
+    const deletedFiles = await this.deleteDerivedArtifacts(row.active_doc_id);
+    try {
+      this.database!.exec("BEGIN");
+      this.deleteChunksByDocId(row.active_doc_id);
+      this.database!.prepare("DELETE FROM documents WHERE doc_id = ?").run(row.active_doc_id);
+      this.database!.prepare(`
+        UPDATE knowledge_items
+        SET active_doc_id = NULL,
+            state = 'captured',
+            updated_at = ?,
+            parsed_at = NULL
+        WHERE item_id = ?
+      `).run(now, row.item_id);
+      this.database!.exec("COMMIT");
+    } catch (error) {
+      this.database!.exec("ROLLBACK");
+      throw error;
+    }
+
+    return {
+      itemId: row.item_id,
+      deleted: true,
+      mode: "remove",
+      previousState: "parsed",
+      currentState: "captured",
+      deletedFiles,
+      removedDocId: row.active_doc_id
+    };
+  }
+
+  private async purgeKnowledgeItem(row: KnowledgeItemRow): Promise<KnowledgeItemDeleteResponse> {
+    const deletedFiles: string[] = [];
+    if (row.active_doc_id) {
+      deletedFiles.push(...await this.deleteDerivedArtifacts(row.active_doc_id));
+    }
+    deletedFiles.push(...await this.deleteCaptureArtifacts(row.active_rawdoc_id));
+
+    try {
+      this.database!.exec("BEGIN");
+      this.database!.prepare("DELETE FROM knowledge_items WHERE item_id = ?").run(row.item_id);
+      this.database!.prepare("DELETE FROM epub_metadata WHERE item_id = ?").run(row.item_id);
+      if (row.active_doc_id) {
+        this.deleteChunksByDocId(row.active_doc_id);
+        this.database!.prepare("DELETE FROM documents WHERE doc_id = ?").run(row.active_doc_id);
+      }
+      this.database!.prepare("DELETE FROM rawdocs WHERE rawdoc_id = ?").run(row.active_rawdoc_id);
+      this.database!.exec("COMMIT");
+    } catch (error) {
+      this.database!.exec("ROLLBACK");
+      throw error;
+    }
+
+    return {
+      itemId: row.item_id,
+      deleted: true,
+      mode: "purge",
+      previousState: row.active_doc_id ? "parsed" : "captured",
+      currentState: "empty",
+      deletedFiles,
+      removedDocId: row.active_doc_id ?? undefined,
+      removedRawdocId: row.active_rawdoc_id
+    };
   }
 
   private findCollection(collectionId: string): CollectionRow | undefined {
@@ -1648,6 +2237,11 @@ export class KnowledgeStore {
         this.database!.prepare("DELETE FROM documents WHERE doc_id = ?").run(row.active_doc_id);
       }
       this.database!.prepare("DELETE FROM rawdocs WHERE rawdoc_id = ?").run(row.rawdoc_id);
+      this.database!.prepare(`
+        DELETE FROM knowledge_items
+        WHERE active_rawdoc_id = ?
+          AND source_type IN ('url', 'singlefile_html')
+      `).run(row.rawdoc_id);
       this.database!.exec("COMMIT");
     } catch (error) {
       this.database!.exec("ROLLBACK");
@@ -1685,10 +2279,10 @@ export class KnowledgeStore {
     return deletedFiles;
   }
 
-  private async deleteCaptureArtifacts(rawdocId: string): Promise<string[]> {
+  private async deleteCaptureArtifacts(rawdocId: string, contentExt?: string): Promise<string[]> {
     const deletedFiles: string[] = [];
     const relativePaths = [
-      rawHtmlPath(rawdocId),
+      rawContentPath(rawdocId, contentExt ?? this.rawdocContentExt(rawdocId)),
       rawdocMetaPath(rawdocId)
     ];
     for (const relativePath of relativePaths) {
@@ -1804,9 +2398,20 @@ export class KnowledgeStore {
     await writeFile(path, content, "utf8");
   }
 
+  private async writeBuffer(relativePath: string, content: Buffer): Promise<void> {
+    const path = resolveInsideRoot(this.root, relativePath);
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, content);
+  }
+
   private async readText(relativePath: string): Promise<string> {
     const path = resolveInsideRoot(this.root, relativePath);
     return readFile(path, "utf8");
+  }
+
+  private async readBuffer(relativePath: string): Promise<Buffer> {
+    const path = resolveInsideRoot(this.root, relativePath);
+    return readFile(path);
   }
 
   private async writeJson(relativePath: string, content: unknown): Promise<void> {
@@ -1826,7 +2431,9 @@ export class KnowledgeStore {
       countFiles(join(this.root, "assets"))
     ]);
     const tables = {
+      knowledgeItems: this.countRows("knowledge_items"),
       clips: this.countRows("clips"),
+      epubMetadata: this.countRows("epub_metadata"),
       rawdocs: this.countRows("rawdocs"),
       documents: this.countRows("documents"),
       chunks: this.countRows("chunks"),
@@ -1837,6 +2444,7 @@ export class KnowledgeStore {
     };
     const rows = Object.values(tables).reduce((sum, count) => sum + count, 0);
     const totalContentFiles = rawdocFiles + documentFiles + markdownFiles + assetFiles;
+    const parsedItems = this.countRowsWhere("knowledge_items", "active_doc_id IS NOT NULL");
     const parsedClips = this.countRowsWhere("clips", "active_doc_id IS NOT NULL");
     const collectionItemRefs = this.countRowsWhere("collection_items", "doc_id IS NOT NULL");
     const batchItemRefs = this.countRowsWhere("batch_items", "doc_id IS NOT NULL");
@@ -1862,6 +2470,7 @@ export class KnowledgeStore {
         contentFiles: totalContentFiles
       },
       parsedResults: {
+        parsedItems,
         parsedClips,
         documentRows: tables.documents,
         chunkRows: tables.chunks,
@@ -1916,7 +2525,16 @@ async function fileSize(path: string): Promise<number> {
 
 function pathsFor(docId: string, rawdocId: string): SavePaths {
   return {
-    rawHtmlPath: rawHtmlPath(rawdocId),
+    rawHtmlPath: rawContentPath(rawdocId, "html"),
+    rawdocPath: rawdocMetaPath(rawdocId),
+    documentPath: documentJsonPath(docId),
+    markdownPath: markdownPath(docId)
+  };
+}
+
+function importPathsFor(docId: string, rawdocId: string, contentExt: string): ImportSavePaths {
+  return {
+    rawContentPath: rawContentPath(rawdocId, contentExt),
     rawdocPath: rawdocMetaPath(rawdocId),
     documentPath: documentJsonPath(docId),
     markdownPath: markdownPath(docId)
@@ -1925,7 +2543,7 @@ function pathsFor(docId: string, rawdocId: string): SavePaths {
 
 function pathsForActiveCapture(row: Pick<ClipRow, "rawdoc_id">): Pick<SavePaths, "rawHtmlPath" | "rawdocPath"> {
   return {
-    rawHtmlPath: rawHtmlPath(row.rawdoc_id),
+    rawHtmlPath: rawContentPath(row.rawdoc_id, "html"),
     rawdocPath: rawdocMetaPath(row.rawdoc_id)
   };
 }
@@ -1960,6 +2578,25 @@ function toCollectionItem(row: CollectionItemRow): CollectionItem {
     state: row.state,
     createdAt: row.created_at,
     updatedAt: row.updated_at
+  };
+}
+
+function toKnowledgeItem(row: KnowledgeItemRow): KnowledgeItem {
+  return {
+    itemId: row.item_id,
+    sourceType: row.source_type,
+    identityHash: row.identity_hash,
+    activeRawdocId: row.active_rawdoc_id,
+    activeDocId: row.active_doc_id ?? undefined,
+    title: row.title ?? undefined,
+    subtitle: row.subtitle ?? undefined,
+    creators: safeJsonArray(row.creators_json),
+    language: row.language ?? undefined,
+    tags: safeJsonArray(row.tags_json),
+    state: row.state,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    parsedAt: row.parsed_at ?? undefined
   };
 }
 
@@ -2026,8 +2663,8 @@ function toBatchJobResponse(row: BatchJobRow, items: BatchJobItem[]): BatchJobRe
   };
 }
 
-function rawHtmlPath(rawdocId: string): string {
-  return `rawdocs/${rawdocId}.html`;
+function rawContentPath(rawdocId: string, contentExt: string): string {
+  return `rawdocs/${rawdocId}.${sanitizeExtension(contentExt) || "bin"}`;
 }
 
 function rawdocMetaPath(rawdocId: string): string {
@@ -2062,6 +2699,14 @@ function parserInfoFor(document: KnowledgeDocument, rawdoc: RawDoc): { version: 
 
 function sha256(content: string): string {
   return createHash("sha256").update(content).digest("hex");
+}
+
+function sha256Buffer(content: Buffer): string {
+  return createHash("sha256").update(content).digest("hex");
+}
+
+function sanitizeExtension(input: string): string {
+  return input.replace(/^\./, "").toLowerCase().replace(/[^a-z0-9]+/g, "").slice(0, 12);
 }
 
 function safeJsonArray(input: string): string[] {

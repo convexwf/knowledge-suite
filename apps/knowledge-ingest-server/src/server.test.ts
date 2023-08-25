@@ -1,4 +1,4 @@
-import { access, mkdtemp, rm } from "node:fs/promises";
+import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { FastifyInstance } from "fastify";
@@ -374,6 +374,165 @@ describe("knowledge ingest server", () => {
       hasRawdoc: false,
       hasDocument: false
     });
+
+    await app.close();
+  });
+
+  it("imports, reads, searches, removes, and reparses EPUB items", async () => {
+    let pandocRuns = 0;
+    const app = await buildServer({
+      host: "127.0.0.1",
+      port: 0,
+      token: "test-token",
+      storeRoot,
+      fetchTimeoutMs: 1000,
+      maxHtmlBytes: 1024 * 1024,
+      maxImportBytes: 1024 * 1024,
+      epubPandocRunner: async ({ outputPath }) => {
+        pandocRuns += 1;
+        await writeFile(outputPath, JSON.stringify({
+          meta: {
+            title: { t: "MetaInlines", c: [{ t: "Str", c: "EPUB" }, { t: "Space" }, { t: "Str", c: "Handbook" }] },
+            author: { t: "MetaList", c: [{ t: "MetaInlines", c: [{ t: "Str", c: "Ada" }] }] },
+            lang: { t: "MetaString", c: "en" }
+          },
+          blocks: [
+            { t: "Header", c: [1, ["intro", [], []], [{ t: "Str", c: "Introduction" }]] },
+            {
+              t: "Para",
+              c: [
+                { t: "Str", c: "EPUB" },
+                { t: "Space" },
+                { t: "Str", c: "retrieval" },
+                { t: "Space" },
+                { t: "Str", c: "content" },
+                { t: "Space" },
+                { t: "Str", c: "is" },
+                { t: "Space" },
+                { t: "Str", c: "searchable." }
+              ]
+            },
+            {
+              t: "BulletList",
+              c: [
+                [{ t: "Plain", c: [{ t: "Str", c: "First" }, { t: "Space" }, { t: "Str", c: "chapter" }] }]
+              ]
+            }
+          ]
+        }), "utf8");
+        return { version: "pandoc 3.test", warnings: [] };
+      }
+    });
+
+    const epubBytes = Buffer.from("fake epub bytes");
+    const imported = await app.inject({
+      method: "POST",
+      url: "/api/import/epub",
+      headers: { authorization: "Bearer test-token" },
+      payload: {
+        fileBase64: epubBytes.toString("base64"),
+        sourceUri: "file:///books/handbook.epub",
+        tags: ["fixture"]
+      }
+    });
+
+    expect(imported.statusCode).toBe(200);
+    const saved = imported.json();
+    expect(saved.saved).toBe(true);
+    expect(saved.knowledgeItem).toMatchObject({
+      sourceType: "epub",
+      title: "EPUB Handbook",
+      creators: ["Ada"],
+      tags: ["fixture"],
+      state: "parsed"
+    });
+    expect(saved.rawdoc).toMatchObject({
+      source_type: "epub",
+      source_uri: "file:///books/handbook.epub",
+      content_type: "application/epub+zip"
+    });
+    expect(saved.rawdoc.metadata).toMatchObject({
+      parserBackend: "pandoc",
+      pandocVersion: "pandoc 3.test"
+    });
+    expect(saved.document.meta.source.type).toBe("epub");
+    expect(saved.document.sections).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "heading", content: "Introduction" }),
+      expect.objectContaining({ type: "paragraph", content: "EPUB retrieval content is searchable." })
+    ]));
+    expect(saved.markdown).toContain("# EPUB Handbook");
+    expect(saved.markdown).toContain("EPUB retrieval content is searchable.");
+    expect(saved.paths.rawContentPath).toMatch(/\.epub$/);
+    await expect(access(join(storeRoot, saved.paths.rawContentPath))).resolves.toBeUndefined();
+
+    const list = await app.inject({
+      method: "GET",
+      url: "/api/items?sourceType=epub",
+      headers: { authorization: "Bearer test-token" }
+    });
+    expect(list.statusCode).toBe(200);
+    expect(list.json().items).toHaveLength(1);
+    expect(list.json().items[0].itemId).toBe(saved.knowledgeItem.itemId);
+
+    const document = await app.inject({
+      method: "GET",
+      url: `/api/documents/${saved.document.doc_id}`,
+      headers: { authorization: "Bearer test-token" }
+    });
+    expect(document.statusCode).toBe(200);
+    expect(document.json().meta.title).toBe("EPUB Handbook");
+
+    const markdown = await app.inject({
+      method: "GET",
+      url: `/api/documents/${saved.document.doc_id}/markdown`,
+      headers: { authorization: "Bearer test-token" }
+    });
+    expect(markdown.statusCode).toBe(200);
+    expect(markdown.body).toContain("EPUB retrieval content");
+
+    const search = await app.inject({
+      method: "GET",
+      url: "/api/search?q=EPUB%20retrieval",
+      headers: { authorization: "Bearer test-token" }
+    });
+    expect(search.statusCode).toBe(200);
+    expect(search.json().results[0]).toMatchObject({
+      docId: saved.document.doc_id,
+      rawdocId: saved.rawdoc.rawdoc_id,
+      title: "EPUB Handbook",
+      sourceUrl: "file:///books/handbook.epub",
+      normalizedUrl: saved.knowledgeItem.itemId,
+      parserMethod: "pandoc_epub"
+    });
+
+    const removed = await app.inject({
+      method: "DELETE",
+      url: `/api/items/${encodeURIComponent(saved.knowledgeItem.itemId)}`,
+      headers: { authorization: "Bearer test-token" }
+    });
+    expect(removed.statusCode).toBe(200);
+    expect(removed.json()).toMatchObject({
+      deleted: true,
+      mode: "remove",
+      previousState: "parsed",
+      currentState: "captured",
+      removedDocId: saved.document.doc_id
+    });
+    await expect(access(join(storeRoot, saved.paths.rawContentPath))).resolves.toBeUndefined();
+
+    const reparsed = await app.inject({
+      method: "POST",
+      url: `/api/items/${encodeURIComponent(saved.knowledgeItem.itemId)}/reparse`,
+      headers: { authorization: "Bearer test-token" }
+    });
+    expect(reparsed.statusCode).toBe(200);
+    expect(reparsed.json().knowledgeItem).toMatchObject({
+      itemId: saved.knowledgeItem.itemId,
+      state: "parsed"
+    });
+    expect(reparsed.json().rawdoc.rawdoc_id).toBe(saved.rawdoc.rawdoc_id);
+    expect(reparsed.json().document.doc_id).not.toBe(saved.document.doc_id);
+    expect(pandocRuns).toBe(2);
 
     await app.close();
   });

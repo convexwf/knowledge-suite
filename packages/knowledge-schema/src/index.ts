@@ -59,6 +59,8 @@ export type ClipReparseRequest = z.infer<typeof ClipReparseRequestSchema>;
 
 export const ClipDeleteModeSchema = z.enum(["remove", "purge"]);
 export type ClipDeleteMode = z.infer<typeof ClipDeleteModeSchema>;
+export const KnowledgeItemDeleteModeSchema = z.enum(["remove", "purge"]);
+export type KnowledgeItemDeleteMode = z.infer<typeof KnowledgeItemDeleteModeSchema>;
 
 export const STORE_CLEAR_CONFIRMATION = "CLEAR KNOWLEDGE STORE";
 export const STORE_CLEAR_PARSED_CONFIRMATION = "CLEAR PARSED RESULTS";
@@ -133,6 +135,23 @@ export interface RawDoc {
   content_type?: string;
   content_length?: number;
   metadata?: Record<string, unknown>;
+}
+
+export interface KnowledgeItem {
+  itemId: string;
+  sourceType: "url" | "singlefile_html" | "pdf" | "epub";
+  identityHash: string;
+  activeRawdocId: string;
+  activeDocId?: string;
+  title?: string;
+  subtitle?: string;
+  creators: string[];
+  language?: string;
+  tags: string[];
+  state: "captured" | "parsed";
+  createdAt: string;
+  updatedAt: string;
+  parsedAt?: string;
 }
 
 export type DocumentSectionType =
@@ -254,6 +273,41 @@ export interface ClipSaveResponse extends ClipPreviewResponse {
   };
 }
 
+export interface EpubImportResponse {
+  knowledgeItem: KnowledgeItem;
+  rawdoc: RawDoc;
+  document: KnowledgeDocument;
+  markdown: string;
+  saved: true;
+  paths: {
+    rawContentPath: string;
+    rawdocPath: string;
+    documentPath: string;
+    markdownPath: string;
+  };
+}
+
+export interface KnowledgeItemListResponse {
+  items: KnowledgeItem[];
+}
+
+export interface KnowledgeItemDetailResponse {
+  item: KnowledgeItem;
+  rawdoc?: RawDoc;
+  document?: KnowledgeDocument;
+}
+
+export interface KnowledgeItemDeleteResponse {
+  itemId: string;
+  deleted: boolean;
+  mode: KnowledgeItemDeleteMode;
+  previousState: "captured" | "parsed";
+  currentState: "empty" | "captured";
+  deletedFiles: string[];
+  removedDocId?: string;
+  removedRawdocId?: string;
+}
+
 export interface ClipStatusResponse extends ClipStatus {}
 
 export interface ClipDeleteResponse extends ClipStatus {
@@ -275,7 +329,9 @@ export interface StoreMaintenanceScan {
     sizeBytes: number;
   };
   tables: {
+    knowledgeItems: number;
     clips: number;
+    epubMetadata: number;
     rawdocs: number;
     documents: number;
     chunks: number;
@@ -296,6 +352,7 @@ export interface StoreMaintenanceScan {
     contentFiles: number;
   };
   parsedResults: {
+    parsedItems: number;
     parsedClips: number;
     documentRows: number;
     chunkRows: number;

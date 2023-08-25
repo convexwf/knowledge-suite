@@ -589,6 +589,8 @@ function expectStoreSchema(root: string): void {
       "collection_items",
       "collections",
       "documents",
+      "epub_metadata",
+      "knowledge_items",
       "rawdocs"
     ]);
 
@@ -605,6 +607,7 @@ function expectStoreSchema(root: string): void {
     expect(columnsByTable.clips).toEqual(expect.arrayContaining([
       "url_hash",
       "normalized_url",
+      "item_id",
       "original_url",
       "canonical_url",
       "rawdoc_id",
@@ -635,15 +638,34 @@ function expectStoreSchema(root: string): void {
     expect(columnsByTable.rawdocs).toEqual(expect.arrayContaining([
       "rawdoc_id",
       "source_uri",
+      "source_type",
       "normalized_url",
       "input_mode",
       "content_type",
       "content_length",
+      "content_hash",
+      "content_ext",
       "html_hash",
       "page_title",
       "captured_at",
       "fetched_at",
       "created_at"
+    ]));
+    expect(columnsByTable.knowledge_items).toEqual(expect.arrayContaining([
+      "item_id",
+      "source_type",
+      "identity_hash",
+      "active_rawdoc_id",
+      "active_doc_id",
+      "title",
+      "subtitle",
+      "creators_json",
+      "language",
+      "tags_json",
+      "state",
+      "created_at",
+      "updated_at",
+      "parsed_at"
     ]));
     expect(columnsByTable.chunks).toEqual(expect.arrayContaining([
       "chunk_id",
@@ -727,7 +749,7 @@ function expectStoreSchema(root: string): void {
     ]);
 
     const userVersion = database.prepare("PRAGMA user_version").get() as { user_version: number };
-    expect(userVersion.user_version).toBe(7);
+    expect(userVersion.user_version).toBe(8);
 
     for (const columns of Object.values(columnsByTable)) {
       expect(columns.filter((column) => column.endsWith("_path") && column !== "heading_path")).toEqual([]);
