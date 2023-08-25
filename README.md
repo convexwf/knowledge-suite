@@ -180,8 +180,8 @@ This project intentionally started with a smaller parser surface than Obsidian C
 | Priority | TODO | Notes |
 | --- | --- | --- |
 | P1 | Improve extraction quality scoring | Current scoring covers text length, section count, density, links, images, tables, code, and adapter bonus; still needs title similarity and noise-ratio metrics. |
-| P1 | Add static HTML fixture snapshot tests | Use representative pages from `knowledge-core/raw_ingest/examples`. |
-| P1 | Compare against `knowledge-core/raw_ingest` outputs | Field-level checks for title, source URL, section type sequence, and Markdown body. |
+| P1 | Build real parser fixture corpus | Use representative pages from `knowledge-core/raw_ingest/examples`; store HTML snapshots plus expected Document JSON, Markdown, metadata, and section sequence assertions. |
+| P1 | Compare fixture corpus against `knowledge-core/raw_ingest` outputs | Field-level checks for title, source URL, section type sequence, metadata, and Markdown body. |
 | P2 | Add code adapter runtime hooks | `codeAdapters` is currently empty; complex sites need prepare/root/metadata/content hooks beyond config selectors. |
 | P2 | Improve table/code/figure Markdown snapshots | Current renderer coverage is still basic. |
 | P2 | Improve selection clipping UX | `selectionHtml` is captured and parsed as a high-priority candidate, but the side panel does not yet expose an explicit selection-only mode. |
