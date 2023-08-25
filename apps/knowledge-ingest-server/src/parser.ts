@@ -41,6 +41,7 @@ interface ParserCandidate {
   id: string;
   method: ParserMethod;
   adapterId?: string;
+  selector?: string;
   title?: string;
   sections: KnowledgeDocument["sections"];
   metadata: {
@@ -128,6 +129,7 @@ export async function parsePage(input: ResolvedInput, options: ParsePageOptions 
         id: candidate.id,
         method: candidate.method,
         adapterId: candidate.adapterId,
+        selector: candidate.selector,
         selected: candidate.id === selected.id,
         score: round(candidate.score),
         metrics: candidate.metrics,
@@ -364,14 +366,15 @@ function buildAdapterCandidates(input: ResolvedInput, title: string, match: Matc
         id: `adapter:${match.adapter.id}:${selector}:${index}`,
         method: "site_adapter",
         adapterId: match.adapter.id,
+        selector,
         title: readAdapterMetadata(document, match.adapter, "title") || title,
-      sections,
-      metadata: {
+        sections,
+        metadata: {
           authors: readAdapterMetadataList(document, match.adapter, "author"),
           publishedAt: normalizeDate(readAdapterMetadata(document, match.adapter, "publishedAt")),
           image: readAdapterMetadata(document, match.adapter, "image"),
           tags: match.adapter.enrich?.tags?.(input.url) ?? []
-      },
+        },
         references: match.adapter.enrich?.references?.(root),
         reason: `Matched ${match.adapter.id} (${match.matchReason}); content selector ${selector}`,
         baseScore: match.adapter.priority / 2 + match.matchScore / 10 + (match.adapter.quality?.minScoreBonus ?? 0),
@@ -380,7 +383,7 @@ function buildAdapterCandidates(input: ResolvedInput, title: string, match: Matc
     }
   }
 
-  return candidates;
+  return dedupeSimilarAdapterCandidates(candidates);
 }
 
 function htmlBaseUrlFor(input: ResolvedInput): string {
@@ -391,6 +394,7 @@ function makeCandidate(params: {
   id: string;
   method: ParserMethod;
   adapterId?: string;
+  selector?: string;
   title?: string;
   sections: KnowledgeDocument["sections"];
   metadata: ParserCandidate["metadata"];
@@ -408,6 +412,43 @@ function makeCandidate(params: {
     warnings,
     score
   };
+}
+
+function dedupeSimilarAdapterCandidates(candidates: ParserCandidate[]): ParserCandidate[] {
+  const deduped: ParserCandidate[] = [];
+  for (const candidate of candidates) {
+    const duplicateIndex = deduped.findIndex((existing) => areSimilarCandidates(existing, candidate));
+    if (duplicateIndex === -1) {
+      deduped.push(candidate);
+      continue;
+    }
+    if (candidate.score > deduped[duplicateIndex].score) {
+      deduped[duplicateIndex] = candidate;
+    }
+  }
+  return deduped;
+}
+
+function areSimilarCandidates(left: ParserCandidate, right: ParserCandidate): boolean {
+  const leftText = candidateText(left);
+  const rightText = candidateText(right);
+  if (!leftText || !rightText) {
+    return false;
+  }
+  if (leftText === rightText) {
+    return true;
+  }
+  const [shorter, longer] = leftText.length < rightText.length
+    ? [leftText, rightText]
+    : [rightText, leftText];
+  if (shorter.length < 120) {
+    return false;
+  }
+  return shorter.length / longer.length >= 0.9 && longer.includes(shorter);
+}
+
+function candidateText(candidate: ParserCandidate): string {
+  return normalizeText(candidate.sections.map(sectionText).join(" ")).toLowerCase();
 }
 
 function selectCandidate(candidates: ParserCandidate[]): ParserCandidate {

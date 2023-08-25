@@ -658,6 +658,7 @@ function renderParserDiagnostics(preview: PreviewResult): DocumentFragment {
       return [
         [`${index + 1}.method`, candidateRecord.method],
         [`${index + 1}.adapter`, candidateRecord.adapterId],
+        [`${index + 1}.selector`, candidateRecord.selector],
         [`${index + 1}.selected`, candidateRecord.selected],
         [`${index + 1}.score`, candidateRecord.score],
         [`${index + 1}.metrics`, candidateRecord.metrics],

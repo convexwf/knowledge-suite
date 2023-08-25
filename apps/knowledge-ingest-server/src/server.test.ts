@@ -766,6 +766,11 @@ describe("knowledge ingest server", () => {
     expect(response.statusCode).toBe(200);
     expect(response.json().rawdoc.metadata.parserProfile).not.toBe("dom_fallback");
     expect(response.json().rawdoc.metadata.matchedAdapters[0].id).toBe("fern_docs");
+    const fernCandidates = response.json().rawdoc.metadata.parserCandidates.filter(
+      (candidate: { adapterId?: string }) => candidate.adapterId === "fern_docs"
+    );
+    expect(fernCandidates).toHaveLength(1);
+    expect(fernCandidates[0].selector).toBe("main article");
     expect(response.json().rawdoc.metadata.parserDiagnostics.cleanup.cleanedReadableRoot.tag).toBe("article");
     expect(response.json().markdown).toContain("## How Rerank Works");
     expect(response.json().markdown).toContain("Rerank API endpoint");
