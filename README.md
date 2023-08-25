@@ -140,18 +140,23 @@ This project intentionally started with a smaller parser surface than Obsidian C
 | --- | --- | --- |
 | P0 | Render Markdown preview as sanitized HTML | The extension builds preview DOM nodes directly instead of injecting page-derived HTML. |
 | P0 | Add copy Markdown action | Copies the latest preview Markdown from the side panel. |
-| P0 | Add delete current clip flow | Deletes the current URL from the index and removes known generated files. |
-| P0 | Add backend delete API | `DELETE /api/clip?url=...` deletes the saved record; pass `deleteFiles=false` to keep files. |
+| P0 | Add delete current clip flow | Side panel supports `Remove` for parsed results and `Purge` for raw capture plus parsed result. |
+| P0 | Add backend delete API | `DELETE /api/clip?url=...&mode=remove|purge` updates URL state and removes derived/raw objects according to mode. |
 | P0 | Add path guard module and tests | Write/delete paths are resolved inside `knowledge-store`. |
 | P0 | Tighten CORS | CORS allows Chrome extension origins and localhost-style development origins. |
 | P0 | Add configurable auto-refresh | The side panel can auto-preview when the active tab changes or finishes loading. |
 | P0 | Switch store to UUID object paths | Raw HTML, RawDoc JSON, Document JSON, and Markdown paths are derived from `rawdoc_id` / `doc_id`; SQLite no longer stores object paths. |
 | P0 | Add current-result reparse semantics | Re-saving a URL upserts `clips.url_hash` to the newest `doc_id` / `rawdoc_id` and removes the previous object files. |
 | P0 | Reset legacy MVP store schema | Old path-based local stores are deleted and recreated instead of migrated. |
-| P0 | Add settings page | Server URL, token, default input mode, auto-refresh, delete behavior, diagnostics visibility, timeout, and saved-list limit live in the extension options page. |
-| P1 | Add `RawDoc Meta` tab | The side panel now exposes the RawDoc returned by preview/save for parser and storage debugging. |
+| P0 | Add settings page | Server URL, token, default input mode, auto-refresh, diagnostics visibility, timeout, saved-list limit, and store maintenance live in the extension options page. |
+| P1 | Add `RawDoc` tab | The side panel now exposes the RawDoc returned by preview/save for parser and storage debugging. |
 | P1 | Add parser logs tab | The side panel now summarizes parser method, parser version, source details, section count, Defuddle metadata, and extraction warnings. |
 | P1 | Preserve raw DOM for Defuddle and adapters | Defuddle and site adapters now run before aggressive fallback cleanup, preventing layout class names such as `fixed-sidebar` from deleting real content. |
+| P1 | Add parser candidate previews | Preview responses include viable parser candidates; the side panel can switch active candidate from the Preview dropdown and save by `candidateId`. |
+| P1 | Add SQLite chunks and FTS search | Saved documents are chunked into SQLite FTS and exposed through `/api/search`. |
+| P1 | Add context packer | `/api/context` returns citation-ready full chunk content with trace support. |
+| P2 | Add TypeScript site adapter registry | Config adapters are loaded through a typed registry with URL matching, canonical/fetch transforms, and duplicate-id validation. |
+| P2 | Port high-value config adapters | Current adapters include Fern docs, Freedium, Medium, arXiv HTML, Reddit, Meituan Tech, Engineering FB, Blog Google, Smashing Magazine, All Things Distributed, Brendan Gregg, and Juejin. |
 | P2 | Add Reddit site adapter | Reddit/Shreddit posts now have a dedicated adapter with comment-tree extraction and regression coverage for browser HTML clipping. |
 
 ### MVP Completion
@@ -174,13 +179,12 @@ This project intentionally started with a smaller parser surface than Obsidian C
 
 | Priority | TODO | Notes |
 | --- | --- | --- |
-| P1 | Add extraction quality scoring | Score title match, content length, section count, and content density before accepting a parser result. |
+| P1 | Improve extraction quality scoring | Current scoring covers text length, section count, density, links, images, tables, code, and adapter bonus; still needs title similarity and noise-ratio metrics. |
 | P1 | Add static HTML fixture snapshot tests | Use representative pages from `knowledge-core/raw_ingest/examples`. |
 | P1 | Compare against `knowledge-core/raw_ingest` outputs | Field-level checks for title, source URL, section type sequence, and Markdown body. |
-| P2 | Add hostname-based TypeScript site adapter interface | Foundation for migrating high-value site rules. |
-| P2 | Port mature `knowledge-core/raw_ingest/sites` rules to TypeScript | Start with the most valuable or frequently clipped sites. |
+| P2 | Add code adapter runtime hooks | `codeAdapters` is currently empty; complex sites need prepare/root/metadata/content hooks beyond config selectors. |
 | P2 | Improve table/code/figure Markdown snapshots | Current renderer coverage is still basic. |
-| P2 | Implement selection-only clipping | `selectionHtml` exists in schema but is not wired through UI or parser. |
+| P2 | Improve selection clipping UX | `selectionHtml` is captured and parsed as a high-priority candidate, but the side panel does not yet expose an explicit selection-only mode. |
 | P3 | Add asset pipeline | Download images, rewrite Markdown image paths, and store asset metadata. |
 | P3 | Add SQLite assets table | Track original source, local path, owning document, and captions. |
 
@@ -189,9 +193,9 @@ This project intentionally started with a smaller parser surface than Obsidian C
 | Priority | TODO | Notes |
 | --- | --- | --- |
 | P2 | Improve Saved list into a searchable library view | Add search, sorting, filters, and current-page affordances. |
-| P3 | Add chunk generation | Stable chunks become input for retrieval and review workflows. |
+| P2 | Add retrieval rebuild endpoint | Chunks are rebuilt during save/remove/purge, but there is no `POST /api/retrieval/rebuild` for repairing existing stores. |
+| P2 | Add retrieval eval runner | Smoke retrieval exists; there is no persisted eval case table or `npm run eval:retrieval` yet. |
 | P3 | Add embedding pipeline | Should build on Document JSON, not Markdown-only parsing. |
-| P3 | Add full-text search | SQLite FTS or a dedicated local index. |
 | P3 | Add tags | Manual and eventually rule/model-assisted tagging. |
 | P3 | Add duplicate/similar document detection | Use normalized URL, title, canonical URL, and later embeddings. |
 | P3 | Add backlinks/references | Connect saved pages and future notes. |
