@@ -3,6 +3,7 @@ import {
   ClipDeleteMode,
   ClipListResult,
   ClipRequestBody,
+  ClipSaveRequestBody,
   ClipStatusResult,
   ExtensionSettings,
   HealthResult,
@@ -19,7 +20,7 @@ export interface KnowledgeApiClient {
   deleteClip(url: string, mode?: ClipDeleteMode): Promise<ClipDeleteResult>;
   reparse(url: string): Promise<PreviewResult>;
   preview(body: ClipRequestBody): Promise<PreviewResult>;
-  save(body: ClipRequestBody): Promise<PreviewResult>;
+  save(body: ClipSaveRequestBody): Promise<PreviewResult>;
   discoverBatch(pageUrl: string, candidates: BatchCandidate[]): Promise<BatchDiscoverResult>;
   createBatchJob(body: {
     sourcePageUrl: string;

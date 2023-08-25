@@ -12,10 +12,15 @@ import { ResolvedInput } from "./input.js";
 export interface ParsedPage {
   rawdoc: RawDoc;
   document: KnowledgeDocument;
+  candidatePreviews: ParserCandidateDocumentPreview[];
+  selectedCandidateId: string;
+  serverSelectedCandidateId: string;
+  activeCandidateId: string;
 }
 
 interface ParsePageOptions {
   rawdocId?: string;
+  selectedCandidateId?: string;
 }
 
 type ParserMethod =
@@ -58,6 +63,19 @@ interface ParserCandidate {
   reason: string;
 }
 
+interface ParserCandidateDocumentPreview {
+  id: string;
+  method: ParserMethod;
+  adapterId?: string;
+  selector?: string;
+  selected: boolean;
+  score: number;
+  metrics: CandidateMetrics;
+  warnings: string[];
+  reason: string;
+  document: KnowledgeDocument;
+}
+
 interface DefuddleRunDiagnostics {
   attempted: boolean;
   mode?: "async" | "sync";
@@ -79,7 +97,6 @@ const DefuddleClass = DefuddleDefault as unknown as {
 
 export async function parsePage(input: ResolvedInput, options: ParsePageOptions = {}): Promise<ParsedPage> {
   const rawdocId = options.rawdocId ?? makeId();
-  const docId = makeId();
   const fetchTime = nowIso();
   const matchedAdapters = matchSiteAdapters(input);
   const baseDocument = parseCleanDocument(input.html);
@@ -91,17 +108,19 @@ export async function parsePage(input: ResolvedInput, options: ParsePageOptions 
   const pageTitle = input.pageTitle || input.title || readPageTitle(baseDocument) || input.normalizedUrl;
   const title = readContentTitle(baseDocument) || defuddleResult?.title || pageTitle;
   const candidates = buildCandidates(input, title, pageTitle, defuddleResult, matchedAdapters);
-  const selected = selectCandidate(candidates);
+  const serverSelected = selectCandidate(candidates);
+  const selected = selectRequestedCandidate(candidates, options.selectedCandidateId, serverSelected);
+  const selectedCandidateId = selected.id;
+  const serverSelectedCandidateId = serverSelected.id;
+  const activeCandidateId = selected.id;
   const fallbackText = normalizeText(input.bodyText || baseDocument.body?.textContent || "");
-  const sections = selected.sections.length > 0
-    ? selected.sections
-    : fallbackText
-      ? [{ section_id: makeId(), type: "paragraph" as const, content: fallbackText }]
-      : [];
   const parserWarnings = collectParserWarnings(selected, candidates);
   const parserDiagnostics = buildParserDiagnostics(input, selected, candidates, defuddleRun.diagnostics);
   const selectedTitle = selected.title || title;
   const displayTitle = displayTitleFor(pageTitle, selectedTitle, input.normalizedUrl);
+  const userSelectedCandidateId = options.selectedCandidateId && options.selectedCandidateId !== serverSelectedCandidateId
+    ? selectedCandidateId
+    : undefined;
 
   const rawdoc: RawDoc = {
     rawdoc_id: rawdocId,
@@ -122,6 +141,9 @@ export async function parsePage(input: ResolvedInput, options: ParsePageOptions 
       displayTitle,
       parserMethod: selected.method,
       parserProfile: selected.adapterId ?? selected.method,
+      selectedCandidateId,
+      parserSelectedCandidateId: serverSelectedCandidateId,
+      userSelectedCandidateId,
       parserWarnings,
       matchedAdapters: matchedAdapters.map((match) => ({
         id: match.adapter.id,
@@ -130,17 +152,11 @@ export async function parsePage(input: ResolvedInput, options: ParsePageOptions 
         matchScore: round(match.matchScore),
         matchReason: match.matchReason
       })),
-      parserCandidates: candidates.map((candidate) => ({
-        id: candidate.id,
-        method: candidate.method,
-        adapterId: candidate.adapterId,
-        selector: candidate.selector,
-        selected: candidate.id === selected.id,
-        score: round(candidate.score),
-        metrics: candidate.metrics,
-        warnings: candidate.warnings,
-        reason: candidate.reason
-      })),
+      parserCandidates: candidates.map((candidate) => candidateSummary(
+        candidate,
+        selectedCandidateId,
+        serverSelectedCandidateId
+      )),
       defuddle: defuddleResult
         ? {
             author: defuddleResult.author,
@@ -158,33 +174,147 @@ export async function parsePage(input: ResolvedInput, options: ParsePageOptions 
     }
   };
 
-  const knowledgeDocument: KnowledgeDocument = {
-      doc_id: docId,
-      meta: {
-        title: selectedTitle,
-        page_title: pageTitle,
-        source: {
+  const documentContext = {
+    input,
+    rawdocId,
+    fetchTime,
+    pageTitle,
+    fallbackText,
+    baseDocument,
+    defuddleResult
+  };
+  const previewCandidates = candidatePreviewsFor(candidates, selected, serverSelected);
+  const candidatePreviews = previewCandidates.map((candidate) => ({
+    ...candidateSummary(candidate, selectedCandidateId, serverSelectedCandidateId),
+    document: candidateToDocument(candidate, documentContext)
+  }));
+  const selectedPreview = candidatePreviews.find((preview) => preview.id === selectedCandidateId);
+  const knowledgeDocument = selectedPreview?.document ?? candidateToDocument(selected, documentContext);
+
+  return {
+    rawdoc,
+    document: knowledgeDocument,
+    candidatePreviews,
+    selectedCandidateId,
+    serverSelectedCandidateId,
+    activeCandidateId
+  };
+}
+
+interface CandidateDocumentContext {
+  input: ResolvedInput;
+  rawdocId: string;
+  fetchTime: string;
+  pageTitle: string;
+  fallbackText: string;
+  baseDocument: Document;
+  defuddleResult?: DefuddleResponse;
+}
+
+function candidateSummary(
+  candidate: ParserCandidate,
+  selectedCandidateId: string,
+  serverSelectedCandidateId: string
+): Omit<ParserCandidateDocumentPreview, "document"> & { serverSelected: boolean } {
+  return {
+    id: candidate.id,
+    method: candidate.method,
+    adapterId: candidate.adapterId,
+    selector: candidate.selector,
+    selected: candidate.id === selectedCandidateId,
+    serverSelected: candidate.id === serverSelectedCandidateId,
+    score: round(candidate.score),
+    metrics: candidate.metrics,
+    warnings: candidate.warnings,
+    reason: candidate.reason
+  };
+}
+
+function candidateToDocument(
+  candidate: ParserCandidate,
+  context: CandidateDocumentContext
+): KnowledgeDocument {
+  const selectedTitle = candidate.title || context.pageTitle;
+  const sections = candidate.sections.length > 0
+    ? candidate.sections
+    : context.fallbackText
+      ? [{ section_id: makeId(), type: "paragraph" as const, content: context.fallbackText }]
+      : [];
+
+  return {
+    doc_id: makeId(),
+    meta: {
+      title: selectedTitle,
+      page_title: context.pageTitle,
+      source: {
         type: "html",
-        url: input.url,
-        rawdoc_id: rawdocId
+        url: context.input.url,
+        rawdoc_id: context.rawdocId
       },
-      authors: selected.metadata.authors?.length
-        ? selected.metadata.authors
-        : readAuthors(baseDocument, input.meta, defuddleResult),
-      published_at: selected.metadata.publishedAt ?? readPublishedAt(baseDocument, input.meta, defuddleResult),
-      ingested_at: fetchTime,
-      language: selected.metadata.language ||
-        defuddleResult?.language ||
-        baseDocument.documentElement?.getAttribute("lang") ||
-        input.meta.language,
-      tags: unique(selected.metadata.tags ?? []),
-      parser_version: `${PARSER_VERSION}:${selected.method}`
+      authors: candidate.metadata.authors?.length
+        ? candidate.metadata.authors
+        : readAuthors(context.baseDocument, context.input.meta, context.defuddleResult),
+      published_at: candidate.metadata.publishedAt ??
+        readPublishedAt(context.baseDocument, context.input.meta, context.defuddleResult),
+      ingested_at: context.fetchTime,
+      language: candidate.metadata.language ||
+        context.defuddleResult?.language ||
+        context.baseDocument.documentElement?.getAttribute("lang") ||
+        context.input.meta.language,
+      tags: unique(candidate.metadata.tags ?? []),
+      parser_version: `${PARSER_VERSION}:${candidate.method}`
     },
-    references: selected.references,
+    references: candidate.references,
     sections
   };
+}
 
-  return { rawdoc, document: knowledgeDocument };
+function candidatePreviewsFor(
+  candidates: ParserCandidate[],
+  selected: ParserCandidate,
+  serverSelected: ParserCandidate
+): ParserCandidate[] {
+  const result: ParserCandidate[] = [];
+  const add = (candidate: ParserCandidate) => {
+    if (!result.some((item) => item.id === candidate.id)) {
+      result.push(candidate);
+    }
+  };
+
+  add(selected);
+  add(serverSelected);
+  for (const candidate of candidates
+    .filter(isViableCandidate)
+    .sort((left, right) => right.score - left.score)) {
+    add(candidate);
+    if (result.length >= 8) {
+      break;
+    }
+  }
+
+  return result.length > 0 ? result : [selected];
+}
+
+function selectRequestedCandidate(
+  candidates: ParserCandidate[],
+  requestedCandidateId: string | undefined,
+  fallback: ParserCandidate
+): ParserCandidate {
+  if (!requestedCandidateId) {
+    return fallback;
+  }
+  const requested = candidates.find((candidate) => candidate.id === requestedCandidateId);
+  if (!requested) {
+    throw new Error(`candidateId not found: ${requestedCandidateId}`);
+  }
+  if (!isViableCandidate(requested)) {
+    throw new Error(`candidateId is not viable: ${requestedCandidateId}`);
+  }
+  return requested;
+}
+
+function isViableCandidate(candidate: ParserCandidate): boolean {
+  return candidate.sections.length > 0 && candidate.metrics.textLength > 0;
 }
 
 function buildCandidates(
@@ -459,7 +589,7 @@ function candidateText(candidate: ParserCandidate): string {
 }
 
 function selectCandidate(candidates: ParserCandidate[]): ParserCandidate {
-  const viable = candidates.filter((candidate) => candidate.sections.length > 0 && candidate.metrics.textLength > 0);
+  const viable = candidates.filter(isViableCandidate);
   const pool = viable.length > 0 ? viable : candidates;
   const selected = [...pool].sort((left, right) => right.score - left.score)[0];
   return selected ?? {

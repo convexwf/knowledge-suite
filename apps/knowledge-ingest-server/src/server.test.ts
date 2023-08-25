@@ -106,6 +106,9 @@ describe("knowledge ingest server", () => {
     expect(preview.json().document.meta.title).toBe("Example Article");
     expect(preview.json().document.meta.page_title).toBe("Example Article - Example Site");
     expect(preview.json().markdown).toContain("page_title: \"Example Article - Example Site\"");
+    expect(preview.json().selectedCandidateId).toBe(preview.json().serverSelectedCandidateId);
+    expect(preview.json().candidatePreviews.length).toBeGreaterThan(0);
+    expect(preview.json().candidatePreviews[0].markdown).toContain("Hello knowledge suite.");
     expect(preview.json().status).toMatchObject({
       state: "empty",
       hasRawdoc: false,
@@ -262,6 +265,69 @@ describe("knowledge ingest server", () => {
       hasRawdoc: false,
       hasDocument: false
     });
+
+    await app.close();
+  });
+
+  it("saves a user-selected parser candidate", async () => {
+    const app = await buildServer({
+      host: "127.0.0.1",
+      port: 0,
+      token: "test-token",
+      storeRoot,
+      fetchTimeoutMs: 1000,
+      maxHtmlBytes: 1024 * 1024
+    });
+
+    const body = {
+      inputMode: "browser_html",
+      snapshot: {
+        pageUrl: "https://example.com/candidates",
+        title: "Candidate Article",
+        html,
+        selectionHtml: `
+          <section>
+            <h2>Selected Candidate</h2>
+            <p>The selected candidate is intentionally long enough to win the default parser score.</p>
+          </section>
+        `,
+        capturedAt: "2026-05-11T02:30:00.000Z",
+        meta: {}
+      }
+    };
+
+    const preview = await app.inject({
+      method: "POST",
+      url: "/api/clip/preview",
+      headers: { authorization: "Bearer test-token" },
+      payload: body
+    });
+    expect(preview.statusCode).toBe(200);
+    const previewJson = preview.json();
+    expect(previewJson.selectedCandidateId).toBe("selection");
+    const fallback = previewJson.candidatePreviews.find(
+      (candidate: { method: string }) => candidate.method === "dom_fallback"
+    );
+    expect(fallback).toBeTruthy();
+    expect(fallback.markdown).toContain("Hello knowledge suite.");
+
+    const save = await app.inject({
+      method: "POST",
+      url: "/api/clip/save",
+      headers: { authorization: "Bearer test-token" },
+      payload: {
+        ...body,
+        candidateId: fallback.id
+      }
+    });
+    expect(save.statusCode).toBe(200);
+    const saved = save.json();
+    expect(saved.activeCandidateId).toBe(fallback.id);
+    expect(saved.serverSelectedCandidateId).toBe("selection");
+    expect(saved.rawdoc.metadata.parserSelectedCandidateId).toBe("selection");
+    expect(saved.rawdoc.metadata.userSelectedCandidateId).toBe(fallback.id);
+    expect(saved.document.meta.parser_version).toBe("knowledge-ingest-server/0.2:dom_fallback");
+    expect(saved.markdown).toContain("Hello knowledge suite.");
 
     await app.close();
   });

@@ -6,9 +6,11 @@ import {
   BatchDiscoverItem,
   BatchDiscoverResult,
   BatchJobResult,
+  CandidatePreview,
   ClipDeleteMode,
   ClipListItem,
   ClipRequestBody,
+  ClipSaveRequestBody,
   ExtensionSettings,
   InputMode,
   PanelView,
@@ -63,6 +65,7 @@ const batchOutput = mustGet<HTMLDivElement>("batch-output");
 let settings: ExtensionSettings = await getSettings();
 let activeTab: ActiveTabInfo | undefined;
 let lastPreview: PreviewResult | undefined;
+let activeCandidateId: string | undefined;
 let savedClips: ClipListItem[] = [];
 let batchDiscover: BatchDiscoverResult | undefined;
 let batchJob: BatchJobResult | undefined;
@@ -149,11 +152,12 @@ async function preview(): Promise<void> {
   try {
     await refreshServerStatus();
     const body = await buildRequestBody();
-    lastPreview = await createKnowledgeApiClient(settings).preview(body);
-    setStatus(statusLabel(lastPreview.status));
+    const nextPreview = await createKnowledgeApiClient(settings).preview(body);
+    setLastPreview(nextPreview);
+    setStatus(statusLabel(nextPreview.status));
     renderOutput();
     updateActionButtons();
-    if (lastPreview.status.state !== "empty") {
+    if (nextPreview.status.state !== "empty") {
       void loadSavedClips();
     }
   } catch (error) {
@@ -184,11 +188,12 @@ async function save(): Promise<void> {
   setStatus("Saving");
   try {
     await refreshServerStatus();
-    const body = await buildRequestBody();
-    lastPreview = await createKnowledgeApiClient(settings).save(body);
+    const body = await buildSaveRequestBody();
+    const nextPreview = await createKnowledgeApiClient(settings).save(body);
+    setLastPreview(nextPreview);
     await loadSavedClips();
     await notifyBadgeRefresh();
-    setStatus("Saved", summarizeSave(previousStatus, lastPreview));
+    setStatus("Saved", summarizeSave(previousStatus, nextPreview));
     renderOutput();
   } catch (error) {
     setStatus("Error");
@@ -317,12 +322,13 @@ function pollBatchJob(jobId: string): void {
 }
 
 async function copyMarkdown(): Promise<void> {
-  if (!lastPreview?.markdown) {
+  const markdown = lastPreview ? activeCandidate(lastPreview)?.markdown ?? lastPreview.markdown : "";
+  if (!markdown) {
     setStatus("Nothing to copy", "Preview or save a page first.");
     return;
   }
 
-  await navigator.clipboard.writeText(lastPreview.markdown);
+  await navigator.clipboard.writeText(markdown);
   setStatus("Copied", "Markdown copied to your clipboard.");
 }
 
@@ -406,6 +412,25 @@ async function buildRequestBody(): Promise<ClipRequestBody> {
   };
 }
 
+async function buildSaveRequestBody(): Promise<ClipSaveRequestBody> {
+  const body = await buildRequestBody();
+  return activeCandidateId ? { ...body, candidateId: activeCandidateId } : body;
+}
+
+function setLastPreview(preview: PreviewResult): void {
+  lastPreview = preview;
+  activeCandidateId = preview.activeCandidateId ??
+    preview.selectedCandidateId ??
+    preview.serverSelectedCandidateId ??
+    preview.candidatePreviews?.[0]?.id;
+}
+
+function activeCandidate(preview: PreviewResult): CandidatePreview | undefined {
+  return preview.candidatePreviews?.find((candidate) => candidate.id === activeCandidateId) ??
+    preview.candidatePreviews?.find((candidate) => candidate.id === preview.activeCandidateId) ??
+    preview.candidatePreviews?.find((candidate) => candidate.id === preview.selectedCandidateId);
+}
+
 async function injectContentScript(tabId: number): Promise<void> {
   try {
     await chrome.scripting.executeScript({
@@ -447,8 +472,9 @@ function renderOutput(): void {
     batchOutput.replaceChildren();
     return;
   }
-  previewOutput.replaceChildren(renderMarkdown(lastPreview.markdown));
-  codeOutput.textContent = JSON.stringify(lastPreview.document, null, 2);
+  const candidate = activeCandidate(lastPreview);
+  previewOutput.replaceChildren(renderMarkdown(candidate?.markdown ?? lastPreview.markdown));
+  codeOutput.textContent = JSON.stringify(candidate?.document ?? lastPreview.document, null, 2);
   rawdocOutput.textContent = JSON.stringify(lastPreview.rawdoc, null, 2);
   parserOutput.replaceChildren(renderParserDiagnostics(lastPreview));
 }
@@ -880,12 +906,18 @@ function renderParserDiagnostics(preview: PreviewResult): DocumentFragment {
   const parserDiagnostics = metadata.parserDiagnostics as Record<string, unknown> | undefined;
   const matchedAdapters = Array.isArray(metadata.matchedAdapters) ? metadata.matchedAdapters : [];
   const parserCandidates = Array.isArray(metadata.parserCandidates) ? metadata.parserCandidates : [];
+  const currentCandidate = activeCandidate(preview);
+  const currentDocument = currentCandidate?.document ?? preview.document;
+  const currentMarkdown = currentCandidate?.markdown ?? preview.markdown;
   const warnings = collectParserWarnings(preview);
 
   fragment.append(
     makeParserGroup("Extraction", [
-      ["parser_version", preview.document.meta.parser_version],
-      ["parser_method", metadata.parserMethod],
+      ["parser_version", currentDocument.meta.parser_version],
+      ["parser_method", currentCandidate?.method ?? metadata.parserMethod],
+      ["active_candidate", activeCandidateId],
+      ["server_selected_candidate", preview.serverSelectedCandidateId],
+      ["user_selected_candidate", metadata.userSelectedCandidateId],
       ["input_mode", metadata.inputMode],
       ["source_type", preview.rawdoc.source_type],
       ["source_uri", preview.rawdoc.source_uri],
@@ -899,18 +931,23 @@ function renderParserDiagnostics(preview: PreviewResult): DocumentFragment {
 
   fragment.append(
     makeParserGroup("Document", [
-      ["doc_id", preview.document.doc_id],
-      ["page_title", preview.document.meta.page_title],
-      ["content_title", preview.document.meta.title],
+      ["doc_id", currentDocument.doc_id],
+      ["page_title", currentDocument.meta.page_title],
+      ["content_title", currentDocument.meta.title],
       ["display_title", preview.status.displayTitle ?? preview.status.title],
-      ["authors", preview.document.meta.authors?.join(", ")],
-      ["published_at", preview.document.meta.published_at],
-      ["language", preview.document.meta.language],
-      ["section_count", preview.document.sections.length],
-      ["markdown_chars", preview.markdown.length],
+      ["authors", currentDocument.meta.authors?.join(", ")],
+      ["published_at", currentDocument.meta.published_at],
+      ["language", currentDocument.meta.language],
+      ["section_count", currentDocument.sections.length],
+      ["markdown_chars", currentMarkdown.length],
       ["clip_state", preview.status.state]
     ])
   );
+
+  const switcher = makeCandidateSwitcher(preview);
+  if (switcher) {
+    fragment.append(switcher);
+  }
 
   fragment.append(
     makeParserGroup("Defuddle", Object.entries(defuddle).map(([key, value]) => [key, value]))
@@ -946,6 +983,7 @@ function renderParserDiagnostics(preview: PreviewResult): DocumentFragment {
         [`${index + 1}.adapter`, candidateRecord.adapterId],
         [`${index + 1}.selector`, candidateRecord.selector],
         [`${index + 1}.selected`, candidateRecord.selected],
+        [`${index + 1}.serverSelected`, candidateRecord.serverSelected],
         [`${index + 1}.score`, candidateRecord.score],
         [`${index + 1}.metrics`, candidateRecord.metrics],
         [`${index + 1}.reason`, candidateRecord.reason]
@@ -967,23 +1005,90 @@ function renderParserDiagnostics(preview: PreviewResult): DocumentFragment {
   return fragment;
 }
 
+function makeCandidateSwitcher(preview: PreviewResult): HTMLElement | undefined {
+  const candidates = preview.candidatePreviews ?? [];
+  if (candidates.length === 0) {
+    return undefined;
+  }
+
+  const group = document.createElement("section");
+  group.className = "parser-group";
+
+  const heading = document.createElement("div");
+  heading.className = "parser-heading";
+  heading.textContent = "Candidate Previews";
+  group.append(heading);
+
+  const list = document.createElement("div");
+  list.className = "candidate-list";
+  for (const candidate of candidates) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "candidate-button";
+    button.dataset.active = String(candidate.id === activeCandidateId);
+    button.addEventListener("click", () => {
+      activeCandidateId = candidate.id;
+      renderOutput();
+    });
+
+    const title = document.createElement("span");
+    title.className = "candidate-title";
+    title.textContent = candidateLabel(candidate);
+
+    const meta = document.createElement("span");
+    meta.className = "candidate-meta";
+    meta.textContent = [
+      `score ${candidate.score}`,
+      metricText(candidate.metrics),
+      candidate.serverSelected ? "server selected" : "",
+      candidate.warnings.length > 0 ? `${candidate.warnings.length} warnings` : ""
+    ].filter(Boolean).join(" | ");
+
+    button.append(title, meta);
+    list.append(button);
+  }
+
+  group.append(list);
+  return group;
+}
+
+function candidateLabel(candidate: CandidatePreview): string {
+  return [
+    candidate.method,
+    candidate.adapterId,
+    candidate.selector
+  ].filter(Boolean).join(" / ");
+}
+
+function metricText(metrics: Record<string, unknown>): string {
+  return [
+    metrics.sectionCount !== undefined ? `sections ${metrics.sectionCount}` : "",
+    metrics.textLength !== undefined ? `text ${metrics.textLength}` : "",
+    metrics.linkCount !== undefined ? `links ${metrics.linkCount}` : ""
+  ].filter(Boolean).join(", ");
+}
+
 function collectParserWarnings(preview: PreviewResult): string[] {
   const warnings: string[] = [];
   const metadata = preview.rawdoc.metadata ?? {};
+  const candidate = activeCandidate(preview);
+  const document = candidate?.document ?? preview.document;
+  const markdown = candidate?.markdown ?? preview.markdown;
 
   if (Array.isArray(metadata.parserWarnings)) {
     warnings.push(...metadata.parserWarnings.map((warning) => String(warning)));
   }
-  if (metadata.parserMethod === "dom_fallback" && warnings.length === 0) {
+  const method = candidate?.method ?? metadata.parserMethod;
+  if (method === "dom_fallback" && warnings.length === 0) {
     warnings.push("Generic DOM fallback was selected.");
   }
-  if (preview.document.sections.length <= 1) {
+  if (document.sections.length <= 1) {
     warnings.push("Only one content section was extracted.");
   }
-  if (preview.markdown.trim().length < 300) {
+  if (markdown.trim().length < 300) {
     warnings.push("Markdown output is short; check whether the page needs a site adapter or selector extraction.");
   }
-  if (!preview.document.meta.title || preview.document.meta.title === metadata.normalizedUrl) {
+  if (!document.meta.title || document.meta.title === metadata.normalizedUrl) {
     warnings.push("The parser could not find a strong title.");
   }
 

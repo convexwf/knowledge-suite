@@ -37,6 +37,10 @@ export type ClipRequestBody =
   | { inputMode: "browser_html"; snapshot: PageSnapshot }
   | { inputMode: "server_fetch"; url: string };
 
+export type ClipSaveRequestBody = ClipRequestBody & {
+  candidateId?: string;
+};
+
 export interface ActiveTabInfo {
   tabId: number;
   url: string;
@@ -48,7 +52,26 @@ export interface PreviewResult {
   rawdoc: RawDoc;
   markdown: string;
   document: KnowledgeDocument;
+  candidatePreviews?: CandidatePreview[];
+  selectedCandidateId?: string;
+  serverSelectedCandidateId?: string;
+  activeCandidateId?: string;
   status: ClipStatusResult;
+}
+
+export interface CandidatePreview {
+  id: string;
+  method: string;
+  adapterId?: string;
+  selector?: string;
+  selected: boolean;
+  serverSelected?: boolean;
+  score: number;
+  metrics: Record<string, unknown>;
+  warnings: string[];
+  reason: string;
+  markdown: string;
+  document: KnowledgeDocument;
 }
 
 export interface RawDoc {

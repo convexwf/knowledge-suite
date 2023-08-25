@@ -41,11 +41,15 @@ export type ClipInput = z.infer<typeof ClipInputSchema>;
 export const ClipPreviewRequestSchema = ClipInputSchema;
 export type ClipPreviewRequest = z.infer<typeof ClipPreviewRequestSchema>;
 
-export const ClipSaveRequestSchema = ClipInputSchema.and(
-  z.object({
-    overwrite: z.boolean().optional()
-  })
-);
+const ClipSaveOptionsSchema = z.object({
+  candidateId: z.string().optional(),
+  overwrite: z.boolean().optional()
+});
+
+export const ClipSaveRequestSchema = z.discriminatedUnion("inputMode", [
+  BrowserHtmlInputSchema.merge(ClipSaveOptionsSchema),
+  ServerFetchInputSchema.merge(ClipSaveOptionsSchema)
+]);
 export type ClipSaveRequest = z.infer<typeof ClipSaveRequestSchema>;
 
 export const ClipReparseRequestSchema = z.object({
@@ -169,6 +173,32 @@ export interface KnowledgeDocument {
   sections: DocumentSection[];
 }
 
+export interface ParserCandidateMetrics {
+  textLength: number;
+  sectionCount: number;
+  headingCount: number;
+  linkCount: number;
+  imageCount: number;
+  tableCount: number;
+  codeCount: number;
+  linkDensity: number;
+}
+
+export interface ParserCandidatePreview {
+  id: string;
+  method: string;
+  adapterId?: string;
+  selector?: string;
+  selected: boolean;
+  score: number;
+  metrics: ParserCandidateMetrics;
+  warnings: string[];
+  reason: string;
+  serverSelected?: boolean;
+  document: KnowledgeDocument;
+  markdown: string;
+}
+
 export interface ClipStatus {
   normalizedUrl: string;
   urlHash: string;
@@ -192,6 +222,10 @@ export interface ClipPreviewResponse {
   rawdoc: RawDoc;
   document: KnowledgeDocument;
   markdown: string;
+  candidatePreviews?: ParserCandidatePreview[];
+  selectedCandidateId?: string;
+  serverSelectedCandidateId?: string;
+  activeCandidateId?: string;
   status: ClipStatus;
 }
 

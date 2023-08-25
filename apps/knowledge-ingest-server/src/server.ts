@@ -13,7 +13,7 @@ import {
 import { loadConfig, ServerConfig } from "./config.js";
 import { ResolvedInput, resolveClipInput } from "./input.js";
 import { documentToMarkdown } from "./markdown.js";
-import { parsePage } from "./parser.js";
+import { parsePage, type ParsedPage } from "./parser.js";
 import { KnowledgeStore } from "./store.js";
 
 export async function buildServer(config: ServerConfig = loadConfig()) {
@@ -142,11 +142,9 @@ export async function buildServer(config: ServerConfig = loadConfig()) {
     const input = ClipInputSchema.parse(request.body);
     const resolved = await resolveClipInput(input, config);
     const parsed = await parsePage(resolved);
-    const markdown = documentToMarkdown(parsed.document);
     const status = await store.status(resolved.normalizedUrl);
     return {
-      ...parsed,
-      markdown,
+      ...previewPayload(parsed),
       status
     };
   });
@@ -154,7 +152,7 @@ export async function buildServer(config: ServerConfig = loadConfig()) {
   app.post("/api/clip/save", async (request) => {
     const input = ClipSaveRequestSchema.parse(request.body);
     const resolved = await resolveClipInput(input, config);
-    const parsed = await parsePage(resolved);
+    const parsed = await parsePage(resolved, { selectedCandidateId: input.candidateId });
     const markdown = documentToMarkdown(parsed.document);
     const paths = await store.save({
       normalizedUrl: resolved.normalizedUrl,
@@ -165,8 +163,7 @@ export async function buildServer(config: ServerConfig = loadConfig()) {
     });
     const status = await store.status(resolved.normalizedUrl);
     return {
-      ...parsed,
-      markdown,
+      ...previewPayload(parsed),
       status,
       saved: true,
       paths
@@ -188,8 +185,7 @@ export async function buildServer(config: ServerConfig = loadConfig()) {
     });
     const status = await store.status(resolved.normalizedUrl);
     return {
-      ...parsed,
-      markdown,
+      ...previewPayload(parsed),
       status,
       saved: true,
       paths
@@ -434,6 +430,17 @@ function defaultPathPrefix(pathname: string): string {
   return normalized || "/";
 }
 
+function previewPayload(parsed: ParsedPage) {
+  return {
+    ...parsed,
+    markdown: documentToMarkdown(parsed.document),
+    candidatePreviews: parsed.candidatePreviews.map((candidate) => ({
+      ...candidate,
+      markdown: documentToMarkdown(candidate.document)
+    }))
+  };
+}
+
 function isAllowedCorsOrigin(origin: string | undefined): boolean {
   if (!origin) {
     return true;
@@ -457,6 +464,7 @@ function isClientInputError(message: string): boolean {
   return [
     "server_fetch does not support file://",
     "Expected HTML",
+    "candidateId",
     "too large",
     "Timed out fetching",
     "Path escapes knowledge store",
