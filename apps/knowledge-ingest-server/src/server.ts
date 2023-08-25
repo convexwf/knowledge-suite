@@ -1,9 +1,13 @@
 import cors from "@fastify/cors";
 import fastify from "fastify";
 import {
+  BatchDiscoverRequestSchema,
+  BatchJobCreateRequestSchema,
+  BatchJobItem,
   ClipInputSchema,
   ClipReparseRequestSchema,
   ClipSaveRequestSchema,
+  normalizeUrlForKnowledge,
   RawDoc
 } from "@uknowledge/knowledge-schema";
 import { loadConfig, ServerConfig } from "./config.js";
@@ -88,6 +92,18 @@ export async function buildServer(config: ServerConfig = loadConfig()) {
     return {
       clips: await store.list(query.limit ? Number(query.limit) : undefined)
     };
+  });
+
+  app.get("/api/collections", async (request) => {
+    const query = request.query as { limit?: string };
+    return {
+      collections: await store.listCollections(query.limit ? Number(query.limit) : undefined)
+    };
+  });
+
+  app.get("/api/collections/:collectionId", async (request) => {
+    const params = request.params as { collectionId: string };
+    return store.loadCollection(params.collectionId);
   });
 
   app.get("/api/search", async (request) => {
@@ -180,7 +196,204 @@ export async function buildServer(config: ServerConfig = loadConfig()) {
     };
   });
 
+  app.post("/api/batch/discover", async (request) => {
+    const input = BatchDiscoverRequestSchema.parse(request.body);
+    const scope = input.scope ?? { sameOrigin: true, maxItems: 50 };
+    const pageUrl = new URL(input.pageUrl);
+    const pathPrefix = scope.pathPrefix ?? defaultPathPrefix(pageUrl.pathname);
+    const seen = new Set<string>();
+    const items = [];
+
+    for (let index = 0; index < input.candidates.length; index += 1) {
+      const candidate = input.candidates[index];
+      const url = new URL(candidate.url);
+      if (scope.sameOrigin && url.origin !== pageUrl.origin) {
+        continue;
+      }
+      const normalizedUrl = normalizeUrlForKnowledge(url.toString());
+      if (seen.has(normalizedUrl)) {
+        continue;
+      }
+      seen.add(normalizedUrl);
+      if (items.length >= (scope.maxItems ?? 50)) {
+        break;
+      }
+
+      const status = await store.status(normalizedUrl);
+      items.push({
+        url: url.toString(),
+        normalizedUrl,
+        titleHint: candidate.titleHint ?? candidate.text,
+        source: candidate.source,
+        order: candidate.order ?? index,
+        depth: candidate.depth ?? 0,
+        selectedByDefault: url.pathname.startsWith(pathPrefix),
+        status: status.state,
+        docId: status.docId,
+        rawdocId: status.rawdocId
+      });
+    }
+
+    return {
+      pageUrl: input.pageUrl,
+      items,
+      stats: {
+        inputCount: input.candidates.length,
+        dedupedCount: seen.size,
+        selectedCount: items.filter((item) => item.selectedByDefault).length
+      }
+    };
+  });
+
+  app.post("/api/batch/jobs", async (request) => {
+    const input = BatchJobCreateRequestSchema.parse(request.body);
+    const rawItems: Array<{
+      url: string;
+      titleHint?: string;
+      source?: string;
+      order?: number;
+      depth?: number;
+    }> = input.items?.length
+      ? input.items
+      : (input.urls ?? []).map((url, index) => ({ url, order: index }));
+    const seen = new Set<string>();
+    const items = rawItems
+      .map((item, index) => ({
+        url: item.url,
+        normalizedUrl: normalizeUrlForKnowledge(item.url),
+        titleHint: item.titleHint,
+        source: item.source,
+        orderIndex: item.order ?? index,
+        depth: item.depth ?? 0
+      }))
+      .filter((item) => {
+        if (seen.has(item.normalizedUrl)) {
+          return false;
+        }
+        seen.add(item.normalizedUrl);
+        return true;
+      })
+      .sort((left, right) => left.orderIndex - right.orderIndex);
+
+    const collection = await store.upsertCollection({
+      collectionId: input.collection.strategy === "update" ? input.collection.collectionId : undefined,
+      title: input.collection.title,
+      rootUrl: input.collection.rootUrl,
+      sourceType: "manual_section",
+      state: "draft"
+    });
+    await store.replaceCollectionItems(collection.collectionId, items.map((item, index) => ({
+      normalizedUrl: item.normalizedUrl,
+      title: item.titleHint,
+      source: item.source,
+      orderIndex: index,
+      depth: item.depth,
+      state: "pending"
+    })));
+    const job = await store.createBatchJob({
+      collectionId: collection.collectionId,
+      sourcePageUrl: input.sourcePageUrl,
+      mode: input.mode,
+      options: input.options,
+      items: items.map((item) => ({
+        url: item.url,
+        normalizedUrl: item.normalizedUrl,
+        source: item.source,
+        titleHint: item.titleHint
+      }))
+    });
+
+    void runBatchJob(job.jobId, input.options ?? {});
+    return job;
+  });
+
+  app.get("/api/batch/jobs/:jobId", async (request) => {
+    const params = request.params as { jobId: string };
+    return store.loadBatchJob(params.jobId);
+  });
+
+  app.post("/api/batch/jobs/:jobId/cancel", async (request) => {
+    const params = request.params as { jobId: string };
+    await store.updateBatchJobState(params.jobId, "cancelled");
+    return store.loadBatchJob(params.jobId);
+  });
+
   return app;
+
+  async function runBatchJob(jobId: string, options: { skipExisting?: boolean; maxConcurrency?: number }): Promise<void> {
+    try {
+      await store.updateBatchJobState(jobId, "running");
+      const concurrency = Math.min(Math.max(Math.trunc(options.maxConcurrency ?? 3) || 3, 1), 10);
+      const pendingItems = await store.listPendingBatchItems(jobId);
+      let cursor = 0;
+
+      const worker = async () => {
+        while (cursor < pendingItems.length) {
+          const item = pendingItems[cursor];
+          cursor += 1;
+          await processBatchItem(item, Boolean(options.skipExisting ?? true));
+        }
+      };
+
+      await Promise.all(Array.from({ length: Math.min(concurrency, pendingItems.length) }, () => worker()));
+      const completed = await store.loadBatchJob(jobId);
+      if (completed.state !== "succeeded") {
+        await store.updateBatchJobState(jobId, "succeeded");
+      }
+    } catch (error) {
+      await store.updateBatchJobState(jobId, "failed");
+      app.log.error(error);
+    }
+  }
+
+  async function processBatchItem(item: BatchJobItem, skipExisting: boolean): Promise<void> {
+    const lookupUrl = item.normalizedUrl ?? item.url;
+    try {
+      if (skipExisting) {
+        const existing = await store.status(lookupUrl);
+        if (existing.state === "parsed") {
+          await store.updateBatchItem({
+            itemId: item.itemId,
+            state: "skipped",
+            normalizedUrl: existing.normalizedUrl,
+            rawdocId: existing.rawdocId,
+            docId: existing.docId,
+            title: existing.title
+          });
+          return;
+        }
+      }
+
+      await store.updateBatchItem({ itemId: item.itemId, state: "fetching", incrementAttempt: true });
+      const resolved = await resolveClipInput({ inputMode: "server_fetch", url: item.url }, config);
+      await store.updateBatchItem({ itemId: item.itemId, state: "parsing", normalizedUrl: resolved.normalizedUrl });
+      const parsed = await parsePage(resolved);
+      const markdown = documentToMarkdown(parsed.document);
+      await store.updateBatchItem({ itemId: item.itemId, state: "saving", normalizedUrl: resolved.normalizedUrl });
+      await store.save({
+        normalizedUrl: resolved.normalizedUrl,
+        html: resolved.html,
+        rawdoc: parsed.rawdoc,
+        document: parsed.document,
+        markdown
+      });
+      await store.updateBatchItem({
+        itemId: item.itemId,
+        state: "saved",
+        normalizedUrl: resolved.normalizedUrl,
+        rawdocId: parsed.rawdoc.rawdoc_id,
+        docId: parsed.document.doc_id,
+        title: parsed.document.meta.title
+      });
+    } catch (error) {
+      await store.updateBatchItem({
+        itemId: item.itemId,
+        state: "failed",
+        errorCode: "batch_item_failed",
+        errorMessage: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
 }
 
 function resolvedInputFromCapture(rawdoc: RawDoc, html: string): ResolvedInput {
@@ -207,6 +420,11 @@ function isStringRecord(value: unknown): value is Record<string, string> {
       typeof value === "object" &&
       Object.values(value as Record<string, unknown>).every((item) => typeof item === "string")
   );
+}
+
+function defaultPathPrefix(pathname: string): string {
+  const normalized = pathname.endsWith("/") ? pathname : pathname.slice(0, pathname.lastIndexOf("/") + 1);
+  return normalized || "/";
 }
 
 function isAllowedCorsOrigin(origin: string | undefined): boolean {

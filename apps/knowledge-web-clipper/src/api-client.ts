@@ -6,7 +6,10 @@ import {
   ClipStatusResult,
   ExtensionSettings,
   HealthResult,
-  PreviewResult
+  PreviewResult,
+  BatchCandidate,
+  BatchDiscoverResult,
+  BatchJobResult
 } from "./types.js";
 
 export interface KnowledgeApiClient {
@@ -17,6 +20,28 @@ export interface KnowledgeApiClient {
   reparse(url: string): Promise<PreviewResult>;
   preview(body: ClipRequestBody): Promise<PreviewResult>;
   save(body: ClipRequestBody): Promise<PreviewResult>;
+  discoverBatch(pageUrl: string, candidates: BatchCandidate[]): Promise<BatchDiscoverResult>;
+  createBatchJob(body: {
+    sourcePageUrl: string;
+    collection: {
+      title: string;
+      rootUrl: string;
+      strategy: "create" | "update";
+      collectionId?: string;
+    };
+    items: Array<{
+      url: string;
+      titleHint?: string;
+      source?: string;
+      order?: number;
+      depth?: number;
+    }>;
+    options?: {
+      skipExisting?: boolean;
+      maxConcurrency?: number;
+    };
+  }): Promise<BatchJobResult>;
+  batchJob(jobId: string): Promise<BatchJobResult>;
 }
 
 export function createKnowledgeApiClient(settings: ExtensionSettings): KnowledgeApiClient {
@@ -56,7 +81,47 @@ export function createKnowledgeApiClient(settings: ExtensionSettings): Knowledge
     save: (body) => request<PreviewResult>(baseUrl, settings.token, "POST", "/api/clip/save", {
       ...body,
       overwrite: true
-    }, options)
+    }, options),
+    discoverBatch: (pageUrl, candidates) => request<BatchDiscoverResult>(
+      baseUrl,
+      settings.token,
+      "POST",
+      "/api/batch/discover",
+      {
+        pageUrl,
+        candidates,
+        scope: {
+          sameOrigin: true,
+          pathPrefix: defaultPathPrefix(pageUrl),
+          maxItems: 50
+        }
+      },
+      options
+    ),
+    createBatchJob: (body) => request<BatchJobResult>(
+      baseUrl,
+      settings.token,
+      "POST",
+      "/api/batch/jobs",
+      {
+        mode: "server_fetch",
+        options: {
+          skipExisting: true,
+          maxConcurrency: 3,
+          ...body.options
+        },
+        ...body
+      },
+      options
+    ),
+    batchJob: (jobId) => request<BatchJobResult>(
+      baseUrl,
+      settings.token,
+      "GET",
+      `/api/batch/jobs/${encodeURIComponent(jobId)}`,
+      undefined,
+      options
+    )
   };
 }
 
@@ -95,4 +160,10 @@ async function request<T>(
   }
 
   return response.json() as Promise<T>;
+}
+
+function defaultPathPrefix(pageUrl: string): string {
+  const url = new URL(pageUrl);
+  const pathname = url.pathname.endsWith("/") ? url.pathname : url.pathname.slice(0, url.pathname.lastIndexOf("/") + 1);
+  return pathname || "/";
 }

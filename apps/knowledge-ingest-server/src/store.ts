@@ -8,7 +8,15 @@ import {
   ClipListItem,
   ClipSaveResponse,
   ClipStatus,
+  BatchItemState,
+  BatchJobItem,
+  BatchJobResponse,
+  BatchJobState,
+  CollectionItem,
+  CollectionState,
+  CollectionSummary,
   KnowledgeDocument,
+  makeId,
   normalizeUrlForKnowledge,
   RawDoc,
   urlHash
@@ -32,6 +40,69 @@ interface ClipRow {
 interface DocumentRow {
   doc_id: string;
   rawdoc_id: string;
+}
+
+interface BatchJobRow {
+  job_id: string;
+  collection_id: string | null;
+  source_page_url: string;
+  mode: string;
+  state: BatchJobState;
+  total_count: number;
+  saved_count: number;
+  skipped_count: number;
+  failed_count: number;
+  cancelled_count: number;
+  options_json: string | null;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+interface BatchItemRow {
+  item_id: string;
+  job_id: string;
+  collection_id: string | null;
+  url: string;
+  normalized_url: string | null;
+  source: string | null;
+  title_hint: string | null;
+  state: BatchItemState;
+  rawdoc_id: string | null;
+  doc_id: string | null;
+  error_code: string | null;
+  error_message: string | null;
+  attempt_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+interface CollectionRow {
+  collection_id: string;
+  title: string;
+  root_url: string | null;
+  normalized_root_url: string | null;
+  source_type: string;
+  state: CollectionState;
+  created_at: string;
+  updated_at: string;
+  item_count?: number;
+}
+
+interface CollectionItemRow {
+  collection_item_id: string;
+  collection_id: string;
+  normalized_url: string;
+  doc_id: string | null;
+  rawdoc_id: string | null;
+  title: string | null;
+  order_index: number;
+  depth: number;
+  parent_item_id: string | null;
+  source: string | null;
+  state: BatchItemState;
+  created_at: string;
+  updated_at: string;
 }
 
 interface SearchRow {
@@ -80,7 +151,7 @@ interface SavePaths {
   markdownPath: string;
 }
 
-const STORE_SCHEMA_VERSION = 5;
+const STORE_SCHEMA_VERSION = 6;
 
 interface SearchOptions {
   limit?: number;
@@ -217,6 +288,327 @@ export class KnowledgeStore {
       parserMethod: row.parser_method ?? undefined,
       parserProfile: row.parser_profile ?? undefined
     }));
+  }
+
+  async upsertCollection(params: {
+    collectionId?: string;
+    title: string;
+    rootUrl: string;
+    sourceType: string;
+    state?: CollectionState;
+  }): Promise<CollectionSummary> {
+    await this.ensure();
+    const now = new Date().toISOString();
+    const collectionId = params.collectionId ?? makeId();
+    const normalizedRootUrl = normalizeUrlForKnowledge(params.rootUrl);
+    const existing = this.findCollection(collectionId);
+
+    this.database!.prepare(`
+      INSERT INTO collections (
+        collection_id,
+        title,
+        root_url,
+        normalized_root_url,
+        source_type,
+        state,
+        created_at,
+        updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(collection_id) DO UPDATE SET
+        title = excluded.title,
+        root_url = excluded.root_url,
+        normalized_root_url = excluded.normalized_root_url,
+        source_type = excluded.source_type,
+        state = excluded.state,
+        updated_at = excluded.updated_at
+    `).run(
+      collectionId,
+      params.title,
+      params.rootUrl,
+      normalizedRootUrl,
+      params.sourceType,
+      params.state ?? existing?.state ?? "active",
+      existing?.created_at ?? now,
+      now
+    );
+
+    return this.loadCollectionSummary(collectionId);
+  }
+
+  async listCollections(limit = 50): Promise<CollectionSummary[]> {
+    await this.ensure();
+    const boundedLimit = Math.min(Math.max(Math.trunc(limit) || 50, 1), 200);
+    const rows = this.database!.prepare(`
+      SELECT
+        c.collection_id,
+        c.title,
+        c.root_url,
+        c.normalized_root_url,
+        c.source_type,
+        c.state,
+        c.created_at,
+        c.updated_at,
+        COUNT(ci.collection_item_id) AS item_count
+      FROM collections c
+      LEFT JOIN collection_items ci ON ci.collection_id = c.collection_id
+      GROUP BY c.collection_id
+      ORDER BY c.updated_at DESC
+      LIMIT ?
+    `).all(boundedLimit) as unknown as CollectionRow[];
+    return rows.map(toCollectionSummary);
+  }
+
+  async loadCollection(collectionId: string): Promise<{ collection: CollectionSummary; items: CollectionItem[] }> {
+    await this.ensure();
+    const collection = this.loadCollectionSummary(collectionId);
+    const rows = this.database!.prepare(`
+      SELECT collection_item_id, collection_id, normalized_url, doc_id, rawdoc_id, title,
+        order_index, depth, parent_item_id, source, state, created_at, updated_at
+      FROM collection_items
+      WHERE collection_id = ?
+      ORDER BY order_index ASC, created_at ASC
+    `).all(collectionId) as unknown as CollectionItemRow[];
+    return {
+      collection,
+      items: rows.map(toCollectionItem)
+    };
+  }
+
+  async replaceCollectionItems(collectionId: string, items: Array<{
+    normalizedUrl: string;
+    title?: string;
+    source?: string;
+    orderIndex: number;
+    depth: number;
+    state?: BatchItemState;
+  }>): Promise<CollectionItem[]> {
+    await this.ensure();
+    const now = new Date().toISOString();
+
+    try {
+      this.database!.exec("BEGIN");
+      this.database!.prepare("DELETE FROM collection_items WHERE collection_id = ?").run(collectionId);
+      const insert = this.database!.prepare(`
+        INSERT INTO collection_items (
+          collection_item_id,
+          collection_id,
+          normalized_url,
+          title,
+          order_index,
+          depth,
+          source,
+          state,
+          created_at,
+          updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      for (const item of items) {
+        insert.run(
+          makeId(),
+          collectionId,
+          item.normalizedUrl,
+          item.title ?? null,
+          item.orderIndex,
+          item.depth,
+          item.source ?? null,
+          item.state ?? "pending",
+          now,
+          now
+        );
+      }
+      this.database!.exec("COMMIT");
+    } catch (error) {
+      this.database!.exec("ROLLBACK");
+      throw error;
+    }
+
+    return (await this.loadCollection(collectionId)).items;
+  }
+
+  async createBatchJob(params: {
+    collectionId: string;
+    sourcePageUrl: string;
+    mode: "server_fetch";
+    options?: Record<string, unknown>;
+    items: Array<{
+      url: string;
+      normalizedUrl: string;
+      source?: string;
+      titleHint?: string;
+      state?: BatchItemState;
+    }>;
+  }): Promise<BatchJobResponse> {
+    await this.ensure();
+    const now = new Date().toISOString();
+    const jobId = makeId();
+
+    try {
+      this.database!.exec("BEGIN");
+      this.database!.prepare(`
+        INSERT INTO batch_jobs (
+          job_id,
+          collection_id,
+          source_page_url,
+          mode,
+          state,
+          total_count,
+          options_json,
+          created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        jobId,
+        params.collectionId,
+        params.sourcePageUrl,
+        params.mode,
+        "queued",
+        params.items.length,
+        JSON.stringify(params.options ?? {}),
+        now
+      );
+
+      const insertItem = this.database!.prepare(`
+        INSERT INTO batch_items (
+          item_id,
+          job_id,
+          collection_id,
+          url,
+          normalized_url,
+          source,
+          title_hint,
+          state,
+          created_at,
+          updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      for (const item of params.items) {
+        insertItem.run(
+          makeId(),
+          jobId,
+          params.collectionId,
+          item.url,
+          item.normalizedUrl,
+          item.source ?? null,
+          item.titleHint ?? null,
+          item.state ?? "pending",
+          now,
+          now
+        );
+      }
+      this.database!.exec("COMMIT");
+    } catch (error) {
+      this.database!.exec("ROLLBACK");
+      throw error;
+    }
+
+    return this.loadBatchJob(jobId);
+  }
+
+  async loadBatchJob(jobId: string): Promise<BatchJobResponse> {
+    await this.ensure();
+    const row = this.database!.prepare(`
+      SELECT job_id, collection_id, source_page_url, mode, state, total_count,
+        saved_count, skipped_count, failed_count, cancelled_count, options_json,
+        created_at, started_at, finished_at
+      FROM batch_jobs
+      WHERE job_id = ?
+    `).get(jobId) as BatchJobRow | undefined;
+    if (!row) {
+      throw new Error("Batch job does not exist");
+    }
+
+    const items = this.listBatchItems(jobId);
+    return toBatchJobResponse(row, items);
+  }
+
+  async listPendingBatchItems(jobId: string): Promise<BatchJobItem[]> {
+    await this.ensure();
+    return this.listBatchItems(jobId).filter((item) => item.state === "pending");
+  }
+
+  async updateBatchJobState(jobId: string, state: BatchJobState): Promise<void> {
+    await this.ensure();
+    const now = new Date().toISOString();
+    this.database!.prepare(`
+      UPDATE batch_jobs
+      SET state = ?,
+          started_at = CASE WHEN started_at IS NULL AND ? = 'running' THEN ? ELSE started_at END,
+          finished_at = CASE WHEN ? IN ('succeeded', 'failed', 'cancelled') THEN ? ELSE finished_at END
+      WHERE job_id = ?
+    `).run(state, state, now, state, now, jobId);
+  }
+
+  async updateBatchItem(params: {
+    itemId: string;
+    state: BatchItemState;
+    normalizedUrl?: string;
+    rawdocId?: string;
+    docId?: string;
+    title?: string;
+    errorCode?: string;
+    errorMessage?: string;
+    incrementAttempt?: boolean;
+  }): Promise<void> {
+    await this.ensure();
+    const now = new Date().toISOString();
+    const item = this.findBatchItem(params.itemId);
+    if (!item) {
+      throw new Error("Batch item does not exist");
+    }
+
+    this.database!.prepare(`
+      UPDATE batch_items
+      SET state = ?,
+          normalized_url = COALESCE(?, normalized_url),
+          rawdoc_id = COALESCE(?, rawdoc_id),
+          doc_id = COALESCE(?, doc_id),
+          error_code = ?,
+          error_message = ?,
+          attempt_count = attempt_count + ?,
+          updated_at = ?
+      WHERE item_id = ?
+    `).run(
+      params.state,
+      params.normalizedUrl ?? null,
+      params.rawdocId ?? null,
+      params.docId ?? null,
+      params.errorCode ?? null,
+      params.errorMessage ?? null,
+      params.incrementAttempt ? 1 : 0,
+      now,
+      params.itemId
+    );
+
+    if (item.collection_id) {
+      const previousNormalizedUrl = item.normalized_url ?? normalizeUrlForKnowledge(item.url);
+      const nextNormalizedUrl = params.normalizedUrl ?? previousNormalizedUrl;
+      this.database!.prepare(`
+        UPDATE collection_items
+        SET state = ?,
+            normalized_url = ?,
+            rawdoc_id = COALESCE(?, rawdoc_id),
+            doc_id = COALESCE(?, doc_id),
+            title = COALESCE(?, title),
+            updated_at = ?
+        WHERE collection_id = ?
+          AND normalized_url = ?
+      `).run(
+        params.state,
+        nextNormalizedUrl,
+        params.rawdocId ?? null,
+        params.docId ?? null,
+        params.title ?? null,
+        now,
+        item.collection_id,
+        previousNormalizedUrl
+      );
+      await this.refreshCollectionState(item.collection_id);
+    }
+
+    await this.refreshBatchCounts(item.job_id);
   }
 
   close(): void {
@@ -522,6 +914,70 @@ export class KnowledgeStore {
         UNIQUE(doc_id, chunk_index)
       );
 
+      CREATE TABLE IF NOT EXISTS collections (
+        collection_id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        root_url TEXT,
+        normalized_root_url TEXT,
+        source_type TEXT NOT NULL,
+        state TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS collection_items (
+        collection_item_id TEXT PRIMARY KEY,
+        collection_id TEXT NOT NULL,
+        normalized_url TEXT NOT NULL,
+        doc_id TEXT,
+        rawdoc_id TEXT,
+        title TEXT,
+        order_index INTEGER NOT NULL,
+        depth INTEGER NOT NULL DEFAULT 0,
+        parent_item_id TEXT,
+        source TEXT,
+        state TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY(collection_id) REFERENCES collections(collection_id)
+      );
+
+      CREATE TABLE IF NOT EXISTS batch_jobs (
+        job_id TEXT PRIMARY KEY,
+        collection_id TEXT,
+        source_page_url TEXT NOT NULL,
+        mode TEXT NOT NULL,
+        state TEXT NOT NULL,
+        total_count INTEGER NOT NULL,
+        saved_count INTEGER NOT NULL DEFAULT 0,
+        skipped_count INTEGER NOT NULL DEFAULT 0,
+        failed_count INTEGER NOT NULL DEFAULT 0,
+        cancelled_count INTEGER NOT NULL DEFAULT 0,
+        options_json TEXT,
+        created_at TEXT NOT NULL,
+        started_at TEXT,
+        finished_at TEXT
+      );
+
+      CREATE TABLE IF NOT EXISTS batch_items (
+        item_id TEXT PRIMARY KEY,
+        job_id TEXT NOT NULL,
+        collection_id TEXT,
+        url TEXT NOT NULL,
+        normalized_url TEXT,
+        source TEXT,
+        title_hint TEXT,
+        state TEXT NOT NULL,
+        rawdoc_id TEXT,
+        doc_id TEXT,
+        error_code TEXT,
+        error_message TEXT,
+        attempt_count INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY(job_id) REFERENCES batch_jobs(job_id)
+      );
+
       CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
         title,
         heading_path,
@@ -546,6 +1002,11 @@ export class KnowledgeStore {
       CREATE INDEX IF NOT EXISTS idx_chunks_rawdoc_id ON chunks(rawdoc_id);
       CREATE INDEX IF NOT EXISTS idx_chunks_normalized_url ON chunks(normalized_url);
       CREATE INDEX IF NOT EXISTS idx_chunks_parser_method ON chunks(parser_method);
+      CREATE INDEX IF NOT EXISTS idx_collections_root_url ON collections(normalized_root_url);
+      CREATE INDEX IF NOT EXISTS idx_collection_items_collection_id ON collection_items(collection_id);
+      CREATE INDEX IF NOT EXISTS idx_collection_items_normalized_url ON collection_items(normalized_url);
+      CREATE INDEX IF NOT EXISTS idx_batch_items_job_id ON batch_items(job_id);
+      CREATE INDEX IF NOT EXISTS idx_batch_items_normalized_url ON batch_items(normalized_url);
     `);
   }
 
@@ -689,6 +1150,123 @@ export class KnowledgeStore {
       FROM documents
       WHERE doc_id = ?
     `).get(docId) as DocumentRow | undefined;
+  }
+
+  private findCollection(collectionId: string): CollectionRow | undefined {
+    return this.database!.prepare(`
+      SELECT collection_id, title, root_url, normalized_root_url, source_type, state, created_at, updated_at
+      FROM collections
+      WHERE collection_id = ?
+    `).get(collectionId) as CollectionRow | undefined;
+  }
+
+  private loadCollectionSummary(collectionId: string): CollectionSummary {
+    const row = this.database!.prepare(`
+      SELECT
+        c.collection_id,
+        c.title,
+        c.root_url,
+        c.normalized_root_url,
+        c.source_type,
+        c.state,
+        c.created_at,
+        c.updated_at,
+        COUNT(ci.collection_item_id) AS item_count
+      FROM collections c
+      LEFT JOIN collection_items ci ON ci.collection_id = c.collection_id
+      WHERE c.collection_id = ?
+      GROUP BY c.collection_id
+    `).get(collectionId) as CollectionRow | undefined;
+    if (!row) {
+      throw new Error("Collection does not exist");
+    }
+    return toCollectionSummary(row);
+  }
+
+  private listBatchItems(jobId: string): BatchJobItem[] {
+    const rows = this.database!.prepare(`
+      SELECT item_id, job_id, collection_id, url, normalized_url, source, title_hint, state,
+        rawdoc_id, doc_id, error_code, error_message, attempt_count, created_at, updated_at
+      FROM batch_items
+      WHERE job_id = ?
+      ORDER BY created_at ASC
+    `).all(jobId) as unknown as BatchItemRow[];
+    return rows.map(toBatchJobItem);
+  }
+
+  private findBatchItem(itemId: string): BatchItemRow | undefined {
+    return this.database!.prepare(`
+      SELECT item_id, job_id, collection_id, url, normalized_url, source, title_hint, state,
+        rawdoc_id, doc_id, error_code, error_message, attempt_count, created_at, updated_at
+      FROM batch_items
+      WHERE item_id = ?
+    `).get(itemId) as BatchItemRow | undefined;
+  }
+
+  private async refreshBatchCounts(jobId: string): Promise<void> {
+    const rows = this.database!.prepare(`
+      SELECT state, COUNT(*) AS count
+      FROM batch_items
+      WHERE job_id = ?
+      GROUP BY state
+    `).all(jobId) as Array<{ state: BatchItemState; count: number }>;
+    const counts = new Map(rows.map((row) => [row.state, row.count]));
+    const saved = counts.get("saved") ?? 0;
+    const skipped = counts.get("skipped") ?? 0;
+    const failed = counts.get("failed") ?? 0;
+    const cancelled = counts.get("cancelled") ?? 0;
+    const terminal = saved + skipped + failed + cancelled;
+    const job = this.database!.prepare(`
+      SELECT total_count, state
+      FROM batch_jobs
+      WHERE job_id = ?
+    `).get(jobId) as { total_count: number; state: BatchJobState } | undefined;
+    if (!job) {
+      return;
+    }
+
+    const nextState: BatchJobState = terminal >= job.total_count
+      ? "succeeded"
+      : job.state === "queued"
+        ? "running"
+        : job.state;
+    const now = new Date().toISOString();
+    this.database!.prepare(`
+      UPDATE batch_jobs
+      SET saved_count = ?,
+          skipped_count = ?,
+          failed_count = ?,
+          cancelled_count = ?,
+          state = ?,
+          started_at = CASE WHEN started_at IS NULL THEN ? ELSE started_at END,
+          finished_at = CASE WHEN ? = 'succeeded' THEN ? ELSE finished_at END
+      WHERE job_id = ?
+    `).run(saved, skipped, failed, cancelled, nextState, now, nextState, now, jobId);
+  }
+
+  private async refreshCollectionState(collectionId: string): Promise<void> {
+    const rows = this.database!.prepare(`
+      SELECT state, COUNT(*) AS count
+      FROM collection_items
+      WHERE collection_id = ?
+      GROUP BY state
+    `).all(collectionId) as Array<{ state: BatchItemState; count: number }>;
+    const total = rows.reduce((sum, row) => sum + row.count, 0);
+    const saved = rows.find((row) => row.state === "saved")?.count ?? 0;
+    const skipped = rows.find((row) => row.state === "skipped")?.count ?? 0;
+    const failed = rows.find((row) => row.state === "failed")?.count ?? 0;
+    const useful = saved + skipped;
+    const state: CollectionState = useful === 0 && failed === 0
+      ? "draft"
+      : failed > 0 || useful < total
+        ? "partial"
+        : "active";
+    this.database!.prepare(`
+      UPDATE collections
+      SET state = ?,
+          updated_at = ?
+      WHERE collection_id = ?
+    `).run(state, new Date().toISOString(), collectionId);
   }
 
   private toStatus(row: ClipRow): ClipStatus {
@@ -963,6 +1541,72 @@ function pathsForActiveCapture(row: Pick<ClipRow, "rawdoc_id">): Pick<SavePaths,
   return {
     rawHtmlPath: rawHtmlPath(row.rawdoc_id),
     rawdocPath: rawdocMetaPath(row.rawdoc_id)
+  };
+}
+
+function toCollectionSummary(row: CollectionRow): CollectionSummary {
+  return {
+    collectionId: row.collection_id,
+    title: row.title,
+    rootUrl: row.root_url ?? undefined,
+    normalizedRootUrl: row.normalized_root_url ?? undefined,
+    sourceType: row.source_type,
+    state: row.state,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    itemCount: row.item_count ?? 0
+  };
+}
+
+function toCollectionItem(row: CollectionItemRow): CollectionItem {
+  return {
+    collectionItemId: row.collection_item_id,
+    collectionId: row.collection_id,
+    normalizedUrl: row.normalized_url,
+    docId: row.doc_id ?? undefined,
+    rawdocId: row.rawdoc_id ?? undefined,
+    title: row.title ?? undefined,
+    orderIndex: row.order_index,
+    depth: row.depth,
+    parentItemId: row.parent_item_id ?? undefined,
+    source: row.source ?? undefined,
+    state: row.state,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+function toBatchJobItem(row: BatchItemRow): BatchJobItem {
+  return {
+    itemId: row.item_id,
+    jobId: row.job_id,
+    collectionId: row.collection_id ?? undefined,
+    url: row.url,
+    normalizedUrl: row.normalized_url ?? undefined,
+    source: row.source ?? undefined,
+    titleHint: row.title_hint ?? undefined,
+    state: row.state,
+    rawdocId: row.rawdoc_id ?? undefined,
+    docId: row.doc_id ?? undefined,
+    errorCode: row.error_code ?? undefined,
+    errorMessage: row.error_message ?? undefined,
+    attemptCount: row.attempt_count,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+function toBatchJobResponse(row: BatchJobRow, items: BatchJobItem[]): BatchJobResponse {
+  return {
+    collectionId: row.collection_id ?? undefined,
+    jobId: row.job_id,
+    state: row.state,
+    total: row.total_count,
+    saved: row.saved_count,
+    skipped: row.skipped_count,
+    failed: row.failed_count,
+    cancelled: row.cancelled_count,
+    items
   };
 }
 

@@ -2,6 +2,10 @@ import { createKnowledgeApiClient } from "./api-client.js";
 import { getSettings, saveSettings } from "./settings.js";
 import {
   ActiveTabInfo,
+  BatchCandidate,
+  BatchDiscoverItem,
+  BatchDiscoverResult,
+  BatchJobResult,
   ClipDeleteMode,
   ClipListItem,
   ClipRequestBody,
@@ -41,6 +45,7 @@ const autoRefreshInput = mustGet<HTMLInputElement>("auto-refresh");
 const settingsButton = mustGet<HTMLButtonElement>("settings-button");
 const refreshButton = mustGet<HTMLButtonElement>("refresh-button");
 const saveButton = mustGet<HTMLButtonElement>("save-button");
+const saveSectionButton = mustGet<HTMLButtonElement>("save-section-button");
 const copyButton = mustGet<HTMLButtonElement>("copy-button");
 const removeButton = mustGet<HTMLButtonElement>("remove-button");
 const purgeButton = mustGet<HTMLButtonElement>("purge-button");
@@ -51,17 +56,22 @@ const tabJsonButton = mustGet<HTMLButtonElement>("tab-json");
 const tabRawdocButton = mustGet<HTMLButtonElement>("tab-rawdoc");
 const tabParserButton = mustGet<HTMLButtonElement>("tab-parser");
 const tabSavedButton = mustGet<HTMLButtonElement>("tab-saved");
+const tabBatchButton = mustGet<HTMLButtonElement>("tab-batch");
 const savedList = mustGet<HTMLDivElement>("saved-list");
+const batchOutput = mustGet<HTMLDivElement>("batch-output");
 
 let settings: ExtensionSettings = await getSettings();
 let activeTab: ActiveTabInfo | undefined;
 let lastPreview: PreviewResult | undefined;
 let savedClips: ClipListItem[] = [];
+let batchDiscover: BatchDiscoverResult | undefined;
+let batchJob: BatchJobResult | undefined;
+let batchPollTimer: number | undefined;
 
 let currentInputMode: InputMode = settings.defaultInputMode;
 let activeView: PanelView = settings.defaultPanelTab;
 let autoRefreshTimer: number | undefined;
-let pendingAction: "delete" | "preview" | "save" | undefined;
+let pendingAction: "batch" | "delete" | "preview" | "save" | undefined;
 
 autoRefreshInput.checked = settings.autoRefresh;
 applySettingsToUi();
@@ -74,6 +84,7 @@ updateActionButtons();
 refreshButton.addEventListener("click", () => preview());
 settingsButton.addEventListener("click", () => chrome.runtime.openOptionsPage());
 saveButton.addEventListener("click", () => save());
+saveSectionButton.addEventListener("click", () => discoverSection());
 copyButton.addEventListener("click", () => copyMarkdown());
 removeButton.addEventListener("click", () => deleteCurrentClip("remove"));
 purgeButton.addEventListener("click", () => deleteCurrentClip("purge"));
@@ -84,6 +95,7 @@ tabJsonButton.addEventListener("click", () => setView("json", true));
 tabRawdocButton.addEventListener("click", () => setView("rawdoc", true));
 tabParserButton.addEventListener("click", () => setView("parser", true));
 tabSavedButton.addEventListener("click", () => setView("saved", true));
+tabBatchButton.addEventListener("click", () => setView("batch", true));
 autoRefreshInput.addEventListener("change", () => persistPanelSettings());
 chrome.storage.onChanged.addListener((changes, areaName) => {
   if (areaName === "local" && hasSettingsChange(changes)) {
@@ -185,6 +197,123 @@ async function save(): Promise<void> {
     pendingAction = undefined;
     updateActionButtons();
   }
+}
+
+async function discoverSection(): Promise<void> {
+  await refreshActiveTab();
+  if (!activeTab || activeTab.isFileUrl) {
+    setStatus("Unavailable", "Batch section save only supports http(s) pages.");
+    return;
+  }
+  if (pendingAction) {
+    setStatus("Busy", "Wait for the current request to finish.");
+    return;
+  }
+
+  pendingAction = "batch";
+  updateActionButtons();
+  setStatus("Discovering", "Scanning this page for navigation links.");
+  try {
+    await refreshServerStatus();
+    const discovered = await collectNavigationLinks();
+    if (discovered.candidates.length === 0) {
+      batchDiscover = undefined;
+      setView("batch", false);
+      renderBatchOutput();
+      setStatus("No links", "No sidebar or navigation links were found.");
+      return;
+    }
+    batchDiscover = await createKnowledgeApiClient(settings).discoverBatch(discovered.pageUrl, discovered.candidates);
+    batchJob = undefined;
+    setView("batch", true);
+    setStatus("Ready", `${batchDiscover.items.filter((item) => item.selectedByDefault).length} pages selected for this section.`);
+  } catch (error) {
+    setStatus("Error");
+    renderError(error);
+  } finally {
+    pendingAction = undefined;
+    updateActionButtons();
+  }
+}
+
+async function startBatchJob(): Promise<void> {
+  if (!activeTab || !batchDiscover) {
+    return;
+  }
+  const selected = selectedBatchItems();
+  if (selected.length === 0) {
+    setStatus("Nothing selected", "Select at least one page to save.");
+    return;
+  }
+  pendingAction = "batch";
+  updateActionButtons();
+  setStatus("Starting", "Creating collection and batch job.");
+  try {
+    batchJob = await createKnowledgeApiClient(settings).createBatchJob({
+      sourcePageUrl: activeTab.url,
+      collection: {
+        title: collectionTitle(),
+        rootUrl: activeTab.url,
+        strategy: "create"
+      },
+      items: selected.map((item, index) => ({
+        url: item.url,
+        titleHint: item.titleHint,
+        source: item.source,
+        order: index,
+        depth: item.depth
+      }))
+    });
+    renderBatchOutput();
+    setStatus("Running", `Saving ${batchJob.total} pages into a collection.`);
+    pollBatchJob(batchJob.jobId);
+  } catch (error) {
+    setStatus("Error");
+    renderError(error);
+  } finally {
+    pendingAction = undefined;
+    updateActionButtons();
+  }
+}
+
+async function collectNavigationLinks(): Promise<{ pageUrl: string; title?: string; candidates: BatchCandidate[] }> {
+  if (!activeTab) {
+    throw new Error("No active tab");
+  }
+  return chrome.tabs.sendMessage(activeTab.tabId, {
+    type: "knowledge.discoverLinks"
+  }).catch(async (error) => {
+    if (!isMissingContentScriptError(error)) {
+      throw error;
+    }
+    await injectContentScript(activeTab!.tabId);
+    return chrome.tabs.sendMessage(activeTab!.tabId, {
+      type: "knowledge.discoverLinks"
+    });
+  });
+}
+
+function pollBatchJob(jobId: string): void {
+  window.clearTimeout(batchPollTimer);
+  batchPollTimer = window.setTimeout(async () => {
+    try {
+      batchJob = await createKnowledgeApiClient(settings).batchJob(jobId);
+      renderBatchOutput();
+      const done = batchJob.saved + batchJob.skipped + batchJob.failed + batchJob.cancelled;
+      setStatus(
+        batchJob.state === "succeeded" ? "Batch complete" : "Running",
+        `${done} / ${batchJob.total} pages finished.`
+      );
+      if (batchJob.state === "queued" || batchJob.state === "running") {
+        pollBatchJob(jobId);
+      } else {
+        await loadSavedClips();
+        await notifyBadgeRefresh();
+      }
+    } catch (error) {
+      setStatus("Error", error instanceof Error ? error.message : String(error));
+    }
+  }, 1000);
 }
 
 async function copyMarkdown(): Promise<void> {
@@ -300,8 +429,13 @@ function renderOutput(): void {
   rawdocOutput.hidden = activeView !== "rawdoc";
   parserOutput.hidden = activeView !== "parser";
   savedList.hidden = activeView !== "saved";
+  batchOutput.hidden = activeView !== "batch";
   if (activeView === "saved") {
     renderSavedList();
+    return;
+  }
+  if (activeView === "batch") {
+    renderBatchOutput();
     return;
   }
 
@@ -310,6 +444,7 @@ function renderOutput(): void {
     codeOutput.textContent = "";
     rawdocOutput.textContent = "";
     parserOutput.replaceChildren();
+    batchOutput.replaceChildren();
     return;
   }
   previewOutput.replaceChildren(renderMarkdown(lastPreview.markdown));
@@ -339,6 +474,7 @@ function setView(view: PanelView, persist = false): void {
   tabRawdocButton.dataset.active = String(view === "rawdoc");
   tabParserButton.dataset.active = String(view === "parser");
   tabSavedButton.dataset.active = String(view === "saved");
+  tabBatchButton.dataset.active = String(view === "batch");
   if (persist) {
     settings = { ...settings, defaultPanelTab: view };
     void saveSettings({ defaultPanelTab: view });
@@ -426,6 +562,106 @@ function renderSavedList(): void {
   }));
 }
 
+function renderBatchOutput(): void {
+  if (batchJob) {
+    const summary = document.createElement("section");
+    summary.className = "batch-summary";
+
+    const title = document.createElement("div");
+    title.className = "batch-title";
+    title.textContent = collectionTitle();
+
+    const meta = document.createElement("div");
+    meta.className = "batch-meta";
+    const done = batchJob.saved + batchJob.skipped + batchJob.failed + batchJob.cancelled;
+    meta.textContent = [
+      `Job ${shortId(batchJob.jobId)}`,
+      batchJob.collectionId ? `Collection ${shortId(batchJob.collectionId)}` : undefined,
+      `${done} / ${batchJob.total}`,
+      `saved ${batchJob.saved}`,
+      `skipped ${batchJob.skipped}`,
+      `failed ${batchJob.failed}`
+    ].filter(Boolean).join(" | ");
+
+    summary.append(title, meta);
+    const list = document.createElement("div");
+    list.className = "batch-list";
+    for (const item of batchJob.items) {
+      const row = document.createElement("article");
+      row.className = "batch-item";
+
+      const spacer = document.createElement("span");
+      spacer.textContent = stateSymbol(item.state);
+
+      const body = document.createElement("div");
+      const itemTitle = document.createElement("div");
+      itemTitle.className = "batch-title";
+      itemTitle.textContent = item.titleHint || item.normalizedUrl || item.url;
+      const itemUrl = document.createElement("div");
+      itemUrl.className = "batch-url";
+      itemUrl.textContent = item.normalizedUrl || item.url;
+      const itemMeta = document.createElement("div");
+      itemMeta.className = "batch-meta";
+      itemMeta.textContent = [item.state, item.errorMessage].filter(Boolean).join(" | ");
+      body.append(itemTitle, itemUrl, itemMeta);
+      row.append(spacer, body);
+      list.append(row);
+    }
+    batchOutput.replaceChildren(summary, list);
+    return;
+  }
+
+  if (!batchDiscover) {
+    batchOutput.replaceChildren(makeEmptyState("No section discovery yet."));
+    return;
+  }
+
+  const summary = document.createElement("section");
+  summary.className = "batch-summary";
+  const title = document.createElement("div");
+  title.className = "batch-title";
+  title.textContent = collectionTitle();
+  const meta = document.createElement("div");
+  meta.className = "batch-meta";
+  meta.textContent = [
+    `${batchDiscover.stats.selectedCount} selected`,
+    `${batchDiscover.stats.dedupedCount} discovered`,
+    batchDiscover.pageUrl
+  ].join(" | ");
+  const actions = document.createElement("div");
+  actions.className = "batch-actions";
+  const start = document.createElement("button");
+  start.textContent = "Start";
+  start.addEventListener("click", () => void startBatchJob());
+  actions.append(start);
+  summary.append(title, meta, actions);
+
+  const list = document.createElement("div");
+  list.className = "batch-list";
+  for (const item of batchDiscover.items) {
+    const row = document.createElement("label");
+    row.className = "batch-item";
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.checked = item.selectedByDefault;
+    checkbox.dataset.url = item.normalizedUrl;
+    const body = document.createElement("div");
+    const itemTitle = document.createElement("div");
+    itemTitle.className = "batch-title";
+    itemTitle.textContent = item.titleHint || item.normalizedUrl;
+    const itemUrl = document.createElement("div");
+    itemUrl.className = "batch-url";
+    itemUrl.textContent = item.normalizedUrl;
+    const itemMeta = document.createElement("div");
+    itemMeta.className = "batch-meta";
+    itemMeta.textContent = [item.source, item.status === "parsed" ? "already saved" : item.status].filter(Boolean).join(" | ");
+    body.append(itemTitle, itemUrl, itemMeta);
+    row.append(checkbox, body);
+    list.append(row);
+  }
+  batchOutput.replaceChildren(summary, list);
+}
+
 async function reloadSettings(): Promise<void> {
   const previousMode = currentInputMode;
   settings = await getSettings();
@@ -483,12 +719,14 @@ function renderError(error: unknown): void {
   rawdocOutput.hidden = true;
   parserOutput.hidden = true;
   savedList.hidden = true;
+  batchOutput.hidden = true;
   activeView = "preview";
   tabPreviewButton.dataset.active = "true";
   tabJsonButton.dataset.active = "false";
   tabRawdocButton.dataset.active = "false";
   tabParserButton.dataset.active = "false";
   tabSavedButton.dataset.active = "false";
+  tabBatchButton.dataset.active = "false";
   const message = error instanceof Error ? error.message : String(error);
   const pre = document.createElement("pre");
   pre.textContent = message;
@@ -504,6 +742,7 @@ function updateActionButtons(): void {
   const busy = Boolean(pendingAction);
   copyButton.disabled = busy || !lastPreview?.markdown;
   saveButton.disabled = busy || !activeTab;
+  saveSectionButton.disabled = busy || !activeTab || (activeTab?.isFileUrl ?? false);
   refreshButton.disabled = busy;
   settingsButton.disabled = busy;
   removeButton.disabled = busy || state !== "parsed";
@@ -549,6 +788,48 @@ function summarizeStatus(status: PreviewResult["status"]): string {
     return `Raw capture ${shortId(status.rawdocId)} is stored and ready to reparse.`;
   }
   return `Parsed doc ${shortId(status.docId)} is active for this page.`;
+}
+
+function selectedBatchItems(): BatchDiscoverItem[] {
+  if (!batchDiscover) {
+    return [];
+  }
+  const selectedUrls = new Set(
+    Array.from(batchOutput.querySelectorAll<HTMLInputElement>("input[type='checkbox'][data-url]"))
+      .filter((input) => input.checked)
+      .map((input) => input.dataset.url)
+      .filter(Boolean) as string[]
+  );
+  if (selectedUrls.size === 0) {
+    return [];
+  }
+  return batchDiscover.items.filter((item) => selectedUrls.has(item.normalizedUrl));
+}
+
+function collectionTitle(): string {
+  if (activeTab?.title?.trim()) {
+    return activeTab.title.trim();
+  }
+  if (lastPreview?.document.meta.title) {
+    return lastPreview.document.meta.title;
+  }
+  return "Knowledge collection";
+}
+
+function stateSymbol(state: string): string {
+  if (state === "saved") {
+    return "OK";
+  }
+  if (state === "skipped") {
+    return "SK";
+  }
+  if (state === "failed") {
+    return "ERR";
+  }
+  if (state === "cancelled") {
+    return "X";
+  }
+  return "...";
 }
 
 function defaultStatusDetail(text: string): string {

@@ -1,5 +1,5 @@
 export type InputMode = "browser_html" | "server_fetch";
-export type PanelView = "preview" | "json" | "rawdoc" | "parser" | "saved";
+export type PanelView = "preview" | "json" | "rawdoc" | "parser" | "saved" | "batch";
 export type ClipState = "empty" | "captured" | "parsed";
 export type ClipDeleteMode = "remove" | "purge";
 
@@ -151,4 +151,76 @@ export interface HealthResult {
     fetchTimeoutMs: number;
     maxHtmlBytes: number;
   };
+}
+
+export interface BatchCandidate {
+  url: string;
+  text?: string;
+  titleHint?: string;
+  source?: string;
+  order?: number;
+  depth?: number;
+}
+
+export interface BatchDiscoverItem {
+  url: string;
+  normalizedUrl: string;
+  titleHint?: string;
+  source?: string;
+  order: number;
+  depth: number;
+  selectedByDefault: boolean;
+  status: ClipState;
+  docId?: string;
+  rawdocId?: string;
+}
+
+export interface BatchDiscoverResult {
+  pageUrl: string;
+  items: BatchDiscoverItem[];
+  stats: {
+    inputCount: number;
+    dedupedCount: number;
+    selectedCount: number;
+  };
+}
+
+export type BatchItemState =
+  | "pending"
+  | "fetching"
+  | "parsing"
+  | "saving"
+  | "saved"
+  | "skipped"
+  | "failed"
+  | "cancelled";
+
+export interface BatchJobItem {
+  itemId: string;
+  jobId: string;
+  collectionId?: string;
+  url: string;
+  normalizedUrl?: string;
+  source?: string;
+  titleHint?: string;
+  state: BatchItemState;
+  rawdocId?: string;
+  docId?: string;
+  errorCode?: string;
+  errorMessage?: string;
+  attemptCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BatchJobResult {
+  collectionId?: string;
+  jobId: string;
+  state: "queued" | "running" | "succeeded" | "failed" | "cancelled";
+  total: number;
+  saved: number;
+  skipped: number;
+  failed: number;
+  cancelled: number;
+  items: BatchJobItem[];
 }

@@ -344,7 +344,17 @@ function expectStoreSchema(root: string): void {
       .map((row) => (row as { name: string }).name);
 
     const publicTables = tables.filter((table) => !table.startsWith("chunks_fts_"));
-    expect(publicTables).toEqual(["chunks", "chunks_fts", "clips", "documents", "rawdocs"]);
+    expect(publicTables).toEqual([
+      "batch_items",
+      "batch_jobs",
+      "chunks",
+      "chunks_fts",
+      "clips",
+      "collection_items",
+      "collections",
+      "documents",
+      "rawdocs"
+    ]);
 
     const columnsByTable = Object.fromEntries(
       tables.map((table) => [
@@ -416,9 +426,67 @@ function expectStoreSchema(root: string): void {
       "created_at",
       "updated_at"
     ]);
+    expect(columnsByTable.collections).toEqual([
+      "collection_id",
+      "title",
+      "root_url",
+      "normalized_root_url",
+      "source_type",
+      "state",
+      "created_at",
+      "updated_at"
+    ]);
+    expect(columnsByTable.collection_items).toEqual([
+      "collection_item_id",
+      "collection_id",
+      "normalized_url",
+      "doc_id",
+      "rawdoc_id",
+      "title",
+      "order_index",
+      "depth",
+      "parent_item_id",
+      "source",
+      "state",
+      "created_at",
+      "updated_at"
+    ]);
+    expect(columnsByTable.batch_jobs).toEqual([
+      "job_id",
+      "collection_id",
+      "source_page_url",
+      "mode",
+      "state",
+      "total_count",
+      "saved_count",
+      "skipped_count",
+      "failed_count",
+      "cancelled_count",
+      "options_json",
+      "created_at",
+      "started_at",
+      "finished_at"
+    ]);
+    expect(columnsByTable.batch_items).toEqual([
+      "item_id",
+      "job_id",
+      "collection_id",
+      "url",
+      "normalized_url",
+      "source",
+      "title_hint",
+      "state",
+      "rawdoc_id",
+      "doc_id",
+      "error_code",
+      "error_message",
+      "attempt_count",
+      "created_at",
+      "updated_at"
+    ]);
 
     const userVersion = database.prepare("PRAGMA user_version").get() as { user_version: number };
-    expect(userVersion.user_version).toBe(5);
+    expect(userVersion.user_version).toBe(6);
 
     for (const columns of Object.values(columnsByTable)) {
       expect(columns.filter((column) => column.endsWith("_path") && column !== "heading_path")).toEqual([]);

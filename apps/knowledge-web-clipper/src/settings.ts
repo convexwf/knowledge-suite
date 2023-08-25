@@ -67,7 +67,7 @@ function asInputMode(value: unknown, fallback: InputMode): InputMode {
 }
 
 function asPanelView(value: unknown, fallback: PanelView): PanelView {
-  return value === "preview" || value === "json" || value === "rawdoc" || value === "parser" || value === "saved"
+  return value === "preview" || value === "json" || value === "rawdoc" || value === "parser" || value === "saved" || value === "batch"
     ? value
     : fallback;
 }

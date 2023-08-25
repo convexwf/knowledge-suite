@@ -161,8 +161,13 @@ button[data-active="true"] {
 #save-button,
 #copy-button,
 #remove-button,
-#purge-button {
+#purge-button,
+#save-section-button {
   min-width: 72px;
+}
+
+#save-section-button {
+  border-color: #8aa4c2;
 }
 
 #purge-button {
@@ -418,6 +423,57 @@ button:disabled {
   display: grid;
   gap: 0;
   overflow: auto;
+}
+
+.batch-output {
+  background: #ffffff;
+  color: #172033;
+  display: grid;
+  gap: 12px;
+  overflow: auto;
+  padding: 14px;
+}
+
+.batch-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.batch-summary,
+.batch-item {
+  border: 1px solid #d9e1ea;
+  border-radius: 6px;
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+}
+
+.batch-title {
+  color: #172033;
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.batch-url,
+.batch-meta {
+  color: #526174;
+  font-size: 11px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.batch-list {
+  display: grid;
+  gap: 8px;
+}
+
+.batch-item {
+  grid-template-columns: auto 1fr;
+}
+
+.batch-item input {
+  margin-top: 2px;
 }
 
 .saved-empty {

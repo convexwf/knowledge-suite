@@ -7,12 +7,17 @@
     knowledgeWindow.__knowledgeWebClipperContentLoaded = true;
 
     chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-      if (message?.type !== "knowledge.collectSnapshot") {
-        return false;
+      if (message?.type === "knowledge.collectSnapshot") {
+        sendResponse(collectSnapshot());
+        return true;
       }
 
-      sendResponse(collectSnapshot());
-      return true;
+      if (message?.type === "knowledge.discoverLinks") {
+        sendResponse(collectNavigationLinks());
+        return true;
+      }
+
+      return false;
     });
   }
 
@@ -93,5 +98,122 @@
       container.append(selection.getRangeAt(index).cloneContents());
     }
     return container.innerHTML || undefined;
+  }
+
+  function collectNavigationLinks() {
+    const candidates: Array<{
+      url: string;
+      text?: string;
+      source?: string;
+      order: number;
+      depth: number;
+    }> = [];
+    const seen = new Set<string>();
+    const containers = findNavigationContainers();
+
+    for (const container of containers) {
+      const source = sourceForContainer(container);
+      const links = Array.from(container.querySelectorAll<HTMLAnchorElement>("a[href]"));
+      for (const link of links) {
+        pushCandidate(link, source, depthForLink(link, container));
+      }
+    }
+
+    for (const selector of [
+      'link[rel="next"]',
+      'a[rel="next"]',
+      'a[aria-label*="next" i]',
+      'a[title*="next" i]'
+    ]) {
+      const element = document.querySelector<HTMLAnchorElement | HTMLLinkElement>(selector);
+      if (element) {
+        pushCandidate(element, "next", 0);
+      }
+    }
+
+    return {
+      pageUrl: location.href,
+      title: document.title,
+      candidates
+    };
+
+    function pushCandidate(link: HTMLAnchorElement | HTMLLinkElement, source: string, depth: number): void {
+      const rawHref = link.href;
+      if (!rawHref) {
+        return;
+      }
+      let url: URL;
+      try {
+        url = new URL(rawHref, location.href);
+      } catch {
+        return;
+      }
+      if (url.protocol !== "http:" && url.protocol !== "https:") {
+        return;
+      }
+      url.hash = "";
+      const normalized = url.toString();
+      if (seen.has(normalized)) {
+        return;
+      }
+      seen.add(normalized);
+      const text = "textContent" in link ? link.textContent?.trim().replace(/\s+/g, " ") : undefined;
+      candidates.push({
+        url: normalized,
+        text: text || link.getAttribute("aria-label") || link.getAttribute("title") || undefined,
+        source,
+        order: candidates.length,
+        depth
+      });
+    }
+  }
+
+  function findNavigationContainers(): Element[] {
+    const selectors = [
+      "nav",
+      "aside",
+      '[role="navigation"]',
+      '[aria-label*="nav" i]',
+      '[aria-label*="sidebar" i]',
+      '[aria-label*="docs" i]',
+      '[class*="sidebar" i]',
+      '[class*="toc" i]',
+      '[class*="docs" i]'
+    ];
+    const seen = new Set<Element>();
+    const containers: Element[] = [];
+    for (const selector of selectors) {
+      for (const element of Array.from(document.querySelectorAll(selector))) {
+        if (!seen.has(element) && element.querySelector("a[href]")) {
+          seen.add(element);
+          containers.push(element);
+        }
+      }
+    }
+    return containers.slice(0, 12);
+  }
+
+  function sourceForContainer(container: Element): string {
+    const label = container.getAttribute("aria-label") ?? container.getAttribute("role") ?? container.className;
+    const text = String(label).toLowerCase();
+    if (text.includes("toc")) {
+      return "toc";
+    }
+    if (text.includes("sidebar") || text.includes("docs")) {
+      return "sidebar";
+    }
+    return container.tagName.toLowerCase() === "nav" ? "nav" : "sidebar";
+  }
+
+  function depthForLink(link: Element, container: Element): number {
+    let depth = 0;
+    let current: Element | null = link.parentElement;
+    while (current && current !== container) {
+      if (current.matches("ul, ol, [role='list']")) {
+        depth += 1;
+      }
+      current = current.parentElement;
+    }
+    return Math.max(0, depth - 1);
   }
 })();

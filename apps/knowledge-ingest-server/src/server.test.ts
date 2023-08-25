@@ -1,6 +1,7 @@
 import { access, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import type { FastifyInstance } from "fastify";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { resolveInsideRoot } from "./path-guard.js";
 import { buildServer } from "./server.js";
@@ -982,6 +983,111 @@ describe("knowledge ingest server", () => {
     await app.close();
   });
 
+  it("creates a collection and saves a batch of server_fetch pages", async () => {
+    globalThis.fetch = async (input) => {
+      const url = String(input);
+      const title = url.includes("/guide") ? "Guide" : "Overview";
+      return new Response(`<!doctype html>
+        <html>
+          <head><title>${title}</title></head>
+          <body><article><h1>${title}</h1><p>${title} explains a useful docs page with enough text for parsing into a knowledge document.</p></article></body>
+        </html>`, {
+        status: 200,
+        headers: {
+          "content-type": "text/html; charset=utf-8"
+        }
+      });
+    };
+
+    const app = await buildServer({
+      host: "127.0.0.1",
+      port: 0,
+      token: "test-token",
+      storeRoot,
+      fetchTimeoutMs: 1000,
+      maxHtmlBytes: 1024 * 1024
+    });
+
+    const discover = await app.inject({
+      method: "POST",
+      url: "/api/batch/discover",
+      headers: { authorization: "Bearer test-token" },
+      payload: {
+        pageUrl: "https://docs.example.com/oss/overview",
+        candidates: [
+          { url: "https://docs.example.com/oss/overview", text: "Overview", source: "sidebar", order: 0 },
+          { url: "https://docs.example.com/oss/guide#top", text: "Guide", source: "sidebar", order: 1 },
+          { url: "https://other.example.com/out", text: "Outside", source: "sidebar", order: 2 }
+        ],
+        scope: {
+          sameOrigin: true,
+          pathPrefix: "/oss/",
+          maxItems: 10
+        }
+      }
+    });
+
+    expect(discover.statusCode).toBe(200);
+    expect(discover.json().items).toHaveLength(2);
+    expect(discover.json().stats).toMatchObject({
+      inputCount: 3,
+      dedupedCount: 2,
+      selectedCount: 2
+    });
+
+    const createJob = await app.inject({
+      method: "POST",
+      url: "/api/batch/jobs",
+      headers: { authorization: "Bearer test-token" },
+      payload: {
+        sourcePageUrl: "https://docs.example.com/oss/overview",
+        collection: {
+          title: "Example Docs",
+          rootUrl: "https://docs.example.com/oss/overview",
+          strategy: "create"
+        },
+        items: discover.json().items.map((item: { url: string; titleHint?: string; source?: string; order: number; depth: number }) => ({
+          url: item.url,
+          titleHint: item.titleHint,
+          source: item.source,
+          order: item.order,
+          depth: item.depth
+        })),
+        options: {
+          skipExisting: true,
+          maxConcurrency: 2
+        }
+      }
+    });
+
+    expect(createJob.statusCode).toBe(200);
+    expect(createJob.json().collectionId).toEqual(expect.any(String));
+    expect(createJob.json().jobId).toEqual(expect.any(String));
+
+    const job = await waitForBatchJob(app, createJob.json().jobId);
+    expect(job.state).toBe("succeeded");
+    expect(job.saved).toBe(2);
+    expect(job.failed).toBe(0);
+    expect(job.items.every((item: { docId?: string }) => item.docId)).toBe(true);
+
+    const collection = await app.inject({
+      method: "GET",
+      url: `/api/collections/${createJob.json().collectionId}`,
+      headers: { authorization: "Bearer test-token" }
+    });
+
+    expect(collection.statusCode).toBe(200);
+    expect(collection.json().collection).toMatchObject({
+      title: "Example Docs",
+      state: "active",
+      itemCount: 2
+    });
+    expect(collection.json().items.map((item: { title?: string }) => item.title)).toEqual(["Overview", "Guide"]);
+    expect(collection.json().items.every((item: { docId?: string }) => item.docId)).toBe(true);
+
+    await app.close();
+  });
+
   it("rejects non-HTML server_fetch responses", async () => {
     globalThis.fetch = async () => new Response("{}", {
       status: 200,
@@ -1014,3 +1120,24 @@ describe("knowledge ingest server", () => {
     await app.close();
   });
 });
+
+async function waitForBatchJob(app: FastifyInstance, jobId: string): Promise<{
+  state: string;
+  saved: number;
+  failed: number;
+  items: Array<{ docId?: string }>;
+}> {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const response = await app.inject({
+      method: "GET",
+      url: `/api/batch/jobs/${jobId}`,
+      headers: { authorization: "Bearer test-token" }
+    });
+    const body = response.json();
+    if (body.state !== "queued" && body.state !== "running") {
+      return body;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error("Timed out waiting for batch job");
+}
