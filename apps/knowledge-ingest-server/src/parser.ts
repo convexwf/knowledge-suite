@@ -1066,12 +1066,17 @@ function isLikelyNoise(value: string): boolean {
   return /\b(nav|navbar|navigation|menu|sidebar|modal|overlay|popup|popover|tooltip|toast|drawer|cookie|cookies|consent|banner|advert|advertisement|ads?|share|social|subscribe|newsletter|promo|recommend|related|breadcrumb|footer|header|floating|sticky|fixed)\b/i.test(value);
 }
 
+const SECTION_NODE_SELECTOR = "h1,h2,h3,h4,h5,h6,p,pre,blockquote,ul,ol,figure,table,img,div";
+
 function extractSections(root: Element, title: string): KnowledgeDocument["sections"] {
   const sections: KnowledgeDocument["sections"] = [];
-  const nodes = root.querySelectorAll("h1,h2,h3,h4,h5,h6,p,pre,blockquote,ul,ol,figure,table");
+  const nodes = root.querySelectorAll(SECTION_NODE_SELECTOR);
 
   for (const node of nodes) {
     const tagName = node.tagName.toLowerCase();
+    if (isInsideMediaContainer(node)) {
+      continue;
+    }
     const text = normalizeText(node.textContent ?? "");
     const hasMedia = Boolean(node.querySelector("img"));
     if ((!text && !hasMedia && tagName !== "table") || (text === title && !hasMedia)) {
@@ -1112,26 +1117,11 @@ function extractSections(root: Element, title: string): KnowledgeDocument["secti
       continue;
     }
 
-    if (tagName === "figure") {
-      const assets = [...node.querySelectorAll("img")]
-        .map((img) => ({
-          asset_id: makeId(),
-          source_url: img.getAttribute("src") || undefined,
-          alt: normalizeText(img.getAttribute("alt") ?? "") || undefined,
-          caption: normalizeText(
-            node.querySelector("figcaption")?.textContent ??
-            img.getAttribute("alt") ??
-            ""
-          ) || null
-        }))
-        .filter((asset) => asset.source_url);
-      const caption = normalizeText(node.querySelector("figcaption")?.textContent ?? "");
-      sections.push({
-        section_id: makeId(),
-        type: "figure",
-        content: caption,
-        assets
-      });
+    if (tagName === "figure" || tagName === "img" || isMediaContainer(node)) {
+      const section = figureSectionFromNode(node);
+      if (section) {
+        sections.push(section);
+      }
       continue;
     }
 
@@ -1153,6 +1143,71 @@ function extractSections(root: Element, title: string): KnowledgeDocument["secti
   }
 
   return dedupeAdjacent(sections);
+}
+
+function isInsideMediaContainer(node: Element): boolean {
+  const parent = node.parentElement;
+  if (!parent) {
+    return false;
+  }
+  return Boolean(closestMediaContainer(parent));
+}
+
+function closestMediaContainer(node: Element): Element | undefined {
+  let current: Element | null = node;
+  while (current) {
+    if (isMediaContainer(current)) {
+      return current;
+    }
+    current = current.parentElement;
+  }
+  return undefined;
+}
+
+function isMediaContainer(node: Element): boolean {
+  if (node.tagName.toLowerCase() !== "div" || !node.querySelector("img")) {
+    return false;
+  }
+  if (node.querySelector("h1,h2,h3,h4,h5,h6,ul,ol,table,pre,blockquote")) {
+    return false;
+  }
+  const text = normalizeText(node.textContent ?? "");
+  const imageCount = node.querySelectorAll("img").length;
+  return imageCount > 0 && text.length <= 240;
+}
+
+function figureSectionFromNode(node: Element): KnowledgeDocument["sections"][number] | undefined {
+  const tagName = node.tagName.toLowerCase();
+  const images = tagName === "img" ? [node] : [...node.querySelectorAll("img")];
+  const assets = images
+    .map((img) => ({
+      asset_id: makeId(),
+      source_url: img.getAttribute("src") || undefined,
+      alt: normalizeText(img.getAttribute("alt") ?? "") || undefined,
+      caption: figureCaption(node, img)
+    }))
+    .filter((asset) => asset.source_url);
+  if (assets.length === 0) {
+    return undefined;
+  }
+
+  const caption = tagName === "img" ? assets[0].caption ?? "" : figureCaption(node, images[0]) ?? "";
+  return {
+    section_id: makeId(),
+    type: "figure",
+    content: caption,
+    assets
+  };
+}
+
+function figureCaption(container: Element, image: Element | undefined): string | null {
+  const caption = normalizeText(
+    container.querySelector("figcaption")?.textContent ??
+    container.querySelector(":scope > p")?.textContent ??
+    image?.getAttribute("alt") ??
+    ""
+  );
+  return caption || null;
 }
 
 function textToParagraphSections(text: string, title: string): KnowledgeDocument["sections"] {

@@ -569,6 +569,64 @@ describe("knowledge ingest server", () => {
     await app.close();
   });
 
+  it("renders GitHub markdown image containers in Defuddle and DOM fallback candidates", async () => {
+    const app = await buildServer({
+      host: "127.0.0.1",
+      port: 0,
+      token: "test-token",
+      storeRoot,
+      fetchTimeoutMs: 1000,
+      maxHtmlBytes: 1024 * 1024
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/clip/preview",
+      headers: { authorization: "Bearer test-token" },
+      payload: {
+        inputMode: "browser_html",
+        snapshot: {
+          pageUrl: "https://github.com/datawhalechina/hello-agents/blob/main/docs/chapter14/example.md",
+          pageTitle: "Example GitHub Markdown",
+          title: "Example GitHub Markdown",
+          html: `<!doctype html>
+            <html>
+              <head><title>Example GitHub Markdown</title></head>
+              <body>
+                <article class="markdown-body entry-content container-lg">
+                  <h1>第十四章 自动化深度研究智能体</h1>
+                  <p>此次系统仍然采用经典的前后端分离架构，如图 14.1 所示。</p>
+                  <div align="center" dir="auto">
+                    <a target="_blank" href="https://raw.githubusercontent.com/datawhalechina/Hello-Agents/main/docs/images/14-figures/14-1.png">
+                      <img src="https://raw.githubusercontent.com/datawhalechina/Hello-Agents/main/docs/images/14-figures/14-1.png" alt="" width="85%" style="max-width: 100%;">
+                    </a>
+                    <p dir="auto">图 14.1 深度研究助手技术架构</p>
+                  </div>
+                  <p>系统分为四层架构设计，包含前端、后端、智能体和外部服务。</p>
+                </article>
+              </body>
+            </html>`,
+          capturedAt: "2026-05-11T02:00:00.000Z",
+          meta: {}
+        }
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().markdown).toContain(
+      "![图 14.1 深度研究助手技术架构](https://raw.githubusercontent.com/datawhalechina/Hello-Agents/main/docs/images/14-figures/14-1.png)"
+    );
+    expect(response.json().markdown).toContain("图 14.1 深度研究助手技术架构");
+    const domFallback = response.json().candidatePreviews.find(
+      (candidate: { method: string }) => candidate.method === "dom_fallback"
+    );
+    expect(domFallback?.markdown).toContain(
+      "![图 14.1 深度研究助手技术架构](https://raw.githubusercontent.com/datawhalechina/Hello-Agents/main/docs/images/14-figures/14-1.png)"
+    );
+
+    await app.close();
+  });
+
   it("uses a matched site adapter as a scored parser candidate", async () => {
     const app = await buildServer({
       host: "127.0.0.1",
