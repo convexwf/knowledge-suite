@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <title>Rerank Overview - Cohere Docs</title>
+    <meta name="description" content="Learn how Cohere Rerank improves search relevance.">
+  </head>
+  <body>
+    <header class="fern-header-content"><button id="fern-search-button">Search docs</button><button id="fern-ask-ai-button">Ask AI</button></header>
+    <aside id="fern-sidebar">Navigation sidebar should not enter markdown.</aside>
+    <main>
+      <article>
+        <h1>Rerank Overview</h1>
+        <p>Use Rerank to sort search results by relevance. Rerank accepts a query and a list of documents, then returns an ordered list with relevance scores.</p>
+        <h2>How reranking works</h2>
+        <p>The endpoint compares each document to the query and assigns a relevance score. Applications can use the score to reorder search results, recommendations, and retrieved context.</p>
+        <h2>When to use Rerank</h2>
+        <p>Use reranking after lexical search, vector search, or hybrid retrieval. It is especially useful when the first retrieval pass returns candidates that are related but not equally helpful.</p>
+        <pre><code>const results = await cohere.rerank({ query, documents });</code></pre>
+      </article>
+    </main>
+    <footer id="fern-footer">Footer links</footer>
+  </body>
+</html>

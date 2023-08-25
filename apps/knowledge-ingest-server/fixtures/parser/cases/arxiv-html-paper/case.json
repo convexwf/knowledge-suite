@@ -1,0 +1,27 @@
+{
+  "id": "arxiv-html-paper",
+  "title": "A Fixture Paper for Retrieval",
+  "priority": "p0",
+  "status": "active",
+  "source": {
+    "pageUrl": "https://arxiv.org/html/2401.00001v1",
+    "canonicalUrl": "https://arxiv.org/html/2401.00001v1",
+    "capturedAt": "2026-05-21T00:00:00.000Z",
+    "captureMode": "browser_html",
+    "notes": "LaTeXML-like arXiv HTML case protects paper metadata, tags, figures, and references."
+  },
+  "expectations": {
+    "parserMethod": "site_adapter",
+    "parserProfile": "arxiv_html",
+    "requiredCandidates": [
+      { "method": "site_adapter", "adapterId": "arxiv_html" },
+      { "method": "defuddle" }
+    ],
+    "minTextLength": 650,
+    "titleIncludes": ["Fixture Paper"],
+    "authorsInclude": ["Ada Lovelace"],
+    "tagsInclude": ["paper:work_id:arxiv:2401.00001v1", "paper:variant:preprint"],
+    "markdownIncludes": ["![Architecture diagram](https://arxiv.org/html/figures/example.png)", "References"],
+    "documentTextIncludes": ["retrieval augmented generation systems need evaluation fixtures"]
+  }
+}

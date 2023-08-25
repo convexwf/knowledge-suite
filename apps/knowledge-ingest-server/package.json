@@ -8,6 +8,8 @@
     "build": "tsc -p tsconfig.json",
     "check": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --exclude 'dist/**'",
+    "fixtures:parser": "vitest run src/parser-fixtures.test.ts",
+    "fixtures:parser:update": "UPDATE_PARSER_FIXTURES=1 vitest run src/parser-fixtures.test.ts",
     "dev": "node --enable-source-maps dist/index.js",
     "start": "node --enable-source-maps dist/index.js"
   },

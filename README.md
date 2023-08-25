@@ -155,6 +155,7 @@ This project intentionally started with a smaller parser surface than Obsidian C
 | P1 | Add parser candidate previews | Preview responses include viable parser candidates; the side panel can switch active candidate from the Preview dropdown and save by `candidateId`. |
 | P1 | Add SQLite chunks and FTS search | Saved documents are chunked into SQLite FTS and exposed through `/api/search`. |
 | P1 | Add context packer | `/api/context` returns citation-ready full chunk content with trace support. |
+| P1 | Add parser fixture corpus smoke suite | `fixtures:parser` replays 5 offline P0 cases for Fern docs, Freedium, arXiv HTML, generic article, and selection clipping with Document/Markdown/candidate snapshots. |
 | P2 | Add TypeScript site adapter registry | Config adapters are loaded through a typed registry with URL matching, canonical/fetch transforms, and duplicate-id validation. |
 | P2 | Port high-value config adapters | Current adapters include Fern docs, Freedium, Medium, arXiv HTML, Reddit, Meituan Tech, Engineering FB, Blog Google, Smashing Magazine, All Things Distributed, Brendan Gregg, and Juejin. |
 | P2 | Add Reddit site adapter | Reddit/Shreddit posts now have a dedicated adapter with comment-tree extraction and regression coverage for browser HTML clipping. |
@@ -180,7 +181,7 @@ This project intentionally started with a smaller parser surface than Obsidian C
 | Priority | TODO | Notes |
 | --- | --- | --- |
 | P1 | Improve extraction quality scoring | Current scoring covers text length, section count, density, links, images, tables, code, and adapter bonus; still needs title similarity and noise-ratio metrics. |
-| P1 | Build real parser fixture corpus | Use representative pages from `knowledge-core/raw_ingest/examples`; store HTML snapshots plus expected Document JSON, Markdown, metadata, and section sequence assertions. |
+| P1 | Expand real parser fixture corpus | The P0 smoke corpus exists; keep adding captured representative pages from `knowledge-core/raw_ingest/examples` and known failures. |
 | P1 | Compare fixture corpus against `knowledge-core/raw_ingest` outputs | Field-level checks for title, source URL, section type sequence, metadata, and Markdown body. |
 | P2 | Add code adapter runtime hooks | `codeAdapters` is currently empty; complex sites need prepare/root/metadata/content hooks beyond config selectors. |
 | P2 | Improve table/code/figure Markdown snapshots | Current renderer coverage is still basic. |

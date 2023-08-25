@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <title>Generic Article</title>
+    <meta name="author" content="Case Writer">
+  </head>
+  <body>
+    <div class="cookie-banner">Cookie settings</div>
+    <article>
+      <h1>Generic Article</h1>
+      <p>A generic article should remain readable without a site adapter. This case protects the ordinary Defuddle and DOM fallback path for pages that are not covered by a configured profile.</p>
+      <p>The parser should keep meaningful paragraphs, preserve important inline links, and avoid copying cookie banners or navigation text into the resulting Markdown.</p>
+      <table>
+        <tr><th>Step</th><th>Purpose</th></tr>
+        <tr><td>Capture</td><td>Store the raw HTML snapshot.</td></tr>
+        <tr><td>Parse</td><td>Build Document sections from readable content.</td></tr>
+      </table>
+      <blockquote>Fixtures make parser changes visible before they reach real notes.</blockquote>
+    </article>
+  </body>
+</html>

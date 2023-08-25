@@ -1,0 +1,25 @@
+{
+  "id": "freedium-medium-body-fat",
+  "title": "How I Lowered My Body Fat Percentage",
+  "priority": "p0",
+  "status": "active",
+  "source": {
+    "pageUrl": "https://freedium-mirror.cfd/https://medium.com/in-fitness-and-in-health/how-i-lowered-my-body-fat-percentage-by-8-in-4-months-a875f21bed2d",
+    "capturedAt": "2026-05-21T00:00:00.000Z",
+    "captureMode": "browser_html",
+    "notes": "Freedium mirror case protects original Medium canonical URL handling and mirror-specific cleanup."
+  },
+  "expectations": {
+    "parserMethod": "site_adapter",
+    "parserProfile": "freedium",
+    "requiredCandidates": [
+      { "method": "site_adapter", "adapterId": "freedium" },
+      { "method": "defuddle" }
+    ],
+    "minTextLength": 520,
+    "titleIncludes": ["Body Fat"],
+    "authorsInclude": ["Alex Carter"],
+    "markdownIncludes": ["I lowered my body fat percentage by focusing on simple repeatable habits", "![Progress chart](https://freedium-mirror.cfd/images/progress.jpg)"],
+    "markdownExcludes": ["storage notification", "Recommended from Medium"]
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "pageUrl": "https://example.com/generic-parser-fixture",
+  "canonicalUrl": "https://example.com/generic-parser-fixture",
+  "title": "Generic Article",
+  "pageTitle": "Generic Article",
+  "text": "Generic Article A generic article should remain readable without a site adapter.",
+  "meta": {
+    "author": "Case Writer"
+  },
+  "diagnostics": {
+    "shadowRootCount": 0
+  }
+}

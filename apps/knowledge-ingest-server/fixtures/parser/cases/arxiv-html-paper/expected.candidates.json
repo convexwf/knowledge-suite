@@ -1,0 +1,82 @@
+[
+  {
+    "id": "adapter:arxiv_html:article.ltx_document:0",
+    "method": "site_adapter",
+    "adapterId": "arxiv_html",
+    "selector": "article.ltx_document",
+    "selected": true,
+    "serverSelected": true,
+    "score": 236.4,
+    "metrics": {
+      "textLength": 608,
+      "sectionCount": 8,
+      "headingCount": 3,
+      "linkCount": 0,
+      "imageCount": 1,
+      "tableCount": 0,
+      "codeCount": 0,
+      "linkDensity": 0
+    },
+    "warnings": [],
+    "reason": "Matched arxiv_html (url:host:arxiv.org, url:path:^/(abs|html|pdf)/); content selector article.ltx_document"
+  },
+  {
+    "id": "defuddle",
+    "method": "defuddle",
+    "selected": false,
+    "serverSelected": false,
+    "score": 131.8,
+    "metrics": {
+      "textLength": 636,
+      "sectionCount": 9,
+      "headingCount": 3,
+      "linkCount": 0,
+      "imageCount": 1,
+      "tableCount": 0,
+      "codeCount": 0,
+      "linkDensity": 0
+    },
+    "warnings": [],
+    "reason": "Defuddle universal article extraction"
+  },
+  {
+    "id": "dom_fallback",
+    "method": "dom_fallback",
+    "selected": false,
+    "serverSelected": false,
+    "score": 90.4,
+    "metrics": {
+      "textLength": 608,
+      "sectionCount": 8,
+      "headingCount": 3,
+      "linkCount": 0,
+      "imageCount": 1,
+      "tableCount": 0,
+      "codeCount": 0,
+      "linkDensity": 0
+    },
+    "warnings": [],
+    "reason": "Generic DOM readable-root fallback"
+  },
+  {
+    "id": "rendered_text_fallback",
+    "method": "rendered_text_fallback",
+    "selected": false,
+    "serverSelected": false,
+    "score": -3.6,
+    "metrics": {
+      "textLength": 127,
+      "sectionCount": 1,
+      "headingCount": 0,
+      "linkCount": 0,
+      "imageCount": 0,
+      "tableCount": 0,
+      "codeCount": 0,
+      "linkDensity": 0
+    },
+    "warnings": [
+      "Rendered text fallback loses links, images, tables, and code structure."
+    ],
+    "reason": "Browser-rendered body innerText fallback"
+  }
+]

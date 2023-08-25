@@ -1,0 +1,25 @@
+{
+  "id": "selection-clipping",
+  "title": "Selection Clipping",
+  "priority": "p0",
+  "status": "active",
+  "source": {
+    "pageUrl": "https://example.com/selection-fixture",
+    "canonicalUrl": "https://example.com/selection-fixture",
+    "capturedAt": "2026-05-21T00:00:00.000Z",
+    "captureMode": "browser_html",
+    "notes": "Selection candidate should be preferred when the browser snapshot includes selectionHtml."
+  },
+  "expectations": {
+    "parserMethod": "selection",
+    "requiredCandidates": [
+      { "method": "selection" },
+      { "method": "defuddle" }
+    ],
+    "minTextLength": 170,
+    "titleIncludes": ["Selection"],
+    "sectionTypes": ["heading", "paragraph"],
+    "markdownIncludes": ["Selected Passage", "> Selection keeps quoted material"],
+    "markdownExcludes": ["Unselected introduction"]
+  }
+}

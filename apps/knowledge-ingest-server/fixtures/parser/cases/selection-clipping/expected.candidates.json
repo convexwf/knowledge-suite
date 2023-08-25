@@ -1,0 +1,80 @@
+[
+  {
+    "id": "selection",
+    "method": "selection",
+    "selected": true,
+    "serverSelected": true,
+    "score": 208,
+    "metrics": {
+      "textLength": 180,
+      "sectionCount": 3,
+      "headingCount": 1,
+      "linkCount": 0,
+      "imageCount": 0,
+      "tableCount": 0,
+      "codeCount": 0,
+      "linkDensity": 0
+    },
+    "warnings": [],
+    "reason": "User-selected page fragment"
+  },
+  {
+    "id": "defuddle",
+    "method": "defuddle",
+    "selected": false,
+    "serverSelected": false,
+    "score": 77.5,
+    "metrics": {
+      "textLength": 270,
+      "sectionCount": 4,
+      "headingCount": 1,
+      "linkCount": 0,
+      "imageCount": 0,
+      "tableCount": 0,
+      "codeCount": 0,
+      "linkDensity": 0
+    },
+    "warnings": [],
+    "reason": "Defuddle universal article extraction"
+  },
+  {
+    "id": "dom_fallback",
+    "method": "dom_fallback",
+    "selected": false,
+    "serverSelected": false,
+    "score": 37.5,
+    "metrics": {
+      "textLength": 270,
+      "sectionCount": 4,
+      "headingCount": 1,
+      "linkCount": 0,
+      "imageCount": 0,
+      "tableCount": 0,
+      "codeCount": 0,
+      "linkDensity": 0
+    },
+    "warnings": [],
+    "reason": "Generic DOM readable-root fallback"
+  },
+  {
+    "id": "rendered_text_fallback",
+    "method": "rendered_text_fallback",
+    "selected": false,
+    "serverSelected": false,
+    "score": -3,
+    "metrics": {
+      "textLength": 139,
+      "sectionCount": 1,
+      "headingCount": 0,
+      "linkCount": 0,
+      "imageCount": 0,
+      "tableCount": 0,
+      "codeCount": 0,
+      "linkDensity": 0
+    },
+    "warnings": [
+      "Rendered text fallback loses links, images, tables, and code structure."
+    ],
+    "reason": "Browser-rendered body innerText fallback"
+  }
+]

@@ -1,0 +1,86 @@
+{
+  "doc_id": "fixture-doc-arxiv-html-paper",
+  "meta": {
+    "title": "A Fixture Paper for Retrieval",
+    "page_title": "A Fixture Paper for Retrieval",
+    "source": {
+      "type": "html",
+      "url": "https://arxiv.org/html/2401.00001v1",
+      "rawdoc_id": "fixture-rawdoc-arxiv-html-paper"
+    },
+    "authors": [
+      "Ada Lovelace",
+      "Grace Hopper"
+    ],
+    "published_at": "2026-05-20T16:00:00.000Z",
+    "ingested_at": "2026-05-21T00:00:00.000Z",
+    "language": "en",
+    "tags": [
+      "paper:work_id:arxiv:2401.00001v1",
+      "paper:variant:preprint"
+    ],
+    "parser_version": "knowledge-ingest-server/0.2:site_adapter"
+  },
+  "references": [
+    {
+      "ref_id": "bib.1",
+      "label": "[1]",
+      "text": "[1] A. Author. Reliable retrieval evaluation. 2026."
+    }
+  ],
+  "sections": [
+    {
+      "section_id": "arxiv-html-paper-section-1",
+      "type": "heading",
+      "level": 2,
+      "content": "Abstract"
+    },
+    {
+      "section_id": "arxiv-html-paper-section-2",
+      "type": "paragraph",
+      "content": "This paper explains why retrieval augmented generation systems need evaluation fixtures, stable citations, and repeatable parser baselines before model quality can be trusted."
+    },
+    {
+      "section_id": "arxiv-html-paper-section-3",
+      "type": "heading",
+      "level": 2,
+      "content": "1 Introduction"
+    },
+    {
+      "section_id": "arxiv-html-paper-section-4",
+      "type": "paragraph",
+      "content": "Parser regressions often hide inside small changes to headings, references, figures, and mathematical notation. A paper fixture should preserve section structure and citation text."
+    },
+    {
+      "section_id": "arxiv-html-paper-section-5",
+      "type": "paragraph",
+      "content": "We write the objective as score=relevance so formula text remains visible even before a dedicated math renderer exists."
+    },
+    {
+      "section_id": "arxiv-html-paper-section-6",
+      "type": "figure",
+      "content": "Architecture diagram for the fixture corpus.",
+      "assets": [
+        {
+          "asset_id": "arxiv-html-paper-asset-1",
+          "source_url": "https://arxiv.org/html/figures/example.png",
+          "alt": "Architecture diagram",
+          "caption": "Architecture diagram for the fixture corpus."
+        }
+      ]
+    },
+    {
+      "section_id": "arxiv-html-paper-section-7",
+      "type": "heading",
+      "level": 2,
+      "content": "References"
+    },
+    {
+      "section_id": "arxiv-html-paper-section-8",
+      "type": "list",
+      "items": [
+        "[1] A. Author. Reliable retrieval evaluation. 2026."
+      ]
+    }
+  ]
+}

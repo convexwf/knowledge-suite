@@ -1,0 +1,12 @@
+{
+  "pageUrl": "https://example.com/selection-fixture",
+  "canonicalUrl": "https://example.com/selection-fixture",
+  "title": "Selection Clipping",
+  "pageTitle": "Selection Clipping",
+  "text": "Selection Clipping Unselected introduction Selected Passage The selected passage is intentionally long enough to become a parser candidate.",
+  "selectionHtml": "<section><h2>Selected Passage</h2><p>The selected passage is intentionally long enough to become a parser candidate and preserve the local context chosen by the reader.</p><blockquote>Selection keeps quoted material</blockquote></section>",
+  "meta": {},
+  "diagnostics": {
+    "shadowRootCount": 0
+  }
+}

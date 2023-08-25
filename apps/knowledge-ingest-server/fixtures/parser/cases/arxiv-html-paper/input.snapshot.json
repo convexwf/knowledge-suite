@@ -1,0 +1,15 @@
+{
+  "pageUrl": "https://arxiv.org/html/2401.00001v1",
+  "canonicalUrl": "https://arxiv.org/html/2401.00001v1",
+  "title": "A Fixture Paper for Retrieval",
+  "pageTitle": "A Fixture Paper for Retrieval",
+  "text": "A Fixture Paper for Retrieval Abstract This paper explains why retrieval augmented generation systems need evaluation fixtures.",
+  "meta": {
+    "citation_title": "A Fixture Paper for Retrieval",
+    "citation_author": "Ada Lovelace",
+    "citation_publication_date": "2026/05/21"
+  },
+  "diagnostics": {
+    "shadowRootCount": 0
+  }
+}

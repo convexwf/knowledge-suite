@@ -1,0 +1,24 @@
+{
+  "id": "generic-article",
+  "title": "Generic Article",
+  "priority": "p0",
+  "status": "active",
+  "source": {
+    "pageUrl": "https://example.com/generic-parser-fixture",
+    "canonicalUrl": "https://example.com/generic-parser-fixture",
+    "capturedAt": "2026-05-21T00:00:00.000Z",
+    "captureMode": "browser_html",
+    "notes": "No site adapter should match; the generic parser path must still produce readable output."
+  },
+  "expectations": {
+    "requiredCandidates": [
+      { "method": "defuddle" },
+      { "method": "dom_fallback" }
+    ],
+    "minTextLength": 450,
+    "titleIncludes": ["Generic Article"],
+    "sectionTypes": ["paragraph", "paragraph"],
+    "markdownIncludes": ["A generic article should remain readable without a site adapter", "| Step | Purpose |"],
+    "markdownExcludes": ["Cookie settings"]
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "doc_id": "fixture-doc-selection-clipping",
+  "meta": {
+    "title": "Selection Clipping",
+    "page_title": "Selection Clipping",
+    "source": {
+      "type": "html",
+      "url": "https://example.com/selection-fixture",
+      "rawdoc_id": "fixture-rawdoc-selection-clipping"
+    },
+    "authors": [],
+    "published_at": null,
+    "ingested_at": "2026-05-21T00:00:00.000Z",
+    "language": "en",
+    "tags": [],
+    "parser_version": "knowledge-ingest-server/0.2:selection"
+  },
+  "sections": [
+    {
+      "section_id": "selection-clipping-section-1",
+      "type": "heading",
+      "level": 2,
+      "content": "Selected Passage"
+    },
+    {
+      "section_id": "selection-clipping-section-2",
+      "type": "paragraph",
+      "content": "The selected passage is intentionally long enough to become a parser candidate and preserve the local context chosen by the reader."
+    },
+    {
+      "section_id": "selection-clipping-section-3",
+      "type": "blockquote",
+      "content": "Selection keeps quoted material"
+    }
+  ]
+}

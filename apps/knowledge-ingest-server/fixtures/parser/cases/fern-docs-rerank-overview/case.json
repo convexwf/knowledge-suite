@@ -1,0 +1,28 @@
+{
+  "id": "fern-docs-rerank-overview",
+  "title": "Cohere Rerank Overview",
+  "priority": "p0",
+  "status": "active",
+  "source": {
+    "pageUrl": "https://docs.cohere.com/docs/rerank-overview",
+    "canonicalUrl": "https://docs.cohere.com/docs/rerank-overview",
+    "capturedAt": "2026-05-21T00:00:00.000Z",
+    "captureMode": "browser_html",
+    "notes": "Fern docs page shape used to protect adapter selection and sidebar cleanup."
+  },
+  "expectations": {
+    "parserMethod": "site_adapter",
+    "parserProfile": "fern_docs",
+    "requiredCandidates": [
+      { "method": "site_adapter", "adapterId": "fern_docs" },
+      { "method": "defuddle" }
+    ],
+    "minTextLength": 500,
+    "maxLinkDensity": 0.25,
+    "titleIncludes": ["Rerank"],
+    "tagsInclude": ["docs-platform:fern"],
+    "sectionTypes": ["paragraph", "heading"],
+    "markdownIncludes": ["Use Rerank to sort search results by relevance", "relevance score"],
+    "markdownExcludes": ["Ask AI", "Search docs"]
+  }
+}

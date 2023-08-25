@@ -1,0 +1,13 @@
+{
+  "pageUrl": "https://docs.cohere.com/docs/rerank-overview",
+  "canonicalUrl": "https://docs.cohere.com/docs/rerank-overview",
+  "title": "Rerank Overview - Cohere Docs",
+  "pageTitle": "Rerank Overview - Cohere Docs",
+  "text": "Rerank Overview Use Rerank to sort search results by relevance. Rerank accepts a query and a list of documents, then returns an ordered list with relevance scores.",
+  "meta": {
+    "description": "Learn how Cohere Rerank improves search relevance."
+  },
+  "diagnostics": {
+    "shadowRootCount": 0
+  }
+}

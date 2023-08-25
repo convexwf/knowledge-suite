@@ -1,0 +1,62 @@
+[
+  {
+    "id": "defuddle",
+    "method": "defuddle",
+    "selected": true,
+    "serverSelected": true,
+    "score": 93.7,
+    "metrics": {
+      "textLength": 513,
+      "sectionCount": 4,
+      "headingCount": 0,
+      "linkCount": 0,
+      "imageCount": 0,
+      "tableCount": 1,
+      "codeCount": 0,
+      "linkDensity": 0
+    },
+    "warnings": [],
+    "reason": "Defuddle universal article extraction"
+  },
+  {
+    "id": "dom_fallback",
+    "method": "dom_fallback",
+    "selected": false,
+    "serverSelected": false,
+    "score": 53.7,
+    "metrics": {
+      "textLength": 513,
+      "sectionCount": 4,
+      "headingCount": 0,
+      "linkCount": 0,
+      "imageCount": 0,
+      "tableCount": 1,
+      "codeCount": 0,
+      "linkDensity": 0
+    },
+    "warnings": [],
+    "reason": "Generic DOM readable-root fallback"
+  },
+  {
+    "id": "rendered_text_fallback",
+    "method": "rendered_text_fallback",
+    "selected": false,
+    "serverSelected": false,
+    "score": -56,
+    "metrics": {
+      "textLength": 80,
+      "sectionCount": 1,
+      "headingCount": 0,
+      "linkCount": 0,
+      "imageCount": 0,
+      "tableCount": 0,
+      "codeCount": 0,
+      "linkDensity": 0
+    },
+    "warnings": [
+      "Extracted text is short.",
+      "Rendered text fallback loses links, images, tables, and code structure."
+    ],
+    "reason": "Browser-rendered body innerText fallback"
+  }
+]

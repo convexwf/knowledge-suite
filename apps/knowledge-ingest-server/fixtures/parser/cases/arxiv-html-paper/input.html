@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <title>A Fixture Paper for Retrieval</title>
+    <meta name="citation_title" content="A Fixture Paper for Retrieval">
+    <meta name="citation_author" content="Ada Lovelace">
+    <meta name="citation_author" content="Grace Hopper">
+    <meta name="citation_publication_date" content="2026/05/21">
+  </head>
+  <body>
+    <article class="ltx_document">
+      <h1 class="ltx_title_document">A Fixture Paper for Retrieval</h1>
+      <div class="ltx_authors">
+        <span class="ltx_personname">Ada Lovelace</span>
+        <span class="ltx_personname">Grace Hopper</span>
+      </div>
+      <section class="ltx_abstract">
+        <h2>Abstract</h2>
+        <p>This paper explains why retrieval augmented generation systems need evaluation fixtures, stable citations, and repeatable parser baselines before model quality can be trusted.</p>
+      </section>
+      <section>
+        <h2>1 Introduction</h2>
+        <p>Parser regressions often hide inside small changes to headings, references, figures, and mathematical notation. A paper fixture should preserve section structure and citation text.</p>
+        <p>We write the objective as <math><mi>score</mi><mo>=</mo><mi>relevance</mi></math> so formula text remains visible even before a dedicated math renderer exists.</p>
+        <figure>
+          <img class="ltx_graphics" src="figures/example.png" alt="Architecture diagram">
+          <figcaption>Architecture diagram for the fixture corpus.</figcaption>
+        </figure>
+      </section>
+      <section class="ltx_bibliography" id="bib">
+        <h2>References</h2>
+        <ol>
+          <li id="bib.1"><span class="ltx_tag">[1]</span> A. Author. Reliable retrieval evaluation. 2026.</li>
+        </ol>
+      </section>
+    </article>
+  </body>
+</html>

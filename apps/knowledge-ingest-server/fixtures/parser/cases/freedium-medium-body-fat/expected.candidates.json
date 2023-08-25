@@ -1,0 +1,103 @@
+[
+  {
+    "id": "adapter:freedium:article:0",
+    "method": "site_adapter",
+    "adapterId": "freedium",
+    "selector": "article",
+    "selected": true,
+    "serverSelected": true,
+    "score": 197.5,
+    "metrics": {
+      "textLength": 611,
+      "sectionCount": 6,
+      "headingCount": 1,
+      "linkCount": 1,
+      "imageCount": 1,
+      "tableCount": 0,
+      "codeCount": 0,
+      "linkDensity": 1
+    },
+    "warnings": [],
+    "reason": "Matched freedium (originalUrl:host:freedium-mirror.cfd, originalUrl:url:^https?://freedium-mirror\\.cfd/https?://medium\\.com/); content selector article"
+  },
+  {
+    "id": "adapter:medium:article:0",
+    "method": "site_adapter",
+    "adapterId": "medium",
+    "selector": "article",
+    "selected": false,
+    "serverSelected": false,
+    "score": 173.3,
+    "metrics": {
+      "textLength": 611,
+      "sectionCount": 6,
+      "headingCount": 1,
+      "linkCount": 1,
+      "imageCount": 1,
+      "tableCount": 0,
+      "codeCount": 0,
+      "linkDensity": 1
+    },
+    "warnings": [],
+    "reason": "Matched medium (url:host:medium.com); content selector article"
+  },
+  {
+    "id": "defuddle",
+    "method": "defuddle",
+    "selected": false,
+    "serverSelected": false,
+    "score": 112.6,
+    "metrics": {
+      "textLength": 611,
+      "sectionCount": 6,
+      "headingCount": 1,
+      "linkCount": 1,
+      "imageCount": 1,
+      "tableCount": 0,
+      "codeCount": 0,
+      "linkDensity": 1
+    },
+    "warnings": [],
+    "reason": "Defuddle universal article extraction"
+  },
+  {
+    "id": "dom_fallback",
+    "method": "dom_fallback",
+    "selected": false,
+    "serverSelected": false,
+    "score": 72.6,
+    "metrics": {
+      "textLength": 611,
+      "sectionCount": 6,
+      "headingCount": 1,
+      "linkCount": 1,
+      "imageCount": 1,
+      "tableCount": 0,
+      "codeCount": 0,
+      "linkDensity": 1
+    },
+    "warnings": [],
+    "reason": "Generic DOM readable-root fallback"
+  },
+  {
+    "id": "rendered_text_fallback",
+    "method": "rendered_text_fallback",
+    "selected": false,
+    "serverSelected": false,
+    "score": -3.6,
+    "metrics": {
+      "textLength": 128,
+      "sectionCount": 1,
+      "headingCount": 0,
+      "linkCount": 0,
+      "imageCount": 0,
+      "tableCount": 0,
+      "codeCount": 0,
+      "linkDensity": 0
+    },
+    "warnings": [
+      "Rendered text fallback loses links, images, tables, and code structure."
+    ],
+    "reason": "Browser-rendered body innerText fallback"
+  }
+]
