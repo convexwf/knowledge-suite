@@ -32,6 +32,21 @@ button:hover {
   border-color: #6b8afd;
 }
 
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.danger-button {
+  background: #fff7f5;
+  border-color: #e19b8e;
+  color: #9b2c1f;
+}
+
+.danger-button:not(:disabled):hover {
+  border-color: #c93f2b;
+}
+
 .options-shell {
   margin: 0 auto;
   max-width: 960px;
@@ -68,6 +83,11 @@ p {
   margin-top: 6px;
 }
 
+.section-description {
+  line-height: 1.5;
+  margin-top: -6px;
+}
+
 .settings-form {
   display: grid;
   gap: 20px;
@@ -87,6 +107,13 @@ p {
   display: grid;
   gap: 14px;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.maintenance-actions {
+  align-items: end;
+  display: grid;
+  gap: 14px;
+  grid-template-columns: auto minmax(240px, 1fr) auto;
 }
 
 label {
@@ -166,6 +193,10 @@ input[type="checkbox"] {
   padding: 12px;
 }
 
+.status-output.compact {
+  min-height: 72px;
+}
+
 .status-output pre {
   color: #526174;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -200,6 +231,11 @@ input[type="checkbox"] {
 
   .toggle-row {
     align-items: start;
+    grid-template-columns: 1fr;
+  }
+
+  .maintenance-actions {
+    align-items: stretch;
     grid-template-columns: 1fr;
   }
 }

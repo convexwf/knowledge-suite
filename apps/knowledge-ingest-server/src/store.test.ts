@@ -174,6 +174,46 @@ describe("KnowledgeStore", () => {
     store.close();
   });
 
+  it("scans and clears the whole local store", async () => {
+    const store = new KnowledgeStore(storeRoot);
+    const clip = fixture("77777777-7777-4777-8777-777777777777", "77777777-aaaa-4aaa-8aaa-777777777777", "Clear Title");
+    const paths = await store.save(clip);
+
+    const scan = await store.scanMaintenance();
+    expect(scan.totals.rows).toBeGreaterThanOrEqual(4);
+    expect(scan.totals.contentFiles).toBe(4);
+    expect(scan.tables.clips).toBe(1);
+    expect(scan.tables.rawdocs).toBe(1);
+    expect(scan.tables.documents).toBe(1);
+    expect(scan.tables.chunks).toBeGreaterThan(0);
+    expect(scan.files).toMatchObject({
+      rawdocs: 2,
+      documents: 1,
+      markdown: 1
+    });
+
+    const cleared = await store.clearAll();
+    expect(cleared.cleared).toBe(true);
+    expect(cleared.before.totals.contentFiles).toBe(4);
+    expect(cleared.after.totals.rows).toBe(0);
+    expect(cleared.after.totals.contentFiles).toBe(0);
+    expect(tableCount(storeRoot, "clips")).toBe(0);
+    expect(tableCount(storeRoot, "rawdocs")).toBe(0);
+    expect(tableCount(storeRoot, "documents")).toBe(0);
+    expect(tableCount(storeRoot, "chunks")).toBe(0);
+    await expect(access(join(storeRoot, paths.rawHtmlPath))).rejects.toThrow();
+    await expect(access(join(storeRoot, paths.rawdocPath))).rejects.toThrow();
+    await expect(access(join(storeRoot, paths.documentPath))).rejects.toThrow();
+    await expect(access(join(storeRoot, paths.markdownPath))).rejects.toThrow();
+    await expect(store.status(clip.normalizedUrl)).resolves.toMatchObject({
+      state: "empty",
+      hasRawdoc: false,
+      hasDocument: false
+    });
+
+    store.close();
+  });
+
   it("creates all database tables with the v3 capture and derived columns", async () => {
     const store = new KnowledgeStore(storeRoot);
     await store.ensure();

@@ -8,7 +8,8 @@ import {
   ClipReparseRequestSchema,
   ClipSaveRequestSchema,
   normalizeUrlForKnowledge,
-  RawDoc
+  RawDoc,
+  StoreClearRequestSchema
 } from "@uknowledge/knowledge-schema";
 import { loadConfig, ServerConfig } from "./config.js";
 import { ResolvedInput, resolveClipInput } from "./input.js";
@@ -128,6 +129,16 @@ export async function buildServer(config: ServerConfig = loadConfig()) {
         parserMethod: query.parserMethod
       })
     };
+  });
+
+  app.get("/api/store/scan", async () => store.scanMaintenance());
+
+  app.post("/api/store/clear", async (request) => {
+    const parsed = StoreClearRequestSchema.safeParse(request.body);
+    if (!parsed.success) {
+      throw new Error("store clear confirmation is required");
+    }
+    return store.clearAll();
   });
 
   app.delete("/api/clip", async (request) => {
@@ -468,7 +479,8 @@ function isClientInputError(message: string): boolean {
     "too large",
     "Timed out fetching",
     "Path escapes knowledge store",
-    "Unsafe relative path"
+    "Unsafe relative path",
+    "store clear confirmation is required"
   ].some((needle) => message.includes(needle));
 }
 

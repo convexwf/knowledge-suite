@@ -60,6 +60,14 @@ export type ClipReparseRequest = z.infer<typeof ClipReparseRequestSchema>;
 export const ClipDeleteModeSchema = z.enum(["remove", "purge"]);
 export type ClipDeleteMode = z.infer<typeof ClipDeleteModeSchema>;
 
+export const STORE_CLEAR_CONFIRMATION = "CLEAR KNOWLEDGE STORE";
+
+export const StoreClearRequestSchema = z.object({
+  confirm: z.literal(true),
+  confirmation: z.literal(STORE_CLEAR_CONFIRMATION)
+});
+export type StoreClearRequest = z.infer<typeof StoreClearRequestSchema>;
+
 export const BatchCandidateSchema = z.object({
   url: z.string().url(),
   text: z.string().optional(),
@@ -249,6 +257,43 @@ export interface ClipDeleteResponse extends ClipStatus {
   deletedFiles: string[];
   removedDocId?: string;
   removedRawdocId?: string;
+}
+
+export interface StoreMaintenanceScan {
+  storeRoot: string;
+  scannedAt: string;
+  database: {
+    exists: boolean;
+    path: "index.sqlite3";
+    sizeBytes: number;
+  };
+  tables: {
+    clips: number;
+    rawdocs: number;
+    documents: number;
+    chunks: number;
+    collections: number;
+    collectionItems: number;
+    batchJobs: number;
+    batchItems: number;
+  };
+  files: {
+    rawdocs: number;
+    documents: number;
+    markdown: number;
+    assets: number;
+    totalContentFiles: number;
+  };
+  totals: {
+    rows: number;
+    contentFiles: number;
+  };
+}
+
+export interface StoreClearResponse {
+  cleared: true;
+  before: StoreMaintenanceScan;
+  after: StoreMaintenanceScan;
 }
 
 export interface ClipListItem {

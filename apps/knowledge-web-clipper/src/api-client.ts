@@ -10,11 +10,16 @@ import {
   PreviewResult,
   BatchCandidate,
   BatchDiscoverResult,
-  BatchJobResult
+  BatchJobResult,
+  StoreClearResult,
+  StoreMaintenanceScan,
+  STORE_CLEAR_CONFIRMATION
 } from "./types.js";
 
 export interface KnowledgeApiClient {
   health(): Promise<HealthResult>;
+  scanStore(): Promise<StoreMaintenanceScan>;
+  clearStore(): Promise<StoreClearResult>;
   status(url: string): Promise<ClipStatusResult>;
   list(limit?: number): Promise<ClipListResult>;
   deleteClip(url: string, mode?: ClipDeleteMode): Promise<ClipDeleteResult>;
@@ -53,6 +58,25 @@ export function createKnowledgeApiClient(settings: ExtensionSettings): Knowledge
 
   return {
     health: () => request<HealthResult>(baseUrl, settings.token, "GET", "/api/health", undefined, options),
+    scanStore: () => request<StoreMaintenanceScan>(
+      baseUrl,
+      settings.token,
+      "GET",
+      "/api/store/scan",
+      undefined,
+      options
+    ),
+    clearStore: () => request<StoreClearResult>(
+      baseUrl,
+      settings.token,
+      "POST",
+      "/api/store/clear",
+      {
+        confirm: true,
+        confirmation: STORE_CLEAR_CONFIRMATION
+      },
+      options
+    ),
     status: (url) => request<ClipStatusResult>(
       baseUrl,
       settings.token,

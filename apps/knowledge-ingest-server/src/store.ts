@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
-import { access, mkdir, readFile, rm, unlink, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, readdir, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import {
   ClipDeleteMode,
@@ -19,6 +19,8 @@ import {
   makeId,
   normalizeUrlForKnowledge,
   RawDoc,
+  StoreClearResponse,
+  StoreMaintenanceScan,
   urlHash
 } from "@uknowledge/knowledge-schema";
 import { buildChunks } from "./chunks.js";
@@ -632,6 +634,32 @@ export class KnowledgeStore {
   close(): void {
     this.database?.close();
     this.database = undefined;
+  }
+
+  async scanMaintenance(): Promise<StoreMaintenanceScan> {
+    await this.ensure();
+    return this.scanMaintenanceWithoutEnsure();
+  }
+
+  async clearAll(): Promise<StoreClearResponse> {
+    const before = await this.scanMaintenance();
+    this.close();
+
+    await Promise.all([
+      unlink(this.databasePath).catch(ignoreMissing),
+      rm(join(this.root, "rawdocs"), { recursive: true, force: true }),
+      rm(join(this.root, "documents"), { recursive: true, force: true }),
+      rm(join(this.root, "markdown"), { recursive: true, force: true }),
+      rm(join(this.root, "assets"), { recursive: true, force: true })
+    ]);
+
+    await this.ensure();
+    const after = await this.scanMaintenanceWithoutEnsure();
+    return {
+      cleared: true,
+      before,
+      after
+    };
   }
 
   async deleteByUrl(inputUrl: string, mode: ClipDeleteMode): Promise<ClipDeleteResponse> {
@@ -1585,9 +1613,83 @@ export class KnowledgeStore {
     return join(this.root, "index.sqlite3");
   }
 
+  private async scanMaintenanceWithoutEnsure(): Promise<StoreMaintenanceScan> {
+    const [databaseSize, rawdocFiles, documentFiles, markdownFiles, assetFiles] = await Promise.all([
+      fileSize(this.databasePath),
+      countFiles(join(this.root, "rawdocs")),
+      countFiles(join(this.root, "documents")),
+      countFiles(join(this.root, "markdown")),
+      countFiles(join(this.root, "assets"))
+    ]);
+    const tables = {
+      clips: this.countRows("clips"),
+      rawdocs: this.countRows("rawdocs"),
+      documents: this.countRows("documents"),
+      chunks: this.countRows("chunks"),
+      collections: this.countRows("collections"),
+      collectionItems: this.countRows("collection_items"),
+      batchJobs: this.countRows("batch_jobs"),
+      batchItems: this.countRows("batch_items")
+    };
+    const rows = Object.values(tables).reduce((sum, count) => sum + count, 0);
+    const totalContentFiles = rawdocFiles + documentFiles + markdownFiles + assetFiles;
+
+    return {
+      storeRoot: this.root,
+      scannedAt: new Date().toISOString(),
+      database: {
+        exists: databaseSize >= 0,
+        path: "index.sqlite3",
+        sizeBytes: Math.max(databaseSize, 0)
+      },
+      tables,
+      files: {
+        rawdocs: rawdocFiles,
+        documents: documentFiles,
+        markdown: markdownFiles,
+        assets: assetFiles,
+        totalContentFiles
+      },
+      totals: {
+        rows,
+        contentFiles: totalContentFiles
+      }
+    };
+  }
+
+  private countRows(table: string): number {
+    return (this.database!.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get() as { count: number }).count;
+  }
+
   private async deleteFile(relativePath: string): Promise<void> {
     const path = resolveInsideRoot(this.root, relativePath);
     await unlink(path).catch(ignoreMissing);
+  }
+}
+
+async function countFiles(path: string): Promise<number> {
+  let entries;
+  try {
+    entries = await readdir(path, { withFileTypes: true });
+  } catch {
+    return 0;
+  }
+
+  const counts = await Promise.all(entries.map(async (entry) => {
+    const child = join(path, entry.name);
+    if (entry.isDirectory()) {
+      return countFiles(child);
+    }
+    return entry.isFile() ? 1 : 0;
+  }));
+  return counts.reduce((sum, count) => sum + count, 0);
+}
+
+async function fileSize(path: string): Promise<number> {
+  try {
+    return (await stat(path)).size;
+  } catch {
+    return -1;
   }
 }
 

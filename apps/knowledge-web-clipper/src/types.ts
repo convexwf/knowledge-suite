@@ -2,6 +2,7 @@ export type InputMode = "browser_html" | "server_fetch";
 export type PanelView = "preview" | "json" | "rawdoc" | "parser" | "saved" | "batch";
 export type ClipState = "empty" | "captured" | "parsed";
 export type ClipDeleteMode = "remove" | "purge";
+export const STORE_CLEAR_CONFIRMATION = "CLEAR KNOWLEDGE STORE";
 
 export interface PageSnapshot {
   pageUrl: string;
@@ -151,6 +152,43 @@ export interface ClipDeleteResult extends ClipStatusResult {
   removedDocId?: string;
   removedRawdocId?: string;
   deletedFiles?: string[];
+}
+
+export interface StoreMaintenanceScan {
+  storeRoot: string;
+  scannedAt: string;
+  database: {
+    exists: boolean;
+    path: "index.sqlite3";
+    sizeBytes: number;
+  };
+  tables: {
+    clips: number;
+    rawdocs: number;
+    documents: number;
+    chunks: number;
+    collections: number;
+    collectionItems: number;
+    batchJobs: number;
+    batchItems: number;
+  };
+  files: {
+    rawdocs: number;
+    documents: number;
+    markdown: number;
+    assets: number;
+    totalContentFiles: number;
+  };
+  totals: {
+    rows: number;
+    contentFiles: number;
+  };
+}
+
+export interface StoreClearResult {
+  cleared: true;
+  before: StoreMaintenanceScan;
+  after: StoreMaintenanceScan;
 }
 
 export interface ClipStatusResult {

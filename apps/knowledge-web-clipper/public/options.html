@@ -105,6 +105,22 @@
         </section>
 
         <section class="settings-section">
+          <h2>Local Store Maintenance</h2>
+          <p class="section-description">
+            Clear the local server database and all stored raw, document, Markdown, and asset files. This cannot be undone.
+          </p>
+          <div class="maintenance-actions">
+            <button id="scan-store" type="button">Scan Store</button>
+            <label>
+              Confirmation Text
+              <input id="clear-store-confirmation" type="text" autocomplete="off" placeholder="CLEAR KNOWLEDGE STORE" />
+            </label>
+            <button id="clear-store" class="danger-button" type="button" disabled>Clear DB and Documents</button>
+          </div>
+          <div id="store-scan-output" class="status-output compact"></div>
+        </section>
+
+        <section class="settings-section">
           <h2>Status</h2>
           <div id="status-output" class="status-output"></div>
         </section>
