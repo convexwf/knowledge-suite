@@ -627,6 +627,63 @@ describe("knowledge ingest server", () => {
     await app.close();
   });
 
+  it("does not render ordinary div wrappers as duplicate paragraphs", async () => {
+    const app = await buildServer({
+      host: "127.0.0.1",
+      port: 0,
+      token: "test-token",
+      storeRoot,
+      fetchTimeoutMs: 1000,
+      maxHtmlBytes: 1024 * 1024
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/clip/preview",
+      headers: { authorization: "Bearer test-token" },
+      payload: {
+        inputMode: "browser_html",
+        snapshot: {
+          pageUrl: "https://example.com/wrapped-layout",
+          pageTitle: "Wrapped Layout",
+          title: "Wrapped Layout",
+          html: `<!doctype html>
+            <html>
+              <head><title>Wrapped Layout</title></head>
+              <body>
+                <article>
+                  <h1>Wrapped Layout</h1>
+                  <div class="content-wrapper">
+                    <p>First stable paragraph.</p>
+                    <p>Second stable paragraph.</p>
+                  </div>
+                  <section>
+                    <div class="layout-shell">
+                      <h2>Nested Heading</h2>
+                      <p>Nested body paragraph.</p>
+                    </div>
+                  </section>
+                </article>
+              </body>
+            </html>`,
+          capturedAt: "2026-05-11T02:00:00.000Z",
+          meta: {}
+        }
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    const markdown = response.json().markdown;
+    expect(markdown.match(/First stable paragraph\./g)).toHaveLength(1);
+    expect(markdown.match(/Second stable paragraph\./g)).toHaveLength(1);
+    expect(markdown.match(/Nested body paragraph\./g)).toHaveLength(1);
+    expect(markdown).not.toContain(
+      "First stable paragraph. Second stable paragraph."
+    );
+
+    await app.close();
+  });
+
   it("uses a matched site adapter as a scored parser candidate", async () => {
     const app = await buildServer({
       host: "127.0.0.1",

@@ -1135,6 +1135,10 @@ function extractSections(root: Element, title: string): KnowledgeDocument["secti
       continue;
     }
 
+    if (tagName === "div") {
+      continue;
+    }
+
     sections.push({
       section_id: makeId(),
       type: "paragraph",
