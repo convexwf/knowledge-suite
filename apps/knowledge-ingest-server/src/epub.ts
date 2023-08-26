@@ -124,14 +124,17 @@ export async function parseEpub(bytes: Buffer, options: ParseEpubOptions = {}): 
 }
 
 export function pandocBlocksToSections(blocks: PandocBlock[], imageBaseDir?: string): DocumentSection[] {
+  const sections = pandocBlocksToSectionsWithoutIds(blocks, imageBaseDir);
+  return sections.map((section, index) => ({
+    ...section,
+    section_id: section.section_id ?? sectionId(index)
+  }));
+}
+
+function pandocBlocksToSectionsWithoutIds(blocks: PandocBlock[], imageBaseDir?: string): DocumentSection[] {
   const sections: DocumentSection[] = [];
-  let index = 0;
   for (const block of blocks) {
-    const section = pandocBlockToSection(block, index, imageBaseDir);
-    if (section) {
-      sections.push(section);
-      index += 1;
-    }
+    sections.push(...pandocBlockToSections(block, imageBaseDir));
   }
   return sections;
 }
@@ -172,47 +175,72 @@ async function runPandoc(params: {
   }
 }
 
-function pandocBlockToSection(block: PandocBlock, index: number, imageBaseDir?: string): DocumentSection | undefined {
+function pandocBlockToSections(block: PandocBlock, imageBaseDir?: string): DocumentSection[] {
   switch (block.t) {
     case "Header": {
       const [level, , inlines] = block.c as [number, unknown, PandocInline[]];
       const content = inlineText(inlines);
-      return content ? { section_id: sectionId(index), type: "heading", level, content } : undefined;
+      return content ? [{ type: "heading", level, content }] : [];
     }
     case "Para":
     case "Plain": {
       const inlines = block.c as PandocInline[];
-      const image = firstImage(inlines, imageBaseDir);
-      if (image) {
-        return {
-          section_id: sectionId(index),
-          type: "figure",
-          assets: [image]
-        };
-      }
+      const sections: DocumentSection[] = [];
       const content = inlineText(inlines);
-      return content ? { section_id: sectionId(index), type: "paragraph", content } : undefined;
+      if (content) {
+        sections.push({ type: "paragraph", content });
+      }
+      const assets = inlineImages(inlines, imageBaseDir);
+      if (assets.length) {
+        sections.push({ type: "figure", assets });
+      }
+      return sections;
     }
     case "BlockQuote": {
       const content = blocksText(block.c as PandocBlock[]);
-      return content ? { section_id: sectionId(index), type: "blockquote", content } : undefined;
+      return content ? [{ type: "blockquote", content }] : [];
     }
     case "BulletList":
     case "OrderedList": {
       const items = listItems(block);
-      return items.length ? { section_id: sectionId(index), type: "list", items } : undefined;
+      return items.length ? [{ type: "list", items }] : [];
     }
     case "CodeBlock": {
       const [, content] = block.c as [unknown, string];
-      return content ? { section_id: sectionId(index), type: "code", content } : undefined;
+      return content ? [{ type: "code", content }] : [];
     }
     case "Table": {
+      const rows = tableRows(block);
+      if (rows.length) {
+        return [{ type: "table", rows }];
+      }
       const content = blocksText([block]);
-      return content ? { section_id: sectionId(index), type: "table", content } : undefined;
+      return content ? [{ type: "table", content }] : [];
+    }
+    case "Div": {
+      const [, blocks] = block.c as [unknown, PandocBlock[]];
+      return pandocBlocksToSectionsWithoutIds(blocks ?? [], imageBaseDir);
+    }
+    case "Figure": {
+      const blocks = figureBlocks(block);
+      const sections = pandocBlocksToSectionsWithoutIds(blocks, imageBaseDir);
+      return sections.length ? sections : [];
+    }
+    case "LineBlock": {
+      const lines = block.c as PandocInline[][];
+      const content = lines.map((line) => inlineText(line)).filter(Boolean).join("\n");
+      return content ? [{ type: "paragraph", content }] : [];
+    }
+    case "HorizontalRule":
+    case "Null":
+      return [];
+    case "RawBlock": {
+      const [, content] = block.c as [string, string];
+      return content?.trim() ? [{ type: "paragraph", content: content.trim() }] : [];
     }
     default: {
       const content = blocksText([block]);
-      return content ? { section_id: sectionId(index), type: "paragraph", content } : undefined;
+      return content ? [{ type: "paragraph", content }] : [];
     }
   }
 }
@@ -237,6 +265,16 @@ function blocksText(blocks: PandocBlock[]): string {
       case "BulletList":
       case "OrderedList":
         return listItems(block).join("\n");
+      case "BlockQuote":
+        return blocksText(block.c as PandocBlock[]);
+      case "Div":
+        return blocksText(((block.c as [unknown, PandocBlock[]])?.[1]) ?? []);
+      case "Figure":
+        return blocksText(figureBlocks(block));
+      case "LineBlock":
+        return (block.c as PandocInline[][]).map((line) => inlineText(line)).filter(Boolean).join("\n");
+      case "Table":
+        return tableRows(block).map((row) => row.join(" ")).join("\n");
       default:
         return "";
     }
@@ -264,31 +302,91 @@ function inlineText(inlines: PandocInline[] | undefined): string {
         return inlineText(inline.c as PandocInline[]);
       case "Code":
         return String((inline.c as [unknown, string])?.[1] ?? "");
-      case "Link":
       case "Span":
         return inlineText((inline.c as [unknown, PandocInline[]])?.[1]);
+      case "Link":
+        return inlineText((inline.c as [unknown, PandocInline[], unknown])?.[1]);
       case "Image":
         return inlineText((inline.c as [unknown, PandocInline[], unknown])?.[1]);
+      case "Quoted":
+        return inlineText((inline.c as [unknown, PandocInline[]])?.[1]);
+      case "Math":
+        return String((inline.c as [unknown, string])?.[1] ?? "");
+      case "Note":
+        return blocksText(inline.c as PandocBlock[]);
       default:
         return "";
     }
   }).join("").replace(/[ \t]+/g, " ").trim();
 }
 
-function firstImage(inlines: PandocInline[], imageBaseDir?: string): DocumentSection["assets"] extends Array<infer T> ? T | undefined : never {
+function inlineImages(inlines: PandocInline[], imageBaseDir?: string): Array<NonNullable<DocumentSection["assets"]>[number]> {
+  const assets: Array<NonNullable<DocumentSection["assets"]>[number]> = [];
   for (const inline of inlines) {
-    if (inline.t !== "Image") {
-      continue;
+    if (inline.t === "Image") {
+      const [, altInlines, target] = inline.c as [unknown, PandocInline[], [string, string]];
+      const [rawPath] = target;
+      const path = rawPath && imageBaseDir && !isAbsolute(rawPath) ? join(imageBaseDir, rawPath) : rawPath;
+      assets.push({
+        path,
+        alt: inlineText(altInlines)
+      });
+    } else if (Array.isArray(inline.c)) {
+      assets.push(...inlineImages(nestedInlineChildren(inline), imageBaseDir));
     }
-    const [, altInlines, target] = inline.c as [unknown, PandocInline[], [string, string]];
-    const [rawPath] = target;
-    const path = rawPath && imageBaseDir && !isAbsolute(rawPath) ? join(imageBaseDir, rawPath) : rawPath;
-    return {
-      path,
-      alt: inlineText(altInlines)
-    } as DocumentSection["assets"] extends Array<infer T> ? T : never;
   }
-  return undefined as DocumentSection["assets"] extends Array<infer T> ? T | undefined : never;
+  return assets;
+}
+
+function nestedInlineChildren(inline: PandocInline): PandocInline[] {
+  switch (inline.t) {
+    case "Emph":
+    case "Strong":
+    case "Strikeout":
+    case "Superscript":
+    case "Subscript":
+    case "SmallCaps":
+      return inline.c as PandocInline[];
+    case "Span":
+      return ((inline.c as [unknown, PandocInline[]])?.[1]) ?? [];
+    case "Link":
+      return ((inline.c as [unknown, PandocInline[], unknown])?.[1]) ?? [];
+    case "Quoted":
+      return ((inline.c as [unknown, PandocInline[]])?.[1]) ?? [];
+    default:
+      return [];
+  }
+}
+
+function figureBlocks(block: PandocBlock): PandocBlock[] {
+  const content = block.c as unknown[];
+  const maybeBlocks = content.find((item): item is PandocBlock[] => Array.isArray(item) && item.every(isPandocBlock));
+  return maybeBlocks ?? [];
+}
+
+function tableRows(block: PandocBlock): string[][] {
+  const rows = collectTableRows(block.c);
+  return rows
+    .map((row) => row.map((cell) => blocksText(cell)).filter((cell) => cell.length > 0))
+    .filter((row) => row.length > 0);
+}
+
+function collectTableRows(value: unknown): PandocBlock[][][] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  if (isTableRow(value)) {
+    return [value];
+  }
+  return value.flatMap(collectTableRows);
+}
+
+function isTableRow(value: unknown[]): value is PandocBlock[][] {
+  return value.length > 0 && value.every((cell) => Array.isArray(cell) && cell.every(isPandocBlock));
+}
+
+function isPandocBlock(value: unknown): value is PandocBlock {
+  return Boolean(value && typeof value === "object" && typeof (value as PandocBlock).t === "string");
 }
 
 function metaString(value: PandocMetaValue | undefined): string | undefined {

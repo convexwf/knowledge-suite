@@ -417,6 +417,31 @@ describe("knowledge ingest server", () => {
               c: [
                 [{ t: "Plain", c: [{ t: "Str", c: "First" }, { t: "Space" }, { t: "Str", c: "chapter" }] }]
               ]
+            },
+            {
+              t: "Div",
+              c: [
+                ["chapter-detail", [], []],
+                [
+                  { t: "Header", c: [2, ["detail", [], []], [{ t: "Str", c: "Nested" }, { t: "Space" }, { t: "Str", c: "Section" }]] },
+                  {
+                    t: "Para",
+                    c: [
+                      { t: "Str", c: "Nested" },
+                      { t: "Space" },
+                      { t: "Str", c: "EPUB" },
+                      { t: "Space" },
+                      { t: "Str", c: "body" },
+                      { t: "Space" },
+                      { t: "Str", c: "text" },
+                      { t: "Space" },
+                      { t: "Str", c: "is" },
+                      { t: "Space" },
+                      { t: "Str", c: "preserved." }
+                    ]
+                  }
+                ]
+              ]
             }
           ]
         }), "utf8");
@@ -458,10 +483,13 @@ describe("knowledge ingest server", () => {
     expect(saved.document.meta.source.type).toBe("epub");
     expect(saved.document.sections).toEqual(expect.arrayContaining([
       expect.objectContaining({ type: "heading", content: "Introduction" }),
-      expect.objectContaining({ type: "paragraph", content: "EPUB retrieval content is searchable." })
+      expect.objectContaining({ type: "paragraph", content: "EPUB retrieval content is searchable." }),
+      expect.objectContaining({ type: "heading", content: "Nested Section" }),
+      expect.objectContaining({ type: "paragraph", content: "Nested EPUB body text is preserved." })
     ]));
     expect(saved.markdown).toContain("# EPUB Handbook");
     expect(saved.markdown).toContain("EPUB retrieval content is searchable.");
+    expect(saved.markdown).toContain("Nested EPUB body text is preserved.");
     expect(saved.paths.rawContentPath).toMatch(/\.epub$/);
     await expect(access(join(storeRoot, saved.paths.rawContentPath))).resolves.toBeUndefined();
 
