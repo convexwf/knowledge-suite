@@ -20,6 +20,7 @@ export interface AdapterCleanupConfig {
   removeSelectors?: string[];
   unwrapSelectors?: string[];
   normalizeImageAttributes?: boolean;
+  removeLinkCards?: boolean;
   normalizeRelativeUrls?: boolean;
 }
 

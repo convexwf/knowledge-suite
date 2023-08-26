@@ -1120,6 +1120,10 @@ function applyAdapterCleanup(document: Document, adapter: SiteAdapter, baseUrl: 
   if (adapter.cleanup?.normalizeRelativeUrls) {
     normalizeUrls(document.documentElement, baseUrl);
   }
+
+  if (adapter.cleanup?.removeLinkCards) {
+    removeLinkCards(document.documentElement);
+  }
 }
 
 function applyMatchedAdapterCleanup(
@@ -1213,6 +1217,30 @@ function normalizeUrls(root: ParentNode, baseUrl: string): void {
       img.setAttribute("src", src);
     }
   });
+}
+
+function removeLinkCards(root: ParentNode): void {
+  root.querySelectorAll("a[href]").forEach((link) => {
+    if (!isLikelyLinkCard(link)) {
+      return;
+    }
+
+    link.remove();
+  });
+}
+
+function isLikelyLinkCard(link: Element): boolean {
+  if (!link.querySelector("h1,h2,h3,h4,h5,h6")) {
+    return false;
+  }
+  const directText = [...link.childNodes]
+    .filter((node) => node.nodeType === 3)
+    .map((node) => normalizeText(node.textContent ?? ""))
+    .join("");
+  if (directText.length > 30) {
+    return false;
+  }
+  return Boolean(link.querySelector("p,div,section,article,span"));
 }
 
 function toAbsoluteUrl(value: string | null, baseUrl: string): string | undefined {

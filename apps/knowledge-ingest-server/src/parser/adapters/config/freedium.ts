@@ -38,6 +38,7 @@ export const freediumAdapter: SiteAdapter = {
     removeSelectors: ["script", "style", "button", "form", "aside"],
     unwrapSelectors: [".main-content > div"],
     normalizeImageAttributes: true,
+    removeLinkCards: true,
     normalizeRelativeUrls: true
   },
   hints: {

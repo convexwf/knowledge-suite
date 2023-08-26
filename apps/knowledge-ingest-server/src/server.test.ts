@@ -1165,6 +1165,12 @@ describe("knowledge ingest server", () => {
             <div class="main-content">
               <div>
                 <p>This Freedium article paragraph contains enough concrete prose to be considered useful by the parser scoring model.</p>
+                <a class="related-article-card" href="https://freedium-mirror.cfd/https://agentnativedev.medium.com/qwen-3-5-35b-a3b-why-your-800-gpu-just-became-a-frontier-class-ai-workstation-abc123">
+                  <div>
+                    <h2>Qwen 3.5 35B-A3B: Why Your $800 GPU Just Became a Frontier Class AI Workstation</h2>
+                    <p>A rich Medium link card teaser should be stripped from the article body.</p>
+                  </div>
+                </a>
                 <p>The second paragraph confirms the adapter-selected content root keeps the article body without the storage notification chrome.</p>
                 <img data-src="/images/progress.jpg" alt="Progress chart">
                 <figcaption>Progress chart.</figcaption>
@@ -1219,6 +1225,8 @@ describe("knowledge ingest server", () => {
       ])
     );
     expect(response.json().markdown).toContain("The second paragraph confirms");
+    expect(response.json().markdown).not.toContain("Qwen 3.5 35B-A3B");
+    expect(response.json().markdown).not.toContain("A rich Medium link card teaser");
     expect(response.json().markdown).toContain("![Progress chart](https://freedium-mirror.cfd/images/progress.jpg)");
     expect(response.json().markdown).toContain("Progress chart.");
     expect(response.json().markdown).not.toContain("Local storage warning");
