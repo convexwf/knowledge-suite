@@ -254,6 +254,23 @@ describe("knowledge ingest server", () => {
       displayTitle: "Example Article - Example Site"
     });
 
+    const items = await app.inject({
+      method: "GET",
+      url: "/api/items?sourceType=url",
+      headers: { authorization: "Bearer test-token" }
+    });
+    expect(items.statusCode).toBe(200);
+    expect(items.json().items).toEqual([
+      expect.objectContaining({
+        itemId: expect.stringMatching(/^url:sha256:/),
+        sourceType: "url",
+        state: "parsed",
+        title: "Example Article - Example Site",
+        activeDocId: save.json().document.doc_id,
+        activeRawdocId: save.json().rawdoc.rawdoc_id
+      })
+    ]);
+
     const search = await app.inject({
       method: "GET",
       url: "/api/search?q=Second%20point&limit=5",

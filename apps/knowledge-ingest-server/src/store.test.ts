@@ -530,6 +530,18 @@ describe("KnowledgeStore", () => {
       parseUpdatedAt: "2026-05-11T00:00:00.000Z"
     });
 
+    const items = await store.listItems({ sourceType: "url" });
+    expect(items).toEqual([
+      expect.objectContaining({
+        itemId: "url:sha256:hash-v2",
+        sourceType: "url",
+        activeRawdocId: "raw-v2",
+        activeDocId: "doc-v2",
+        title: "Migrated Title",
+        state: "parsed"
+      })
+    ]);
+
     expectStoreSchema(storeRoot);
     store.close();
   });
@@ -749,7 +761,7 @@ function expectStoreSchema(root: string): void {
     ]);
 
     const userVersion = database.prepare("PRAGMA user_version").get() as { user_version: number };
-    expect(userVersion.user_version).toBe(8);
+    expect(userVersion.user_version).toBe(9);
 
     for (const columns of Object.values(columnsByTable)) {
       expect(columns.filter((column) => column.endsWith("_path") && column !== "heading_path")).toEqual([]);

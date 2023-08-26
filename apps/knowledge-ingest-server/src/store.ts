@@ -243,7 +243,7 @@ interface ImportSavePaths {
   markdownPath: string;
 }
 
-const STORE_SCHEMA_VERSION = 8;
+const STORE_SCHEMA_VERSION = 9;
 
 interface SearchOptions {
   limit?: number;
@@ -1681,6 +1681,7 @@ export class KnowledgeStore {
         this.ensureKnowledgeItemTables();
         this.ensureTitleColumns();
         this.ensureRawContentColumns();
+        this.backfillUrlKnowledgeItems();
         this.rebuildChunksFtsIndex();
       }
       this.database!.exec(`PRAGMA user_version = ${STORE_SCHEMA_VERSION}`);
@@ -1737,6 +1738,7 @@ export class KnowledgeStore {
       this.ensureKnowledgeItemTables();
       this.ensureTitleColumns();
       this.ensureRawContentColumns();
+      this.backfillUrlKnowledgeItems();
       this.rebuildChunksFtsIndex();
       this.database!.exec(`PRAGMA user_version = ${STORE_SCHEMA_VERSION}`);
       this.database!.exec("COMMIT");
@@ -1802,6 +1804,64 @@ export class KnowledgeStore {
       SET source_type = COALESCE(source_type, 'url'),
           content_ext = COALESCE(content_ext, 'html'),
           content_hash = COALESCE(content_hash, html_hash);
+    `);
+  }
+
+  private backfillUrlKnowledgeItems(): void {
+    this.database!.exec(`
+      UPDATE clips
+      SET item_id = COALESCE(item_id, 'url:sha256:' || url_hash);
+
+      INSERT INTO knowledge_items (
+        item_id,
+        source_type,
+        identity_hash,
+        active_rawdoc_id,
+        active_doc_id,
+        title,
+        subtitle,
+        creators_json,
+        language,
+        tags_json,
+        state,
+        created_at,
+        updated_at,
+        parsed_at
+      )
+      SELECT
+        c.item_id,
+        COALESCE(r.source_type, 'url'),
+        c.url_hash,
+        c.rawdoc_id,
+        c.active_doc_id,
+        COALESCE(c.page_title, c.content_title, d.title, c.normalized_url),
+        c.content_title,
+        COALESCE(d.authors_json, '[]'),
+        d.language,
+        '[]',
+        CASE WHEN c.active_doc_id IS NULL THEN 'captured' ELSE 'parsed' END,
+        COALESCE(c.capture_saved_at, c.capture_updated_at),
+        c.capture_updated_at,
+        c.parse_updated_at
+      FROM clips c
+      LEFT JOIN rawdocs r ON r.rawdoc_id = c.rawdoc_id
+      LEFT JOIN documents d ON d.doc_id = c.active_doc_id
+      WHERE c.item_id IS NOT NULL
+      ON CONFLICT(item_id) DO UPDATE SET
+        source_type = excluded.source_type,
+        identity_hash = excluded.identity_hash,
+        active_rawdoc_id = excluded.active_rawdoc_id,
+        active_doc_id = excluded.active_doc_id,
+        title = COALESCE(knowledge_items.title, excluded.title),
+        subtitle = COALESCE(knowledge_items.subtitle, excluded.subtitle),
+        creators_json = CASE
+          WHEN knowledge_items.creators_json = '[]' THEN excluded.creators_json
+          ELSE knowledge_items.creators_json
+        END,
+        language = COALESCE(knowledge_items.language, excluded.language),
+        state = excluded.state,
+        updated_at = excluded.updated_at,
+        parsed_at = excluded.parsed_at;
     `);
   }
 

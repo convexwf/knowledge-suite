@@ -59,6 +59,7 @@ async function loadReader(): Promise<void> {
       const detail = await client.item(itemId);
       currentItem = detail.item;
       currentDocument = detail.document;
+      reparseButton.disabled = detail.item.sourceType !== "epub";
       if (!currentDocument && detail.item.activeDocId) {
         currentDocument = await client.document(detail.item.activeDocId);
       }
