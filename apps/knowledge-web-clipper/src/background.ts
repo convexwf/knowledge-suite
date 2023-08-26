@@ -1,8 +1,17 @@
 import { createKnowledgeApiClient } from "./api-client.js";
 import { getSettings } from "./settings.js";
 
+const OPEN_READER_MENU_ID = "knowledge-open-reader";
+
 chrome.runtime.onInstalled.addListener(async () => {
   await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
+  createActionMenuItems();
+});
+
+chrome.contextMenus.onClicked.addListener((info) => {
+  if (info.menuItemId === OPEN_READER_MENU_ID) {
+    void chrome.tabs.create({ url: chrome.runtime.getURL("items.html") });
+  }
 });
 
 chrome.tabs.onActivated.addListener(({ tabId }) => {
@@ -45,6 +54,16 @@ export async function refreshBadge(tabId: number): Promise<void> {
       }
     });
   }
+}
+
+export function createActionMenuItems(): void {
+  chrome.contextMenus.removeAll(() => {
+    chrome.contextMenus.create({
+      id: OPEN_READER_MENU_ID,
+      title: "Knowledge Reader",
+      contexts: ["action"]
+    });
+  });
 }
 
 async function setBadge(tabId: number, text: string, color: string): Promise<void> {

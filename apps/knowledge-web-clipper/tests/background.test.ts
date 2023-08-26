@@ -7,13 +7,23 @@ function installChromeMock(overrides: {
 } = {}) {
   const setBadgeText = vi.fn(overrides.setBadgeText ?? (async () => undefined));
   const setBadgeBackgroundColor = vi.fn(overrides.setBadgeBackgroundColor ?? (async () => undefined));
+  const contextMenuCreate = vi.fn();
+  const contextMenuRemoveAll = vi.fn((callback?: () => void) => {
+    callback?.();
+  });
 
   vi.stubGlobal("chrome", {
     action: {
       setBadgeText,
       setBadgeBackgroundColor
     },
+    contextMenus: {
+      create: contextMenuCreate,
+      removeAll: contextMenuRemoveAll,
+      onClicked: { addListener: vi.fn() }
+    },
     runtime: {
+      getURL: vi.fn((path: string) => `chrome-extension://test/${path}`),
       onInstalled: { addListener: vi.fn() },
       onMessage: { addListener: vi.fn() }
     },
@@ -26,13 +36,14 @@ function installChromeMock(overrides: {
       }
     },
     tabs: {
+      create: vi.fn(async () => undefined),
       get: vi.fn(overrides.getTab ?? (async () => ({ url: "https://example.com/article" }))),
       onActivated: { addListener: vi.fn() },
       onUpdated: { addListener: vi.fn() }
     }
   });
 
-  return { setBadgeBackgroundColor, setBadgeText };
+  return { contextMenuCreate, contextMenuRemoveAll, setBadgeBackgroundColor, setBadgeText };
 }
 
 describe("background badge refresh", () => {
@@ -64,5 +75,19 @@ describe("background badge refresh", () => {
     const { refreshBadge } = await import("../src/background.js");
 
     await expect(refreshBadge(1946472716)).resolves.toBeUndefined();
+  });
+
+  it("registers a reader entry on the action context menu", async () => {
+    const chromeMock = installChromeMock();
+    const { createActionMenuItems } = await import("../src/background.js");
+
+    createActionMenuItems();
+
+    expect(chromeMock.contextMenuRemoveAll).toHaveBeenCalledWith(expect.any(Function));
+    expect(chromeMock.contextMenuCreate).toHaveBeenCalledWith({
+      id: "knowledge-open-reader",
+      title: "Knowledge Reader",
+      contexts: ["action"]
+    });
   });
 });
