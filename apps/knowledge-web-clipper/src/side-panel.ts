@@ -1355,15 +1355,19 @@ function renderMath(source: string, display: boolean): HTMLElement {
   element.dataset.source = source;
   const normalized = source.trim();
   if (window.katex) {
-    window.katex.render(normalized, element, {
-      displayMode: display,
-      output: "htmlAndMathml",
-      strict: "ignore",
-      throwOnError: false,
-      trust: false
-    });
-    element.classList.add("math-rendered");
-    return element;
+    try {
+      window.katex.render(normalized, element, {
+        displayMode: display,
+        output: "htmlAndMathml",
+        strict: "ignore",
+        throwOnError: false,
+        trust: false
+      });
+      element.classList.add("math-rendered");
+      return element;
+    } catch {
+      element.replaceChildren();
+    }
   }
   appendMathTokens(element, normalized);
   return element;
