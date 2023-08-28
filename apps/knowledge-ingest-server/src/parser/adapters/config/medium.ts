@@ -31,7 +31,7 @@ export const mediumAdapter: SiteAdapter = {
   cleanup: {
     removeSelectors: ["script", "style", "button", "form", "aside"],
     normalizeImageAttributes: true,
-    removeLinkCards: true,
+    collapseLinkCards: true,
     normalizeRelativeUrls: true
   },
   hints: {

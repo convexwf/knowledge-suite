@@ -1121,8 +1121,8 @@ function applyAdapterCleanup(document: Document, adapter: SiteAdapter, baseUrl: 
     normalizeUrls(document.documentElement, baseUrl);
   }
 
-  if (adapter.cleanup?.removeLinkCards) {
-    removeLinkCards(document.documentElement);
+  if (adapter.cleanup?.collapseLinkCards) {
+    collapseLinkCards(document.documentElement);
   }
 }
 
@@ -1219,13 +1219,25 @@ function normalizeUrls(root: ParentNode, baseUrl: string): void {
   });
 }
 
-function removeLinkCards(root: ParentNode): void {
+function collapseLinkCards(root: ParentNode): void {
   root.querySelectorAll("a[href]").forEach((link) => {
     if (!isLikelyLinkCard(link)) {
       return;
     }
 
-    link.remove();
+    const title = linkCardTitle(link);
+    const href = link.getAttribute("href");
+    if (!title || !href) {
+      link.remove();
+      return;
+    }
+
+    const paragraph = link.ownerDocument.createElement("p");
+    const collapsedLink = link.ownerDocument.createElement("a");
+    collapsedLink.setAttribute("href", href);
+    collapsedLink.textContent = title;
+    paragraph.appendChild(collapsedLink);
+    link.replaceWith(paragraph);
   });
 }
 
@@ -1241,6 +1253,16 @@ function isLikelyLinkCard(link: Element): boolean {
     return false;
   }
   return Boolean(link.querySelector("p,div,section,article,span"));
+}
+
+function linkCardTitle(link: Element): string | undefined {
+  const heading = link.querySelector("h1,h2,h3,h4,h5,h6");
+  const title = normalizeText(heading?.textContent ?? "");
+  if (title) {
+    return title;
+  }
+  const fallback = normalizeText(link.textContent ?? "");
+  return fallback || undefined;
 }
 
 function toAbsoluteUrl(value: string | null, baseUrl: string): string | undefined {

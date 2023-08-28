@@ -1225,7 +1225,9 @@ describe("knowledge ingest server", () => {
       ])
     );
     expect(response.json().markdown).toContain("The second paragraph confirms");
-    expect(response.json().markdown).not.toContain("Qwen 3.5 35B-A3B");
+    expect(response.json().markdown).toContain(
+      "[Qwen 3.5 35B-A3B: Why Your $800 GPU Just Became a Frontier Class AI Workstation](https://freedium-mirror.cfd/https://agentnativedev.medium.com/qwen-3-5-35b-a3b-why-your-800-gpu-just-became-a-frontier-class-ai-workstation-abc123)"
+    );
     expect(response.json().markdown).not.toContain("A rich Medium link card teaser");
     expect(response.json().markdown).toContain("![Progress chart](https://freedium-mirror.cfd/images/progress.jpg)");
     expect(response.json().markdown).toContain("Progress chart.");
