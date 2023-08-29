@@ -1020,15 +1020,19 @@ function unwrap(node: Element): void {
 
 function normalizeImageAttributes(root: ParentNode): void {
   root.querySelectorAll("img").forEach((img) => {
-    const src = img.getAttribute("src") ||
-      img.getAttribute("data-src") ||
-      img.getAttribute("data-original") ||
-      img.getAttribute("data-testid-src") ||
-      firstSrcsetUrl(img.getAttribute("srcset") || img.getAttribute("data-srcset"));
+    const src = imageSourceUrl(img);
     if (src) {
       img.setAttribute("src", src);
     }
   });
+}
+
+function imageSourceUrl(img: Element): string | undefined {
+  return img.getAttribute("src") ||
+    img.getAttribute("data-src") ||
+    img.getAttribute("data-original") ||
+    img.getAttribute("data-testid-src") ||
+    firstSrcsetUrl(img.getAttribute("srcset") || img.getAttribute("data-srcset"));
 }
 
 function firstSrcsetUrl(srcset: string | null): string | undefined {
@@ -1036,6 +1040,8 @@ function firstSrcsetUrl(srcset: string | null): string | undefined {
 }
 
 function normalizeUrls(root: ParentNode, baseUrl: string): void {
+  normalizeImageAttributes(root);
+
   root.querySelectorAll("a[href]").forEach((link) => {
     const href = toAbsoluteUrl(link.getAttribute("href"), baseUrl);
     if (href) {
@@ -1078,7 +1084,7 @@ function extractSections(root: Element, title: string): KnowledgeDocument["secti
       continue;
     }
     const text = normalizeText(node.textContent ?? "");
-    const hasMedia = Boolean(node.querySelector("img"));
+    const hasMedia = tagName === "img" || Boolean(node.querySelector("img"));
     if ((!text && !hasMedia && tagName !== "table") || (text === title && !hasMedia)) {
       continue;
     }
@@ -1186,7 +1192,7 @@ function figureSectionFromNode(node: Element): KnowledgeDocument["sections"][num
   const assets = images
     .map((img) => ({
       asset_id: makeId(),
-      source_url: img.getAttribute("src") || undefined,
+      source_url: imageSourceUrl(img),
       alt: normalizeText(img.getAttribute("alt") ?? "") || undefined,
       caption: figureCaption(node, img)
     }))
@@ -1208,10 +1214,25 @@ function figureCaption(container: Element, image: Element | undefined): string |
   const caption = normalizeText(
     container.querySelector("figcaption")?.textContent ??
     container.querySelector(":scope > p")?.textContent ??
+    (container.tagName.toLowerCase() === "img"
+      ? adjacentFigcaptionText(container)
+      : undefined) ??
     image?.getAttribute("alt") ??
     ""
   );
   return caption || null;
+}
+
+function adjacentFigcaptionText(image: Element): string | undefined {
+  const next = image.nextElementSibling;
+  if (next?.tagName.toLowerCase() === "figcaption") {
+    return next.textContent ?? undefined;
+  }
+  const previous = image.previousElementSibling;
+  if (previous?.tagName.toLowerCase() === "figcaption") {
+    return previous.textContent ?? undefined;
+  }
+  return undefined;
 }
 
 function textToParagraphSections(text: string, title: string): KnowledgeDocument["sections"] {
@@ -1255,7 +1276,7 @@ function renderInlineNode(node: ChildNode): string {
   }
 
   if (tagName === "img") {
-    const src = element.getAttribute("src");
+    const src = imageSourceUrl(element);
     const alt = normalizeMarkdown(element.getAttribute("alt") ?? "");
     return src ? `![${escapeMarkdownLinkText(alt)}](${src})` : alt;
   }

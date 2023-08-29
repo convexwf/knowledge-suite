@@ -545,6 +545,8 @@ describe("knowledge ingest server", () => {
                     <img src="https://example.com/photo.jpg" alt="Body composition photo">
                     <figcaption>Body composition trend.</figcaption>
                   </figure>
+                  <img data-src="https://example.com/standalone.jpg" alt="Standalone chart">
+                  <figcaption>Standalone chart caption.</figcaption>
                   <table>
                     <tr><th>Metric</th><th>Value</th></tr>
                     <tr><td>Body fat</td><td>8%</td></tr>
@@ -563,6 +565,8 @@ describe("knowledge ingest server", () => {
     expect(response.json().markdown).toContain("[source article](https://example.com/source)");
     expect(response.json().markdown).toContain("![progress chart](https://example.com/chart.png)");
     expect(response.json().markdown).toContain("![Body composition photo](https://example.com/photo.jpg)");
+    expect(response.json().markdown).toContain("![Standalone chart](https://example.com/standalone.jpg)");
+    expect(response.json().markdown).toContain("Standalone chart caption.");
     expect(response.json().markdown).toContain("| Metric | Value |");
     expect(response.json().markdown).toContain("| Body fat | 8% |");
 
@@ -708,10 +712,8 @@ describe("knowledge ingest server", () => {
               <div>
                 <p>This Freedium article paragraph contains enough concrete prose to be considered useful by the parser scoring model.</p>
                 <p>The second paragraph confirms the adapter-selected content root keeps the article body without the storage notification chrome.</p>
-                <figure>
-                  <img data-src="/images/progress.jpg" alt="Progress chart">
-                  <figcaption>Progress chart.</figcaption>
-                </figure>
+                <img data-src="/images/progress.jpg" alt="Progress chart">
+                <figcaption>Progress chart.</figcaption>
               </div>
             </div>
           </div>
@@ -764,6 +766,7 @@ describe("knowledge ingest server", () => {
     );
     expect(response.json().markdown).toContain("The second paragraph confirms");
     expect(response.json().markdown).toContain("![Progress chart](https://freedium-mirror.cfd/images/progress.jpg)");
+    expect(response.json().markdown).toContain("Progress chart.");
     expect(response.json().markdown).not.toContain("Local storage warning");
 
     const save = await app.inject({
