@@ -21,6 +21,42 @@ const html = `<!doctype html>
   </body>
 </html>`;
 
+const redditHtml = `<!doctype html>
+<html lang="en">
+  <head>
+    <title>AI Agent best practices from one year as AI Engineer : r/AI_Agents</title>
+  </head>
+  <body>
+    <div class="grid-container theme-rpl grid flex-nav-expanded">
+      <div id="subgrid-container" class="subgrid-container">
+        <div class="main-container fixed-sidebar">
+          <shreddit-post
+            post-title="AI Agent best practices from one year as AI Engineer"
+            author="LearnSkillsFast"
+            created-timestamp="2025-07-02T01:23:43.595000+0000"
+            subreddit-prefixed-name="r/AI_Agents">
+            <h1 slot="title">AI Agent best practices from one year as AI Engineer</h1>
+            <shreddit-post-text-body slot="text-body">
+              <div slot="text-body">
+                <div property="schema:articleBody">
+                  <p>Hey everyone.</p>
+                  <h1>I've worked as an AI Engineer for 1 year.</h1>
+                  <p>You might <strong>not need an AI agent</strong> for every automation workflow.</p>
+                  <p>Start with a deterministic chain, keep tool inputs small, and only add planning when the workflow genuinely branches.</p>
+                  <ul>
+                    <li><p>Create a chain in LangChain.</p></li>
+                    <li><p>Log every model decision before adding memory.</p></li>
+                  </ul>
+                </div>
+              </div>
+            </shreddit-post-text-body>
+          </shreddit-post>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>`;
+
 describe("knowledge ingest server", () => {
   let storeRoot: string;
   let originalFetch: typeof globalThis.fetch;
@@ -265,6 +301,52 @@ describe("knowledge ingest server", () => {
       hasRawdoc: false,
       hasDocument: false
     });
+
+    await app.close();
+  });
+
+  it("runs Defuddle and Reddit adapter before aggressive fallback cleanup", async () => {
+    const app = await buildServer({
+      host: "127.0.0.1",
+      port: 0,
+      token: "test-token",
+      storeRoot,
+      fetchTimeoutMs: 1000,
+      maxHtmlBytes: 1024 * 1024
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/clip/preview",
+      headers: { authorization: "Bearer test-token" },
+      payload: {
+        inputMode: "browser_html",
+        snapshot: {
+          pageUrl: "https://www.reddit.com/r/AI_Agents/comments/1lpj771/ai_agent_best_practices_from_one_year_as_ai/",
+          pageTitle: "AI Agent best practices from one year as AI Engineer : r/AI_Agents",
+          title: "AI Agent best practices from one year as AI Engineer : r/AI_Agents",
+          html: redditHtml,
+          bodyText: "Hey everyone. You might not need an AI agent for every automation workflow.",
+          capturedAt: "2026-05-20T02:00:00.000Z",
+          meta: {}
+        }
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    const payload = response.json();
+    const candidates = payload.rawdoc.metadata.parserCandidates;
+    const defuddleCandidate = candidates.find((candidate: { method: string }) => candidate.method === "defuddle");
+    const redditCandidate = candidates.find((candidate: { method: string; adapterId?: string }) =>
+      candidate.method === "site_adapter" && candidate.adapterId === "reddit"
+    );
+
+    expect(payload.rawdoc.metadata.defuddle.wordCount).toBeGreaterThan(20);
+    expect(defuddleCandidate?.metrics.textLength).toBeGreaterThan(180);
+    expect(redditCandidate?.metrics.textLength).toBeGreaterThan(180);
+    expect(payload.markdown).toContain("not need an AI agent");
+    expect(payload.markdown).toContain("Create a chain in LangChain");
+    expect(payload.document.meta.title).toBe("AI Agent best practices from one year as AI Engineer");
 
     await app.close();
   });

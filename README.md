@@ -151,6 +151,8 @@ This project intentionally started with a smaller parser surface than Obsidian C
 | P0 | Add settings page | Server URL, token, default input mode, auto-refresh, delete behavior, diagnostics visibility, timeout, and saved-list limit live in the extension options page. |
 | P1 | Add `RawDoc Meta` tab | The side panel now exposes the RawDoc returned by preview/save for parser and storage debugging. |
 | P1 | Add parser logs tab | The side panel now summarizes parser method, parser version, source details, section count, Defuddle metadata, and extraction warnings. |
+| P1 | Preserve raw DOM for Defuddle and adapters | Defuddle and site adapters now run before aggressive fallback cleanup, preventing layout class names such as `fixed-sidebar` from deleting real content. |
+| P2 | Add Reddit site adapter | Reddit/Shreddit posts now have a dedicated adapter and regression coverage for browser HTML clipping. |
 
 ### MVP Completion
 

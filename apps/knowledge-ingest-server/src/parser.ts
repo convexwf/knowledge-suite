@@ -99,14 +99,15 @@ export async function parsePage(input: ResolvedInput, options: ParsePageOptions 
   const rawdocId = options.rawdocId ?? makeId();
   const fetchTime = nowIso();
   const matchedAdapters = matchSiteAdapters(input);
+  const rawDocument = parseRawDocument(input.html);
+  const defuddleDocument = parseRawDocument(input.html);
+  applyDefuddleRootHints(defuddleDocument, matchedAdapters);
   const baseDocument = parseCleanDocument(input.html);
   const htmlBaseUrl = htmlBaseUrlFor(input);
-  applyMatchedAdapterCleanup(baseDocument, matchedAdapters, htmlBaseUrl, "defuddle");
-  applyDefuddleRootHints(baseDocument, matchedAdapters);
-  const defuddleRun = await runDefuddle(baseDocument, input);
+  const defuddleRun = await runDefuddle(defuddleDocument, input);
   const defuddleResult = defuddleRun.result;
-  const pageTitle = input.pageTitle || input.title || readPageTitle(baseDocument) || input.normalizedUrl;
-  const title = readContentTitle(baseDocument) || defuddleResult?.title || pageTitle;
+  const pageTitle = input.pageTitle || input.title || readPageTitle(rawDocument) || input.normalizedUrl;
+  const title = readContentTitle(rawDocument) || defuddleResult?.title || pageTitle;
   const candidates = buildCandidates(input, title, pageTitle, defuddleResult, matchedAdapters);
   const serverSelected = selectCandidate(candidates);
   const selected = selectRequestedCandidate(candidates, options.selectedCandidateId, serverSelected);
@@ -484,7 +485,7 @@ function buildSchemaOrgCandidate(input: ResolvedInput, fallbackTitle: string): P
 }
 
 function buildAdapterCandidates(input: ResolvedInput, title: string, match: MatchedAdapter): ParserCandidate[] {
-  const document = parseCleanDocument(input.html);
+  const document = parseRawDocument(input.html);
   const baseUrl = htmlBaseUrlFor(input);
   applyAdapterCleanup(document, match.adapter, baseUrl);
   const candidates: ParserCandidate[] = [];
@@ -671,7 +672,10 @@ function isUsefulExtraction(result: DefuddleResponse): boolean {
 }
 
 function extractDefuddleSections(contentHtml: string, title: string, baseUrl: string): KnowledgeDocument["sections"] {
-  const contentDocument = parseHTML(contentHtml).document;
+  if (!contentHtml.trim()) {
+    return [];
+  }
+  const contentDocument = parseHTML(`<!doctype html><html><body>${contentHtml}</body></html>`).document;
   cleanDocumentForExtraction(contentDocument);
   const bodyRoot = pickParsedContentRoot(contentDocument);
   if (!bodyRoot) {
@@ -730,6 +734,10 @@ function readAdapterMetadata(document: Document, adapter: SiteAdapter, key: keyo
     const content = node.getAttribute("content") ||
       node.getAttribute("datetime") ||
       node.getAttribute("src") ||
+      node.getAttribute("post-title") ||
+      node.getAttribute("author") ||
+      node.getAttribute("created-timestamp") ||
+      node.getAttribute("data-author") ||
       node.textContent;
     const normalized = normalizeText(content ?? "");
     if (normalized) {
@@ -746,6 +754,10 @@ function readAdapterMetadataList(document: Document, adapter: SiteAdapter, key: 
       const content = node.getAttribute("content") ||
         node.getAttribute("datetime") ||
         node.getAttribute("src") ||
+        node.getAttribute("post-title") ||
+        node.getAttribute("author") ||
+        node.getAttribute("created-timestamp") ||
+        node.getAttribute("data-author") ||
         node.textContent;
       const normalized = normalizeText(content ?? "");
       if (normalized) {
@@ -862,6 +874,10 @@ function pickReadableRoot(document: Document): Element {
     document.body ||
     document.documentElement
   );
+}
+
+function parseRawDocument(html: string): Document {
+  return parseHTML(html).document;
 }
 
 function parseCleanDocument(html: string): Document {
