@@ -42,6 +42,7 @@ const rawdocOutput = mustGet<HTMLPreElement>("rawdoc-output");
 const parserOutput = mustGet<HTMLDivElement>("parser-output");
 const statusPill = mustGet<HTMLElement>("status-pill");
 const statusDetail = mustGet<HTMLElement>("status-detail");
+const pageTitleEl = mustGet<HTMLElement>("page-title");
 const pageUrlEl = mustGet<HTMLElement>("page-url");
 const autoRefreshInput = mustGet<HTMLInputElement>("auto-refresh");
 const moreMenu = mustGet<HTMLDetailsElement>("more-menu");
@@ -144,17 +145,24 @@ async function refreshActiveTab(): Promise<void> {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id || !tab.url) {
     activeTab = undefined;
-    pageUrlEl.textContent = "No active page";
+    lastPreview = undefined;
+    activeCandidateId = undefined;
+    updatePageHeader();
     return;
   }
 
+  const previousUrl = activeTab?.url;
   activeTab = {
     tabId: tab.id,
     url: tab.url,
     title: tab.title,
     isFileUrl: tab.url.startsWith("file://")
   };
-  pageUrlEl.textContent = tab.url;
+  if (previousUrl && previousUrl !== tab.url) {
+    lastPreview = undefined;
+    activeCandidateId = undefined;
+  }
+  updatePageHeader();
 
   if (activeTab.isFileUrl) {
     setMode("browser_html", false);
@@ -394,6 +402,7 @@ async function deleteCurrentClip(mode: ClipDeleteMode): Promise<void> {
     lastPreview = lastPreview
       ? { ...lastPreview, status: clipStatusFromDelete(deleted) }
       : undefined;
+    updatePageHeader();
     await loadSavedClips();
     await notifyBadgeRefresh();
     setStatus(
@@ -451,6 +460,7 @@ function setLastPreview(preview: PreviewResult): void {
     preview.selectedCandidateId ??
     preview.serverSelectedCandidateId ??
     preview.candidatePreviews?.[0]?.id;
+  updatePageHeader();
 }
 
 function activeCandidate(preview: PreviewResult): CandidatePreview | undefined {
@@ -830,6 +840,34 @@ function updateActionButtons(): void {
   modeBrowserButton.disabled = busy;
   modeFetchButton.disabled = busy || (activeTab?.isFileUrl ?? false) || !settings.allowServerFetch;
   autoRefreshInput.disabled = busy;
+}
+
+function updatePageHeader(): void {
+  pageTitleEl.textContent = currentPageTitle();
+  pageUrlEl.textContent = activeTab?.url ?? "No active page";
+}
+
+function currentPageTitle(): string {
+  if (lastPreview) {
+    const candidateDocument = activeCandidate(lastPreview)?.document ?? lastPreview.document;
+    return cleanTitle(
+      lastPreview.status.pageTitle ??
+      candidateDocument.meta.page_title ??
+      lastPreview.rawdoc.metadata?.pageTitle ??
+      lastPreview.status.displayTitle ??
+      lastPreview.rawdoc.metadata?.displayTitle ??
+      lastPreview.status.contentTitle ??
+      candidateDocument.meta.title ??
+      lastPreview.status.title ??
+      activeTab?.title
+    );
+  }
+  return cleanTitle(activeTab?.title);
+}
+
+function cleanTitle(value: string | undefined): string {
+  const title = value?.replace(/\s+/g, " ").trim();
+  return title || "Knowledge";
 }
 
 function closeMoreMenu(): void {
