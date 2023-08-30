@@ -15,8 +15,18 @@
           <p id="page-url">No active page</p>
         </div>
         <div class="header-actions">
-          <button id="settings-button" title="Open settings">Settings</button>
           <button id="refresh-button" title="Refresh preview">Refresh</button>
+          <details id="more-menu" class="more-menu">
+            <summary title="More actions">More</summary>
+            <div class="more-menu-panel">
+              <button id="copy-button" type="button">Copy Markdown</button>
+              <button id="save-section-button" type="button">Discover Section</button>
+              <button id="diagnostics-button" type="button">Diagnostics</button>
+              <button id="remove-button" type="button">Remove Parsed Result</button>
+              <button id="purge-button" type="button">Purge Capture</button>
+              <button id="settings-button" type="button">Settings</button>
+            </div>
+          </details>
         </div>
       </header>
 
@@ -36,21 +46,18 @@
           <span id="status-pill">Idle</span>
           <span id="status-detail">Ready</span>
         </div>
-        <div class="actions">
-          <button id="copy-button">Copy</button>
-          <button id="remove-button">Remove</button>
-          <button id="purge-button">Purge</button>
-          <button id="save-section-button">Save section</button>
-          <button id="save-button">Save</button>
-        </div>
+        <button id="save-button" class="primary-action">Save</button>
       </section>
 
       <section class="tabs">
         <button id="tab-preview" data-active="true">Preview</button>
+        <button id="tab-saved">Saved</button>
+      </section>
+
+      <section id="diagnostics-tabs" class="diagnostics-tabs" hidden>
+        <button id="tab-parser">Parser</button>
         <button id="tab-json">JSON</button>
         <button id="tab-rawdoc">RawDoc</button>
-        <button id="tab-parser">Parser</button>
-        <button id="tab-saved">Saved</button>
         <button id="tab-batch">Batch</button>
       </section>
 

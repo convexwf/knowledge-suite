@@ -44,15 +44,18 @@ const statusPill = mustGet<HTMLElement>("status-pill");
 const statusDetail = mustGet<HTMLElement>("status-detail");
 const pageUrlEl = mustGet<HTMLElement>("page-url");
 const autoRefreshInput = mustGet<HTMLInputElement>("auto-refresh");
+const moreMenu = mustGet<HTMLDetailsElement>("more-menu");
 const settingsButton = mustGet<HTMLButtonElement>("settings-button");
 const refreshButton = mustGet<HTMLButtonElement>("refresh-button");
 const saveButton = mustGet<HTMLButtonElement>("save-button");
 const saveSectionButton = mustGet<HTMLButtonElement>("save-section-button");
+const diagnosticsButton = mustGet<HTMLButtonElement>("diagnostics-button");
 const copyButton = mustGet<HTMLButtonElement>("copy-button");
 const removeButton = mustGet<HTMLButtonElement>("remove-button");
 const purgeButton = mustGet<HTMLButtonElement>("purge-button");
 const modeBrowserButton = mustGet<HTMLButtonElement>("mode-browser");
 const modeFetchButton = mustGet<HTMLButtonElement>("mode-fetch");
+const diagnosticsTabs = mustGet<HTMLElement>("diagnostics-tabs");
 const tabPreviewButton = mustGet<HTMLButtonElement>("tab-preview");
 const tabJsonButton = mustGet<HTMLButtonElement>("tab-json");
 const tabRawdocButton = mustGet<HTMLButtonElement>("tab-rawdoc");
@@ -87,12 +90,31 @@ await preview();
 updateActionButtons();
 
 refreshButton.addEventListener("click", () => preview());
-settingsButton.addEventListener("click", () => chrome.runtime.openOptionsPage());
+settingsButton.addEventListener("click", () => {
+  closeMoreMenu();
+  chrome.runtime.openOptionsPage();
+});
 saveButton.addEventListener("click", () => save());
-saveSectionButton.addEventListener("click", () => discoverSection());
-copyButton.addEventListener("click", () => copyMarkdown());
-removeButton.addEventListener("click", () => deleteCurrentClip("remove"));
-purgeButton.addEventListener("click", () => deleteCurrentClip("purge"));
+saveSectionButton.addEventListener("click", () => {
+  closeMoreMenu();
+  void discoverSection();
+});
+diagnosticsButton.addEventListener("click", () => {
+  closeMoreMenu();
+  setView(settings.showParserDiagnostics ? "parser" : "json", true);
+});
+copyButton.addEventListener("click", () => {
+  closeMoreMenu();
+  void copyMarkdown();
+});
+removeButton.addEventListener("click", () => {
+  closeMoreMenu();
+  void deleteCurrentClip("remove");
+});
+purgeButton.addEventListener("click", () => {
+  closeMoreMenu();
+  void deleteCurrentClip("purge");
+});
 modeBrowserButton.addEventListener("click", () => setMode("browser_html"));
 modeFetchButton.addEventListener("click", () => setMode("server_fetch"));
 tabPreviewButton.addEventListener("click", () => setView("preview", true));
@@ -461,6 +483,7 @@ function renderOutput(): void {
   parserOutput.hidden = activeView !== "parser";
   savedList.hidden = activeView !== "saved";
   batchOutput.hidden = activeView !== "batch";
+  diagnosticsTabs.hidden = !isDiagnosticsView(activeView);
   renderCandidateControl();
   if (activeView === "saved") {
     renderSavedList();
@@ -518,7 +541,7 @@ function setMode(mode: InputMode, persist = true): void {
 
 function setView(view: PanelView, persist = false): void {
   if (view === "parser" && !settings.showParserDiagnostics) {
-    view = "preview";
+    view = "json";
   }
   activeView = view;
   tabPreviewButton.dataset.active = String(view === "preview");
@@ -527,6 +550,7 @@ function setView(view: PanelView, persist = false): void {
   tabParserButton.dataset.active = String(view === "parser");
   tabSavedButton.dataset.active = String(view === "saved");
   tabBatchButton.dataset.active = String(view === "batch");
+  diagnosticsTabs.hidden = !isDiagnosticsView(view);
   if (persist) {
     settings = { ...settings, defaultPanelTab: view };
     void saveSettings({ defaultPanelTab: view });
@@ -731,9 +755,10 @@ async function reloadSettings(): Promise<void> {
 
 function applySettingsToUi(): void {
   autoRefreshInput.checked = settings.autoRefresh;
+  diagnosticsButton.hidden = !settings.showParserDiagnostics;
   tabParserButton.hidden = !settings.showParserDiagnostics;
   if (!settings.showParserDiagnostics && activeView === "parser") {
-    activeView = "preview";
+    activeView = "json";
   }
   modeFetchButton.hidden = !settings.allowServerFetch;
 }
@@ -780,6 +805,7 @@ function renderError(error: unknown): void {
   tabParserButton.dataset.active = "false";
   tabSavedButton.dataset.active = "false";
   tabBatchButton.dataset.active = "false";
+  diagnosticsTabs.hidden = true;
   const message = error instanceof Error ? error.message : String(error);
   const pre = document.createElement("pre");
   pre.textContent = message;
@@ -797,12 +823,21 @@ function updateActionButtons(): void {
   saveButton.disabled = busy || !activeTab;
   saveSectionButton.disabled = busy || !activeTab || (activeTab?.isFileUrl ?? false);
   refreshButton.disabled = busy;
-  settingsButton.disabled = busy;
+  settingsButton.disabled = false;
+  diagnosticsButton.disabled = busy || !lastPreview;
   removeButton.disabled = busy || state !== "parsed";
   purgeButton.disabled = busy || state === "empty";
   modeBrowserButton.disabled = busy;
   modeFetchButton.disabled = busy || (activeTab?.isFileUrl ?? false) || !settings.allowServerFetch;
   autoRefreshInput.disabled = busy;
+}
+
+function closeMoreMenu(): void {
+  moreMenu.open = false;
+}
+
+function isDiagnosticsView(view: PanelView): boolean {
+  return view === "json" || view === "rawdoc" || view === "parser" || view === "batch";
 }
 
 function summarizeSave(
