@@ -61,12 +61,19 @@ export const ClipDeleteModeSchema = z.enum(["remove", "purge"]);
 export type ClipDeleteMode = z.infer<typeof ClipDeleteModeSchema>;
 
 export const STORE_CLEAR_CONFIRMATION = "CLEAR KNOWLEDGE STORE";
+export const STORE_CLEAR_PARSED_CONFIRMATION = "CLEAR PARSED RESULTS";
 
 export const StoreClearRequestSchema = z.object({
   confirm: z.literal(true),
   confirmation: z.literal(STORE_CLEAR_CONFIRMATION)
 });
 export type StoreClearRequest = z.infer<typeof StoreClearRequestSchema>;
+
+export const StoreClearParsedRequestSchema = z.object({
+  confirm: z.literal(true),
+  confirmation: z.literal(STORE_CLEAR_PARSED_CONFIRMATION)
+});
+export type StoreClearParsedRequest = z.infer<typeof StoreClearParsedRequestSchema>;
 
 export const BatchCandidateSchema = z.object({
   url: z.string().url(),
@@ -288,10 +295,26 @@ export interface StoreMaintenanceScan {
     rows: number;
     contentFiles: number;
   };
+  parsedResults: {
+    parsedClips: number;
+    documentRows: number;
+    chunkRows: number;
+    collectionItemRefs: number;
+    batchItemRefs: number;
+    derivedFiles: number;
+  };
 }
 
 export interface StoreClearResponse {
   cleared: true;
+  mode: "all";
+  before: StoreMaintenanceScan;
+  after: StoreMaintenanceScan;
+}
+
+export interface StoreClearParsedResponse {
+  cleared: true;
+  mode: "parsed";
   before: StoreMaintenanceScan;
   after: StoreMaintenanceScan;
 }

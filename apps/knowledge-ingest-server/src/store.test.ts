@@ -214,6 +214,70 @@ describe("KnowledgeStore", () => {
     store.close();
   });
 
+  it("clears parsed results while preserving raw captures", async () => {
+    const store = new KnowledgeStore(storeRoot);
+    const clip = fixture("12121212-1212-4212-8212-121212121212", "12121212-aaaa-4aaa-8aaa-121212121212", "Parsed Clear Title");
+    const paths = await store.save(clip);
+
+    const scan = await store.scanMaintenance();
+    expect(scan.parsedResults).toMatchObject({
+      parsedClips: 1,
+      documentRows: 1,
+      derivedFiles: 2
+    });
+    expect(scan.parsedResults.chunkRows).toBeGreaterThan(0);
+
+    const cleared = await store.clearParsedResults();
+
+    expect(cleared).toMatchObject({
+      cleared: true,
+      mode: "parsed",
+      before: {
+        parsedResults: {
+          parsedClips: 1,
+          documentRows: 1
+        }
+      },
+      after: {
+        tables: {
+          clips: 1,
+          rawdocs: 1,
+          documents: 0,
+          chunks: 0
+        },
+        files: {
+          rawdocs: 2,
+          documents: 0,
+          markdown: 0,
+          assets: 0,
+          totalContentFiles: 2
+        },
+        parsedResults: {
+          parsedClips: 0,
+          documentRows: 0,
+          chunkRows: 0,
+          derivedFiles: 0
+        }
+      }
+    });
+    expect(tableCount(storeRoot, "clips")).toBe(1);
+    expect(tableCount(storeRoot, "rawdocs")).toBe(1);
+    expect(tableCount(storeRoot, "documents")).toBe(0);
+    expect(tableCount(storeRoot, "chunks")).toBe(0);
+    await expect(access(join(storeRoot, paths.rawHtmlPath))).resolves.toBeUndefined();
+    await expect(access(join(storeRoot, paths.rawdocPath))).resolves.toBeUndefined();
+    await expect(access(join(storeRoot, paths.documentPath))).rejects.toThrow();
+    await expect(access(join(storeRoot, paths.markdownPath))).rejects.toThrow();
+    await expect(store.status(clip.normalizedUrl)).resolves.toMatchObject({
+      state: "captured",
+      hasRawdoc: true,
+      hasDocument: false,
+      rawdocId: clip.rawdoc.rawdoc_id
+    });
+
+    store.close();
+  });
+
   it("creates all database tables with the v3 capture and derived columns", async () => {
     const store = new KnowledgeStore(storeRoot);
     await store.ensure();

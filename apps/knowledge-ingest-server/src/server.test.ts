@@ -601,6 +601,97 @@ describe("knowledge ingest server", () => {
     await app.close();
   });
 
+  it("clears parsed results through maintenance API while keeping raw captures", async () => {
+    const app = await buildServer({
+      host: "127.0.0.1",
+      port: 0,
+      token: "test-token",
+      storeRoot,
+      fetchTimeoutMs: 1000,
+      maxHtmlBytes: 1024 * 1024
+    });
+
+    const body = {
+      inputMode: "browser_html" as const,
+      snapshot: {
+        pageUrl: "https://example.com/maintenance-parsed",
+        pageTitle: "Parsed Maintenance Article - Example Site",
+        title: "Parsed Maintenance Article - Example Site",
+        html,
+        capturedAt: "2026-05-11T02:00:00.000Z",
+        meta: {}
+      }
+    };
+    const save = await app.inject({
+      method: "POST",
+      url: "/api/clip/save",
+      headers: { authorization: "Bearer test-token" },
+      payload: body
+    });
+    expect(save.statusCode).toBe(200);
+
+    const rejected = await app.inject({
+      method: "POST",
+      url: "/api/store/clear-parsed",
+      headers: { authorization: "Bearer test-token" },
+      payload: { confirm: true }
+    });
+    expect(rejected.statusCode).toBe(400);
+
+    const cleared = await app.inject({
+      method: "POST",
+      url: "/api/store/clear-parsed",
+      headers: { authorization: "Bearer test-token" },
+      payload: {
+        confirm: true,
+        confirmation: "CLEAR PARSED RESULTS"
+      }
+    });
+    expect(cleared.statusCode).toBe(200);
+    expect(cleared.json()).toMatchObject({
+      cleared: true,
+      mode: "parsed",
+      before: {
+        parsedResults: {
+          parsedClips: 1,
+          documentRows: 1
+        }
+      },
+      after: {
+        tables: {
+          clips: 1,
+          rawdocs: 1,
+          documents: 0,
+          chunks: 0
+        },
+        files: {
+          rawdocs: 2,
+          totalContentFiles: 2
+        },
+        parsedResults: {
+          parsedClips: 0,
+          documentRows: 0,
+          chunkRows: 0,
+          derivedFiles: 0
+        }
+      }
+    });
+
+    const status = await app.inject({
+      method: "GET",
+      url: "/api/clip/status?url=https%3A%2F%2Fexample.com%2Fmaintenance-parsed",
+      headers: { authorization: "Bearer test-token" }
+    });
+    expect(status.statusCode).toBe(200);
+    expect(status.json()).toMatchObject({
+      state: "captured",
+      hasRawdoc: true,
+      hasDocument: false
+    });
+
+    await app.close();
+  });
+
   it("extracts Defuddle metadata for body-only article pages without semantic article wrappers", async () => {
     const app = await buildServer({
       host: "127.0.0.1",

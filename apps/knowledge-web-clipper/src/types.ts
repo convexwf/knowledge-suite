@@ -3,6 +3,7 @@ export type PanelView = "preview" | "json" | "rawdoc" | "parser" | "saved" | "ba
 export type ClipState = "empty" | "captured" | "parsed";
 export type ClipDeleteMode = "remove" | "purge";
 export const STORE_CLEAR_CONFIRMATION = "CLEAR KNOWLEDGE STORE";
+export const STORE_CLEAR_PARSED_CONFIRMATION = "CLEAR PARSED RESULTS";
 
 export interface PageSnapshot {
   pageUrl: string;
@@ -183,10 +184,26 @@ export interface StoreMaintenanceScan {
     rows: number;
     contentFiles: number;
   };
+  parsedResults?: {
+    parsedClips: number;
+    documentRows: number;
+    chunkRows: number;
+    collectionItemRefs: number;
+    batchItemRefs: number;
+    derivedFiles: number;
+  };
 }
 
 export interface StoreClearResult {
   cleared: true;
+  mode: "all";
+  before: StoreMaintenanceScan;
+  after: StoreMaintenanceScan;
+}
+
+export interface StoreClearParsedResult {
+  cleared: true;
+  mode: "parsed";
   before: StoreMaintenanceScan;
   after: StoreMaintenanceScan;
 }

@@ -107,12 +107,25 @@
         <section class="settings-section">
           <h2>Local Store Maintenance</h2>
           <p class="section-description">
-            Clear the local server database and all stored raw, document, Markdown, and asset files. This cannot be undone.
+            Scan the local server store before maintenance. Parsed-result cleanup keeps raw captures for later reparse;
+            full cleanup removes the database rows and all stored content files. These actions cannot be undone.
           </p>
           <div class="maintenance-actions">
             <button id="scan-store" type="button">Scan Store</button>
             <label>
-              Confirmation Text
+              Parsed Result Confirmation Text
+              <input
+                id="clear-parsed-confirmation"
+                type="text"
+                autocomplete="off"
+                placeholder="CLEAR PARSED RESULTS"
+              />
+            </label>
+            <button id="clear-parsed-results" class="danger-button" type="button" disabled>
+              Clear Parsed Results
+            </button>
+            <label>
+              Full Store Confirmation Text
               <input id="clear-store-confirmation" type="text" autocomplete="off" placeholder="CLEAR KNOWLEDGE STORE" />
             </label>
             <button id="clear-store" class="danger-button" type="button" disabled>Clear DB and Documents</button>

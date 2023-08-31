@@ -19,6 +19,7 @@ import {
   makeId,
   normalizeUrlForKnowledge,
   RawDoc,
+  StoreClearParsedResponse,
   StoreClearResponse,
   StoreMaintenanceScan,
   urlHash
@@ -679,6 +680,63 @@ export class KnowledgeStore {
     const after = await this.scanMaintenanceWithoutEnsure();
     return {
       cleared: true,
+      mode: "all",
+      before,
+      after
+    };
+  }
+
+  async clearParsedResults(): Promise<StoreClearParsedResponse> {
+    const before = await this.scanMaintenance();
+    const now = new Date().toISOString();
+
+    try {
+      this.database!.exec("BEGIN");
+      this.database!.prepare(`
+        UPDATE clips
+        SET active_doc_id = NULL,
+            content_title = NULL,
+            capture_updated_at = ?,
+            parse_updated_at = NULL
+        WHERE active_doc_id IS NOT NULL
+      `).run(now);
+      this.database!.prepare(`
+        UPDATE collection_items
+        SET doc_id = NULL,
+            page_title = NULL,
+            updated_at = ?
+        WHERE doc_id IS NOT NULL
+      `).run(now);
+      this.database!.prepare(`
+        UPDATE batch_items
+        SET doc_id = NULL,
+            updated_at = ?
+        WHERE doc_id IS NOT NULL
+      `).run(now);
+      this.database!.prepare("DELETE FROM chunks").run();
+      this.database!.prepare("DELETE FROM documents").run();
+      this.rebuildChunksFtsIndex();
+      this.database!.exec("COMMIT");
+    } catch (error) {
+      this.database!.exec("ROLLBACK");
+      throw error;
+    }
+
+    await Promise.all([
+      rm(join(this.root, "documents"), { recursive: true, force: true }),
+      rm(join(this.root, "markdown"), { recursive: true, force: true }),
+      rm(join(this.root, "assets"), { recursive: true, force: true })
+    ]);
+    await Promise.all([
+      mkdir(join(this.root, "documents"), { recursive: true }),
+      mkdir(join(this.root, "markdown"), { recursive: true }),
+      mkdir(join(this.root, "assets"), { recursive: true })
+    ]);
+
+    const after = await this.scanMaintenanceWithoutEnsure();
+    return {
+      cleared: true,
+      mode: "parsed",
       before,
       after
     };
@@ -1655,6 +1713,9 @@ export class KnowledgeStore {
     };
     const rows = Object.values(tables).reduce((sum, count) => sum + count, 0);
     const totalContentFiles = rawdocFiles + documentFiles + markdownFiles + assetFiles;
+    const parsedClips = this.countRowsWhere("clips", "active_doc_id IS NOT NULL");
+    const collectionItemRefs = this.countRowsWhere("collection_items", "doc_id IS NOT NULL");
+    const batchItemRefs = this.countRowsWhere("batch_items", "doc_id IS NOT NULL");
 
     return {
       storeRoot: this.root,
@@ -1675,12 +1736,26 @@ export class KnowledgeStore {
       totals: {
         rows,
         contentFiles: totalContentFiles
+      },
+      parsedResults: {
+        parsedClips,
+        documentRows: tables.documents,
+        chunkRows: tables.chunks,
+        collectionItemRefs,
+        batchItemRefs,
+        derivedFiles: documentFiles + markdownFiles + assetFiles
       }
     };
   }
 
   private countRows(table: string): number {
     return (this.database!.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get() as { count: number }).count;
+  }
+
+  private countRowsWhere(table: string, where: string): number {
+    return (this.database!.prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE ${where}`).get() as {
+      count: number;
+    }).count;
   }
 
   private async deleteFile(relativePath: string): Promise<void> {
