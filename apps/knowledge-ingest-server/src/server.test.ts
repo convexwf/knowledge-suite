@@ -51,6 +51,52 @@ const redditHtml = `<!doctype html>
               </div>
             </shreddit-post-text-body>
           </shreddit-post>
+          <shreddit-comment
+            author="Worldly-Control403"
+            thingid="t1_njxr5bd"
+            depth="0"
+            created="2025-10-17T08:00:51.354000+0000"
+            permalink="/r/AI_Agents/comments/1lpj771/comment/njxr5bd/"
+            score="16">
+            <div class="md" id="t1_njxr5bd-comment-rtjson-content" slot="comment">
+              <p>Most problems do not need AI agents. A bit of logic and clean process usually does the job.</p>
+              <p>Keep it stupid simple and start with a normal workflow before adding an agent.</p>
+            </div>
+          </shreddit-comment>
+          <shreddit-comment
+            author="LearnSkillsFast"
+            thingid="t1_n0v6fcy"
+            depth="0"
+            created="2025-07-02T01:24:26.086000+0000"
+            permalink="/r/AI_Agents/comments/1lpj771/comment/n0v6fcy/"
+            score="10">
+            <div class="md" id="t1_n0v6fcy-comment-rtjson-content" slot="comment">
+              <p>Agent use-cases: <a href="https://github.com/ashishpatel26/500-AI-Agents-Projects">500 AI Agents Projects</a></p>
+              <p>Building effective agents: <a href="https://www.anthropic.com/engineering/building-effective-agents">Anthropic guide</a></p>
+            </div>
+          </shreddit-comment>
+          <shreddit-comment
+            author="ImpressiveFault42069"
+            thingid="t1_n0vja75"
+            depth="0"
+            created="2025-07-02T02:39:27.026000+0000"
+            permalink="/r/AI_Agents/comments/1lpj771/comment/n0vja75/"
+            score="4">
+            <div class="md" id="t1_n0vja75-comment-rtjson-content" slot="comment">
+              <p>I would say for beginners, n8n is the best no or low code tool to build powerful linear agents.</p>
+            </div>
+          </shreddit-comment>
+          <shreddit-comment
+            author="LearnSkillsFast"
+            thingid="t1_n0vjqdv"
+            depth="1"
+            created="2025-07-02T02:42:09.144000+0000"
+            permalink="/r/AI_Agents/comments/1lpj771/comment/n0vjqdv/"
+            score="1">
+            <div class="md" id="t1_n0vjqdv-comment-rtjson-content" slot="comment">
+              <p>Good to hear, what sort of solutions have you made with n8n?</p>
+            </div>
+          </shreddit-comment>
         </div>
       </div>
     </div>
@@ -346,6 +392,10 @@ describe("knowledge ingest server", () => {
     expect(redditCandidate?.metrics.textLength).toBeGreaterThan(180);
     expect(payload.markdown).toContain("not need an AI agent");
     expect(payload.markdown).toContain("Create a chain in LangChain");
+    expect(payload.markdown).toContain("## Comments");
+    expect(payload.markdown).toContain("> **Worldly-Control403** · [2025-10-17](https://reddit.com/r/AI_Agents/comments/1lpj771/comment/njxr5bd/) · 16 points");
+    expect(payload.markdown).toContain("> Agent use-cases: [500 AI Agents Projects](https://github.com/ashishpatel26/500-AI-Agents-Projects)");
+    expect(payload.markdown).toContain("> > **LearnSkillsFast** · [2025-07-02](https://reddit.com/r/AI_Agents/comments/1lpj771/comment/n0vjqdv/) · 1 points");
     expect(payload.document.meta.title).toBe("AI Agent best practices from one year as AI Engineer");
 
     await app.close();

@@ -499,7 +499,9 @@ function buildAdapterCandidates(input: ResolvedInput, title: string, match: Matc
       if (rootTextLength < (match.adapter.content.requireTextLength ?? 0) && !root.querySelector("img,table")) {
         continue;
       }
-      const sections = extractSections(root, title);
+      const sections = match.adapter.id === "reddit"
+        ? appendRedditCommentSections(extractSections(root, title), document, baseUrl)
+        : extractSections(root, title);
       candidates.push(makeCandidate({
         id: `adapter:${match.adapter.id}:${selector}:${index}`,
         method: "site_adapter",
@@ -522,6 +524,146 @@ function buildAdapterCandidates(input: ResolvedInput, title: string, match: Matc
   }
 
   return dedupeSimilarAdapterCandidates(candidates);
+}
+
+function appendRedditCommentSections(
+  sections: KnowledgeDocument["sections"],
+  document: Document,
+  baseUrl: string
+): KnowledgeDocument["sections"] {
+  const commentSections = extractRedditCommentSections(document, baseUrl);
+  if (commentSections.length === 0) {
+    return sections;
+  }
+  return [
+    ...sections,
+    {
+      section_id: makeId(),
+      type: "heading",
+      level: 2,
+      content: "Comments"
+    },
+    ...commentSections
+  ];
+}
+
+function extractRedditCommentSections(document: Document, baseUrl: string): KnowledgeDocument["sections"] {
+  const sections: KnowledgeDocument["sections"] = [];
+  const seen = new Set<string>();
+
+  for (const comment of document.querySelectorAll("shreddit-comment")) {
+    const thingId = comment.getAttribute("thingid") ?? "";
+    if (thingId && seen.has(thingId)) {
+      continue;
+    }
+    if (thingId) {
+      seen.add(thingId);
+    }
+
+    const body = redditCommentBody(comment, thingId);
+    const bodyLines = body ? redditCommentBodyLines(body) : [];
+    if (bodyLines.length === 0) {
+      continue;
+    }
+
+    const author = normalizeText(comment.getAttribute("author") ?? "") || "unknown";
+    const created = redditDate(comment.getAttribute("created"));
+    const permalink = toAbsoluteUrl(comment.getAttribute("permalink"), "https://reddit.com") ||
+      toAbsoluteUrl(comment.getAttribute("permalink"), baseUrl);
+    const score = normalizeText(comment.getAttribute("score") ?? "");
+    const depth = Math.max(Number(comment.getAttribute("depth") ?? 0) || 0, 0);
+    const meta = [
+      `**${author}**`,
+      created && permalink ? `[${created}](${permalink})` : created,
+      score ? `${score} points` : undefined
+    ].filter(Boolean).join(" · ");
+
+    sections.push({
+      section_id: makeId(),
+      type: "blockquote",
+      content: redditQuoteLines([meta, "", ...bodyLines], depth).join("\n")
+    });
+  }
+
+  return sections;
+}
+
+function redditCommentBody(comment: Element, thingId: string): Element | undefined {
+  if (thingId) {
+    const byId = comment.querySelector(`#${cssEscape(thingId)}-comment-rtjson-content`);
+    if (byId) {
+      return byId;
+    }
+  }
+  return comment.querySelector('[slot="comment"]') ?? undefined;
+}
+
+function redditCommentBodyLines(body: Element): string[] {
+  const lines: string[] = [];
+  const sections = extractSections(body, "");
+  for (const section of sections) {
+    lines.push(...sectionMarkdownLines(section));
+  }
+  return trimBlankLines(lines);
+}
+
+function sectionMarkdownLines(section: KnowledgeDocument["sections"][number]): string[] {
+  if (section.type === "heading") {
+    return [`${"#".repeat(section.level ?? 2)} ${section.content ?? ""}`, ""];
+  }
+  if (section.type === "paragraph") {
+    return [section.content ?? "", ""];
+  }
+  if (section.type === "blockquote") {
+    return (section.content ?? "").split(/\r?\n/).map((line) => line ? `> ${line}` : ">");
+  }
+  if (section.type === "list") {
+    return [
+      ...(section.items ?? []).map((item) => `- ${typeof item === "string" ? item : item.text}`),
+      ""
+    ];
+  }
+  if (section.type === "code") {
+    return ["```", section.content ?? "", "```", ""];
+  }
+  if (section.type === "figure") {
+    return [
+      ...(section.assets ?? [])
+        .map((asset) => asset.source_url || asset.path ? `![${asset.alt || asset.caption || ""}](${asset.source_url || asset.path})` : "")
+        .filter(Boolean),
+      section.content ?? "",
+      ""
+    ].filter((line, index, array) => line || index === array.length - 1);
+  }
+  if (section.type === "table") {
+    return [(section.content ?? sectionText(section)), ""].filter(Boolean);
+  }
+  return [];
+}
+
+function redditQuoteLines(lines: string[], depth: number): string[] {
+  const nestedPrefix = "> ".repeat(depth);
+  return lines.map((line) => line ? `${nestedPrefix}${line}` : nestedPrefix.trimEnd());
+}
+
+function redditDate(value: string | null): string | undefined {
+  const normalized = normalizeDate(value ?? undefined);
+  return normalized?.slice(0, 10);
+}
+
+function trimBlankLines(lines: string[]): string[] {
+  const trimmed = [...lines];
+  while (trimmed.length > 0 && !trimmed[0]) {
+    trimmed.shift();
+  }
+  while (trimmed.length > 0 && !trimmed[trimmed.length - 1]) {
+    trimmed.pop();
+  }
+  return trimmed;
+}
+
+function cssEscape(value: string): string {
+  return value.replace(/[^a-zA-Z0-9_-]/g, (char) => `\\${char}`);
 }
 
 function htmlBaseUrlFor(input: ResolvedInput): string {
