@@ -56,6 +56,7 @@ const removeButton = mustGet<HTMLButtonElement>("remove-button");
 const purgeButton = mustGet<HTMLButtonElement>("purge-button");
 const modeBrowserButton = mustGet<HTMLButtonElement>("mode-browser");
 const modeFetchButton = mustGet<HTMLButtonElement>("mode-fetch");
+const diagnosticsToggleRow = mustGet<HTMLElement>("diagnostics-toggle-row");
 const diagnosticsToggleButton = mustGet<HTMLButtonElement>("diagnostics-toggle");
 const diagnosticsTabs = mustGet<HTMLElement>("diagnostics-tabs");
 const tabPreviewButton = mustGet<HTMLButtonElement>("tab-preview");
@@ -898,9 +899,17 @@ function toggleDiagnostics(): void {
 
 function updateDiagnosticsDisclosure(): void {
   diagnosticsTabs.hidden = !diagnosticsExpanded;
-  diagnosticsToggleButton.textContent = diagnosticsExpanded ? "▴" : "▾";
   diagnosticsToggleButton.title = diagnosticsExpanded ? "Hide diagnostics" : "Show diagnostics";
+  diagnosticsToggleButton.setAttribute(
+    "aria-label",
+    diagnosticsExpanded ? "Hide diagnostics" : "Show diagnostics"
+  );
   diagnosticsToggleButton.setAttribute("aria-expanded", String(diagnosticsExpanded));
+  if (diagnosticsExpanded) {
+    diagnosticsTabs.after(diagnosticsToggleRow);
+  } else {
+    diagnosticsTabs.before(diagnosticsToggleRow);
+  }
 }
 
 function isDiagnosticsView(view: PanelView): boolean {

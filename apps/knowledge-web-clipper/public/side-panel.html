@@ -54,14 +54,18 @@
         <button id="tab-saved">Saved</button>
       </section>
 
-      <section class="diagnostics-toggle-row">
+      <section id="diagnostics-toggle-row" class="diagnostics-toggle-row">
         <button
           id="diagnostics-toggle"
           class="diagnostics-toggle"
           type="button"
           title="Show diagnostics"
+          aria-label="Show diagnostics"
+          aria-controls="diagnostics-tabs"
           aria-expanded="false"
-        >▾</button>
+        >
+          <span class="diagnostics-chevron" aria-hidden="true"></span>
+        </button>
       </section>
 
       <section id="diagnostics-tabs" class="diagnostics-tabs" hidden>

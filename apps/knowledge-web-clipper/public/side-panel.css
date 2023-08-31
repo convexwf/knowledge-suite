@@ -139,9 +139,10 @@ button:hover {
 .diagnostics-toggle-row {
   align-items: center;
   background: #ffffff;
+  border-bottom-color: transparent;
   display: flex;
   justify-content: center;
-  padding: 4px 12px;
+  padding: 0 12px;
 }
 
 .diagnostics-toggle {
@@ -149,18 +150,30 @@ button:hover {
   border-color: transparent;
   color: #5a6675;
   display: inline-flex;
-  font-size: 12px;
-  height: 20px;
+  height: 14px;
   justify-content: center;
-  line-height: 1;
   padding: 0;
-  width: 28px;
+  width: 24px;
 }
 
 .diagnostics-toggle:hover {
-  background: #f1f5f9;
+  background: transparent;
   border-color: transparent;
   color: #1f4b3f;
+}
+
+.diagnostics-chevron {
+  border: solid currentColor;
+  border-width: 0 1.5px 1.5px 0;
+  display: block;
+  height: 6px;
+  transform: rotate(45deg);
+  transition: transform 120ms ease;
+  width: 6px;
+}
+
+.diagnostics-toggle[aria-expanded="true"] .diagnostics-chevron {
+  transform: rotate(-135deg);
 }
 
 .more-menu {
