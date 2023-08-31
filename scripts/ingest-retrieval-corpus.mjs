@@ -397,7 +397,7 @@ async function getClipStatus(item) {
 async function evaluateOne(evalCase, expectedReady, ingestedById) {
   const response = await app.inject({
     method: "GET",
-    url: `/api/search?q=${encodeURIComponent(evalCase.query)}&limit=10`,
+    url: `/api/search?q=${encodeURIComponent(evalCase.query)}&limit=10&trace=true`,
     headers: authHeaders()
   });
 
@@ -421,7 +421,8 @@ async function evaluateOne(evalCase, expectedReady, ingestedById) {
     sourceUrl: item.sourceUrl,
     normalizedUrl: item.normalizedUrl,
     score: item.score,
-    snippet: item.snippet
+    snippet: item.snippet,
+    trace: item.trace
   }));
   const ranks = expectedReady
     .map((expectedId) => {
@@ -626,12 +627,15 @@ function renderMarkdownReport(report) {
     "## Missed Eval Cases",
     "",
     ...table(
-      ["ID", "Query", "Expected", "Top Result"],
+      ["ID", "Query", "Expected", "Top Result", "Top Coverage"],
       report.missedEvalCases.map((item) => [
         item.id,
         item.query,
         item.expectedReady.join(", "),
-        item.topResults[0]?.title ?? ""
+        item.topResults[0]?.title ?? "",
+        typeof item.topResults[0]?.trace?.termCoverage === "number"
+          ? formatPercent(item.topResults[0].trace.termCoverage)
+          : ""
       ])
     ),
     "",

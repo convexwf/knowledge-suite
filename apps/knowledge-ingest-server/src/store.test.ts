@@ -229,7 +229,7 @@ describe("KnowledgeStore", () => {
 
     await store.save(clip);
 
-    const results = await store.search("retrieval systems", { limit: 5 });
+    const results = await store.search("retrieval systems", { limit: 5, trace: true });
     expect(results).toHaveLength(1);
     expect(results[0]).toMatchObject({
       docId: clip.document.doc_id,
@@ -241,6 +241,53 @@ describe("KnowledgeStore", () => {
     });
     expect(results[0].sectionIds.length).toBeGreaterThan(0);
     expect(results[0].snippet.toLowerCase()).toContain("retrieval");
+    expect(results[0].trace).toMatchObject({
+      queryTerms: ["retrieval", "systems"],
+      matchedTerms: ["retrieval", "systems"],
+      termCoverage: 1
+    });
+
+    store.close();
+  });
+
+  it("reranks broad FTS matches by query term coverage", async () => {
+    const store = new KnowledgeStore(storeRoot);
+    const target = fixture(
+      "88888888-8888-4888-8888-888888888888",
+      "88888888-aaaa-4aaa-8aaa-888888888888",
+      "Grounded Retrieval",
+      "Grounded Retrieval",
+      "https://example.com/grounded"
+    );
+    const noisy = fixture(
+      "99999999-9999-4999-8999-999999999999",
+      "99999999-aaaa-4aaa-8aaa-999999999999",
+      "Noisy Retrieval",
+      "Noisy Retrieval",
+      "https://example.com/noisy"
+    );
+    noisy.document.sections = [
+      { section_id: "heading-1", type: "heading", level: 1, content: "Retrieval" },
+      {
+        section_id: "para-1",
+        type: "paragraph",
+        content: "Retrieval retrieval retrieval retrieval retrieval only repeats one broad term."
+      }
+    ];
+
+    await store.save(noisy);
+    await store.save(target);
+
+    const results = await store.search("retrieval citations", { limit: 5, trace: true });
+    expect(results.length).toBeGreaterThanOrEqual(2);
+    expect(results[0]).toMatchObject({
+      normalizedUrl: "https://example.com/grounded",
+      trace: {
+        matchedTerms: ["retrieval", "citations"],
+        termCoverage: 1
+      }
+    });
+    expect(results.find((result) => result.normalizedUrl === "https://example.com/noisy")?.trace?.termCoverage).toBe(0.5);
 
     store.close();
   });
@@ -561,18 +608,18 @@ function tableCount(root: string, table: string): number {
   }
 }
 
-function fixture(docId: string, rawdocId: string, title: string, pageTitle = title): {
+function fixture(docId: string, rawdocId: string, title: string, pageTitle = title, normalizedUrl = "https://example.com/article"): {
   normalizedUrl: string;
   html: string;
   rawdoc: RawDoc;
   document: KnowledgeDocument;
   markdown: string;
 } {
-  const normalizedUrl = "https://example.com/article";
   const html = `<!doctype html><title>${pageTitle}</title><article>${title}</article>`;
+  const originalUrl = `${normalizedUrl}?utm_source=x`;
 
   return {
-    normalizedUrl: "https://example.com/article?utm_source=x",
+    normalizedUrl: originalUrl,
     html,
     rawdoc: {
       rawdoc_id: rawdocId,
@@ -587,7 +634,7 @@ function fixture(docId: string, rawdocId: string, title: string, pageTitle = tit
         pageTitle,
         contentTitle: title,
         displayTitle: pageTitle,
-        originalUrl: "https://example.com/article?utm_source=x",
+        originalUrl,
         canonicalUrl: normalizedUrl,
         normalizedUrl
       }

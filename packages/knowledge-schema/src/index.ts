@@ -336,6 +336,18 @@ export interface SearchResultItem {
   parserVersion?: string;
   parserMethod?: string;
   parserProfile?: string;
+  trace?: SearchTrace;
+}
+
+export interface SearchTrace {
+  queryTerms: string[];
+  matchedTerms: string[];
+  termCoverage: number;
+  bm25Score: number;
+  rankingScore: number;
+  titleMatches: number;
+  headingMatches: number;
+  phraseMatched: boolean;
 }
 
 export interface SearchResponse {

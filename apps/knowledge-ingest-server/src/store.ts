@@ -126,6 +126,7 @@ interface SearchRow {
   parser_profile: string | null;
   score: number;
   snippet: string;
+  text: string;
 }
 
 interface ChunkIndexRow {
@@ -152,6 +153,18 @@ interface SearchResultItem {
   parserVersion?: string;
   parserMethod?: string;
   parserProfile?: string;
+  trace?: SearchTrace;
+}
+
+interface SearchTrace {
+  queryTerms: string[];
+  matchedTerms: string[];
+  termCoverage: number;
+  bm25Score: number;
+  rankingScore: number;
+  titleMatches: number;
+  headingMatches: number;
+  phraseMatched: boolean;
 }
 
 interface SavePaths {
@@ -168,6 +181,7 @@ interface SearchOptions {
   docId?: string;
   url?: string;
   parserMethod?: string;
+  trace?: boolean;
 }
 
 export class KnowledgeStore {
@@ -258,8 +272,10 @@ export class KnowledgeStore {
       values.push(options.parserMethod);
     }
 
+    const queryTerms = extractQueryTerms(trimmed);
     const limit = Math.min(Math.max(Math.trunc(options.limit ?? 10) || 10, 1), 50);
-    values.push(limit);
+    const candidateLimit = Math.min(Math.max(limit * 5, 50), 200);
+    values.push(candidateLimit);
 
     const rows = this.database!.prepare(`
       SELECT
@@ -276,7 +292,8 @@ export class KnowledgeStore {
         c.parser_method,
         c.parser_profile,
         bm25(chunks_fts) AS score,
-        snippet(chunks_fts, 2, '[', ']', ' ... ', 18) AS snippet
+        snippet(chunks_fts, 2, '[', ']', ' ... ', 18) AS snippet,
+        c.text
       FROM chunks_fts
       JOIN chunks c ON c.rowid = chunks_fts.rowid
       WHERE ${clauses.join(" AND ")}
@@ -284,24 +301,29 @@ export class KnowledgeStore {
       LIMIT ?
     `).all(...values) as unknown as SearchRow[];
 
-    return rows.map((row) => ({
-      chunkId: row.chunk_id,
-      docId: row.doc_id,
-      rawdocId: row.rawdoc_id,
-      sectionIds: safeJsonArray(row.section_ids_json),
-      title: titleFields(row.page_title, row.title, row.normalized_url ?? row.source_url ?? row.doc_id).title,
-      pageTitle: row.page_title ?? undefined,
-      contentTitle: row.title,
-      displayTitle: titleFields(row.page_title, row.title, row.normalized_url ?? row.source_url ?? row.doc_id).displayTitle,
-      sourceUrl: row.source_url ?? undefined,
-      normalizedUrl: row.normalized_url ?? undefined,
-      headingPath: row.heading_path ?? undefined,
-      snippet: row.snippet,
-      score: row.score,
-      parserVersion: row.parser_version ?? undefined,
-      parserMethod: row.parser_method ?? undefined,
-      parserProfile: row.parser_profile ?? undefined
-    }));
+    return rows
+      .map((row) => ({ row, trace: scoreSearchRow(row, trimmed, queryTerms) }))
+      .sort((left, right) => left.trace.rankingScore - right.trace.rankingScore)
+      .slice(0, limit)
+      .map(({ row, trace }) => ({
+        chunkId: row.chunk_id,
+        docId: row.doc_id,
+        rawdocId: row.rawdoc_id,
+        sectionIds: safeJsonArray(row.section_ids_json),
+        title: titleFields(row.page_title, row.title, row.normalized_url ?? row.source_url ?? row.doc_id).title,
+        pageTitle: row.page_title ?? undefined,
+        contentTitle: row.title,
+        displayTitle: titleFields(row.page_title, row.title, row.normalized_url ?? row.source_url ?? row.doc_id).displayTitle,
+        sourceUrl: row.source_url ?? undefined,
+        normalizedUrl: row.normalized_url ?? undefined,
+        headingPath: row.heading_path ?? undefined,
+        snippet: row.snippet,
+        score: trace.rankingScore,
+        parserVersion: row.parser_version ?? undefined,
+        parserMethod: row.parser_method ?? undefined,
+        parserProfile: row.parser_profile ?? undefined,
+        trace: options.trace ? trace : undefined
+      }));
   }
 
   async upsertCollection(params: {
@@ -1852,10 +1874,40 @@ function safeJsonArray(input: string): string[] {
   }
 }
 
+function scoreSearchRow(row: SearchRow, query: string, queryTerms: string[]): SearchTrace {
+  const titleText = normalizeForRanking(row.title, row.page_title ?? "");
+  const headingText = normalizeForRanking(row.heading_path ?? "");
+  const bodyText = normalizeForRanking(row.text, row.snippet);
+  const combinedText = `${titleText} ${headingText} ${bodyText}`;
+  const matchedTerms = queryTerms.filter((term) => combinedText.includes(term));
+  const titleMatches = queryTerms.filter((term) => titleText.includes(term)).length;
+  const headingMatches = queryTerms.filter((term) => headingText.includes(term)).length;
+  const termCoverage = queryTerms.length ? matchedTerms.length / queryTerms.length : 0;
+  const phraseMatched = Boolean(normalizeForRanking(query)) && combinedText.includes(normalizeForRanking(query));
+  const allTermsMatched = queryTerms.length > 0 && matchedTerms.length === queryTerms.length;
+  const bm25Score = row.score;
+  const rankingScore =
+    bm25Score -
+    termCoverage * 4 -
+    titleMatches * 0.6 -
+    headingMatches * 0.4 -
+    (phraseMatched ? 1.5 : 0) -
+    (allTermsMatched ? 1 : 0);
+
+  return {
+    queryTerms,
+    matchedTerms,
+    termCoverage,
+    bm25Score,
+    rankingScore,
+    titleMatches,
+    headingMatches,
+    phraseMatched
+  };
+}
+
 function toFtsQuery(input: string): string {
-  const tokens = Array.from(input.matchAll(/[A-Za-z][A-Za-z0-9_.-]*|[0-9]+/g))
-    .map((match) => match[0].replace(/"/g, ""))
-    .filter(Boolean);
+  const tokens = extractQueryTerms(input);
 
   if (tokens.length === 0) {
     return input.trim().replace(/"/g, " ");
@@ -1863,6 +1915,45 @@ function toFtsQuery(input: string): string {
 
   return tokens.map((token) => `"${token}"`).join(" OR ");
 }
+
+function extractQueryTerms(input: string): string[] {
+  const terms = Array.from(input.matchAll(/[A-Za-z][A-Za-z0-9_.-]*|[0-9]+/g))
+    .map((match) => normalizeForRanking(match[0].replace(/"/g, "")))
+    .filter((term) => term && !RANKING_STOPWORDS.has(term));
+
+  return [...new Set(terms)];
+}
+
+function normalizeForRanking(...parts: Array<string | null | undefined>): string {
+  return parts
+    .filter((part): part is string => typeof part === "string")
+    .join(" ")
+    .toLowerCase()
+    .replace(/[^a-z0-9_.-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+const RANKING_STOPWORDS = new Set([
+  "a",
+  "an",
+  "and",
+  "are",
+  "as",
+  "for",
+  "how",
+  "in",
+  "is",
+  "of",
+  "on",
+  "or",
+  "the",
+  "to",
+  "vs",
+  "what",
+  "when",
+  "with"
+]);
 
 function ignoreMissing(error: unknown): void {
   if ((error as NodeJS.ErrnoException).code !== "ENOENT") {

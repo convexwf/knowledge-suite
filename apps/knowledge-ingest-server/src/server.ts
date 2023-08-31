@@ -114,6 +114,7 @@ export async function buildServer(config: ServerConfig = loadConfig()) {
       docId?: string;
       url?: string;
       parserMethod?: string;
+      trace?: string;
     };
     if (!query.q?.trim()) {
       throw new Error("q is required");
@@ -126,7 +127,8 @@ export async function buildServer(config: ServerConfig = loadConfig()) {
         limit: query.limit ? Number(query.limit) : undefined,
         docId: query.docId,
         url: query.url,
-        parserMethod: query.parserMethod
+        parserMethod: query.parserMethod,
+        trace: query.trace === "true" || query.trace === "1"
       })
     };
   });
