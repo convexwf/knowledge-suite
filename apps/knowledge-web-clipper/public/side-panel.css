@@ -25,7 +25,7 @@ select {
 
 .panel {
   display: grid;
-  grid-template-rows: auto auto auto auto auto auto 1fr;
+  grid-template-rows: auto auto auto auto auto auto auto 1fr;
   min-height: 100vh;
 }
 
@@ -33,6 +33,7 @@ select {
 .controls,
 .statusbar,
 .tabs,
+.diagnostics-toggle-row,
 .diagnostics-tabs,
 .candidate-control {
   border-bottom: 1px solid #dde3ea;
@@ -133,6 +134,33 @@ button:hover {
 .tabs,
 .diagnostics-tabs {
   overflow-x: auto;
+}
+
+.diagnostics-toggle-row {
+  align-items: center;
+  background: #ffffff;
+  display: flex;
+  justify-content: center;
+  padding: 4px 12px;
+}
+
+.diagnostics-toggle {
+  align-items: center;
+  border-color: transparent;
+  color: #5a6675;
+  display: inline-flex;
+  font-size: 12px;
+  height: 20px;
+  justify-content: center;
+  line-height: 1;
+  padding: 0;
+  width: 28px;
+}
+
+.diagnostics-toggle:hover {
+  background: #f1f5f9;
+  border-color: transparent;
+  color: #1f4b3f;
 }
 
 .more-menu {

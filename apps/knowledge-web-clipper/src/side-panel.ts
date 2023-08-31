@@ -56,6 +56,7 @@ const removeButton = mustGet<HTMLButtonElement>("remove-button");
 const purgeButton = mustGet<HTMLButtonElement>("purge-button");
 const modeBrowserButton = mustGet<HTMLButtonElement>("mode-browser");
 const modeFetchButton = mustGet<HTMLButtonElement>("mode-fetch");
+const diagnosticsToggleButton = mustGet<HTMLButtonElement>("diagnostics-toggle");
 const diagnosticsTabs = mustGet<HTMLElement>("diagnostics-tabs");
 const tabPreviewButton = mustGet<HTMLButtonElement>("tab-preview");
 const tabJsonButton = mustGet<HTMLButtonElement>("tab-json");
@@ -79,6 +80,8 @@ let batchPollTimer: number | undefined;
 
 let currentInputMode: InputMode = settings.defaultInputMode;
 let activeView: PanelView = settings.defaultPanelTab;
+let lastPrimaryView: "preview" | "saved" = activeView === "saved" ? "saved" : "preview";
+let diagnosticsExpanded = isDiagnosticsView(activeView);
 let autoRefreshTimer: number | undefined;
 let pendingAction: "batch" | "delete" | "preview" | "save" | undefined;
 
@@ -102,6 +105,7 @@ saveSectionButton.addEventListener("click", () => {
 });
 diagnosticsButton.addEventListener("click", () => {
   closeMoreMenu();
+  diagnosticsExpanded = true;
   setView(settings.showParserDiagnostics ? "parser" : "json", true);
 });
 copyButton.addEventListener("click", () => {
@@ -118,6 +122,7 @@ purgeButton.addEventListener("click", () => {
 });
 modeBrowserButton.addEventListener("click", () => setMode("browser_html"));
 modeFetchButton.addEventListener("click", () => setMode("server_fetch"));
+diagnosticsToggleButton.addEventListener("click", () => toggleDiagnostics());
 tabPreviewButton.addEventListener("click", () => setView("preview", true));
 tabJsonButton.addEventListener("click", () => setView("json", true));
 tabRawdocButton.addEventListener("click", () => setView("rawdoc", true));
@@ -493,7 +498,7 @@ function renderOutput(): void {
   parserOutput.hidden = activeView !== "parser";
   savedList.hidden = activeView !== "saved";
   batchOutput.hidden = activeView !== "batch";
-  diagnosticsTabs.hidden = !isDiagnosticsView(activeView);
+  updateDiagnosticsDisclosure();
   renderCandidateControl();
   if (activeView === "saved") {
     renderSavedList();
@@ -553,6 +558,12 @@ function setView(view: PanelView, persist = false): void {
   if (view === "parser" && !settings.showParserDiagnostics) {
     view = "json";
   }
+  if (view === "preview" || view === "saved") {
+    lastPrimaryView = view;
+  }
+  if (isDiagnosticsView(view)) {
+    diagnosticsExpanded = true;
+  }
   activeView = view;
   tabPreviewButton.dataset.active = String(view === "preview");
   tabJsonButton.dataset.active = String(view === "json");
@@ -560,7 +571,7 @@ function setView(view: PanelView, persist = false): void {
   tabParserButton.dataset.active = String(view === "parser");
   tabSavedButton.dataset.active = String(view === "saved");
   tabBatchButton.dataset.active = String(view === "batch");
-  diagnosticsTabs.hidden = !isDiagnosticsView(view);
+  updateDiagnosticsDisclosure();
   if (persist) {
     settings = { ...settings, defaultPanelTab: view };
     void saveSettings({ defaultPanelTab: view });
@@ -771,6 +782,7 @@ function applySettingsToUi(): void {
     activeView = "json";
   }
   modeFetchButton.hidden = !settings.allowServerFetch;
+  updateDiagnosticsDisclosure();
 }
 
 function hasSettingsChange(changes: Record<string, chrome.storage.StorageChange>): boolean {
@@ -815,7 +827,8 @@ function renderError(error: unknown): void {
   tabParserButton.dataset.active = "false";
   tabSavedButton.dataset.active = "false";
   tabBatchButton.dataset.active = "false";
-  diagnosticsTabs.hidden = true;
+  diagnosticsExpanded = false;
+  updateDiagnosticsDisclosure();
   const message = error instanceof Error ? error.message : String(error);
   const pre = document.createElement("pre");
   pre.textContent = message;
@@ -872,6 +885,22 @@ function cleanTitle(value: string | undefined): string {
 
 function closeMoreMenu(): void {
   moreMenu.open = false;
+}
+
+function toggleDiagnostics(): void {
+  diagnosticsExpanded = !diagnosticsExpanded;
+  if (!diagnosticsExpanded && isDiagnosticsView(activeView)) {
+    setView(lastPrimaryView, true);
+    return;
+  }
+  updateDiagnosticsDisclosure();
+}
+
+function updateDiagnosticsDisclosure(): void {
+  diagnosticsTabs.hidden = !diagnosticsExpanded;
+  diagnosticsToggleButton.textContent = diagnosticsExpanded ? "▴" : "▾";
+  diagnosticsToggleButton.title = diagnosticsExpanded ? "Hide diagnostics" : "Show diagnostics";
+  diagnosticsToggleButton.setAttribute("aria-expanded", String(diagnosticsExpanded));
 }
 
 function isDiagnosticsView(view: PanelView): boolean {
