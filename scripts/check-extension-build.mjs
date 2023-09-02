@@ -12,7 +12,9 @@ for (const file of [
   "apps/knowledge-web-clipper/dist/options.js",
   "apps/knowledge-web-clipper/dist/vendor/katex/katex.min.css",
   "apps/knowledge-web-clipper/dist/vendor/katex/katex.min.js",
-  "apps/knowledge-web-clipper/dist/vendor/katex/fonts/KaTeX_Main-Regular.woff2"
+  "apps/knowledge-web-clipper/dist/vendor/katex/fonts/KaTeX_Main-Regular.woff2",
+  "apps/knowledge-web-clipper/dist/vendor/markdown-it/markdown-it.min.js",
+  "apps/knowledge-web-clipper/dist/vendor/dompurify/purify.min.js"
 ]) {
   await access(file);
 }

@@ -14,7 +14,9 @@ const files = [
   ["public/reader.css", "dist/reader.css"],
   ["../../node_modules/katex/dist/katex.min.css", "dist/vendor/katex/katex.min.css"],
   ["../../node_modules/katex/dist/katex.min.js", "dist/vendor/katex/katex.min.js"],
-  ["../../node_modules/katex/dist/fonts", "dist/vendor/katex/fonts"]
+  ["../../node_modules/katex/dist/fonts", "dist/vendor/katex/fonts"],
+  ["public/vendor/markdown-it/markdown-it.min.js", "dist/vendor/markdown-it/markdown-it.min.js"],
+  ["public/vendor/dompurify/purify.min.js", "dist/vendor/dompurify/purify.min.js"]
 ];
 
 await mkdir(resolve(root, "dist"), { recursive: true });
