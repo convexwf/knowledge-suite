@@ -243,6 +243,16 @@ interface ImportSavePaths {
   markdownPath: string;
 }
 
+interface EpubMetadataInput {
+  isbn?: string;
+  publisher?: string;
+  publishedAt?: string;
+  identifiers?: Record<string, string>;
+  coverAssetId?: string;
+  chapterCount?: number;
+  metadata?: Record<string, unknown>;
+}
+
 const STORE_SCHEMA_VERSION = 9;
 
 interface SearchOptions {
@@ -1201,6 +1211,7 @@ export class KnowledgeStore {
     document: KnowledgeDocument;
     markdown: string;
     contentExt: string;
+    epubMetadata?: EpubMetadataInput;
   }): Promise<ImportSavePaths> {
     await this.ensure();
 
@@ -1340,6 +1351,9 @@ export class KnowledgeStore {
         tags: params.document.meta.tags ?? [],
         now
       });
+      if (params.rawdoc.source_type === "epub") {
+        this.upsertEpubMetadata(params.itemId, params.epubMetadata, params.document);
+      }
 
       if (replacedDocId) {
         this.deleteChunksByDocId(replacedDocId);
@@ -2029,6 +2043,45 @@ export class KnowledgeStore {
     );
   }
 
+  private upsertEpubMetadata(
+    itemId: string,
+    input: EpubMetadataInput | undefined,
+    document: KnowledgeDocument
+  ): void {
+    const coverAssetId = input?.coverAssetId ?? firstAssetId(document);
+    const chapterCount = input?.chapterCount ?? document.sections.filter((section) => section.type === "heading").length;
+    this.database!.prepare(`
+      INSERT INTO epub_metadata (
+        item_id,
+        isbn,
+        publisher,
+        published_at,
+        identifiers_json,
+        cover_asset_id,
+        chapter_count,
+        metadata_json
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(item_id) DO UPDATE SET
+        isbn = excluded.isbn,
+        publisher = excluded.publisher,
+        published_at = excluded.published_at,
+        identifiers_json = excluded.identifiers_json,
+        cover_asset_id = COALESCE(excluded.cover_asset_id, epub_metadata.cover_asset_id),
+        chapter_count = excluded.chapter_count,
+        metadata_json = excluded.metadata_json
+    `).run(
+      itemId,
+      input?.isbn ?? null,
+      input?.publisher ?? null,
+      input?.publishedAt ?? null,
+      JSON.stringify(input?.identifiers ?? {}),
+      coverAssetId ?? null,
+      chapterCount,
+      JSON.stringify(input?.metadata ?? {})
+    );
+  }
+
   private async removeKnowledgeItem(row: KnowledgeItemRow): Promise<KnowledgeItemDeleteResponse> {
     if (!row.active_doc_id) {
       return {
@@ -2700,6 +2753,17 @@ function titleFields(
 
 function stringMeta(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function firstAssetId(document: KnowledgeDocument): string | undefined {
+  for (const section of document.sections) {
+    for (const asset of section.assets ?? []) {
+      if (asset.asset_id) {
+        return asset.asset_id;
+      }
+    }
+  }
+  return undefined;
 }
 
 function toBatchJobItem(row: BatchItemRow): BatchJobItem {

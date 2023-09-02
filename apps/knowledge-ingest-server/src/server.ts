@@ -14,7 +14,7 @@ import {
   StoreClearRequestSchema
 } from "@uknowledge/knowledge-schema";
 import { loadConfig, ServerConfig } from "./config.js";
-import { parseEpub, type PandocRunner } from "./epub.js";
+import { parseEpub, type CalibreMetadata, type PandocRunner } from "./epub.js";
 import { ResolvedInput, resolveClipInput } from "./input.js";
 import { documentToMarkdown } from "./markdown.js";
 import { parsePage, type ParsedPage } from "./parser.js";
@@ -296,6 +296,8 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
       sourceUri: input.sourceUri,
       titleHint: input.titleHint,
       tags: input.tags,
+      metadataOpf: input.metadataOpf,
+      cover: input.cover,
       pandocRunner: config.epubPandocRunner
     });
     try {
@@ -308,7 +310,8 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
         rawdoc: parsed.rawdoc,
         document: documentWithAssets,
         markdown,
-        contentExt: "epub"
+        contentExt: "epub",
+        epubMetadata: parsed.epubMetadata
       });
       const knowledgeItem = await store.loadItem(parsed.itemId);
       return {
@@ -333,6 +336,7 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
     const parsed = await parseEpub(capture.content, {
       rawdocId: capture.rawdoc.rawdoc_id,
       sourceUri: capture.rawdoc.source_uri,
+      calibreMetadata: calibreMetadataFromRawdoc(capture.rawdoc),
       pandocRunner: config.epubPandocRunner
     });
     try {
@@ -352,7 +356,8 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
         rawdoc,
         document: documentWithAssets,
         markdown,
-        contentExt: capture.contentExt
+        contentExt: capture.contentExt,
+        epubMetadata: parsed.epubMetadata
       });
       const knowledgeItem = await store.loadItem(capture.item.itemId);
       return {
@@ -628,6 +633,8 @@ function parseEpubImportRequest(contentType: string | undefined, body: unknown):
   sourceUri?: string;
   titleHint?: string;
   tags?: string[];
+  metadataOpf?: Buffer;
+  cover?: { bytes: Buffer; filename?: string };
 } {
   if (Buffer.isBuffer(body)) {
     if (contentType?.toLowerCase().startsWith("multipart/form-data")) {
@@ -646,7 +653,9 @@ function parseEpubImportRequest(contentType: string | undefined, body: unknown):
       file: Buffer.from(encoded, "base64"),
       sourceUri: stringValue(record.sourceUri),
       titleHint: stringValue(record.titleHint),
-      tags: stringArray(record.tags)
+      tags: stringArray(record.tags),
+      metadataOpf: bufferFromStringOrBase64(record.metadataOpf, record.metadataOpfBase64),
+      cover: bufferFromBase64(record.coverBase64, stringValue(record.coverFilename))
     };
   }
 
@@ -658,6 +667,8 @@ function parseMultipartEpub(contentType: string, body: Buffer): {
   sourceUri?: string;
   titleHint?: string;
   tags?: string[];
+  metadataOpf?: Buffer;
+  cover?: { bytes: Buffer; filename?: string };
 } {
   const boundaryMatch = /boundary=(?:"([^"]+)"|([^;]+))/i.exec(contentType);
   const boundary = boundaryMatch?.[1] ?? boundaryMatch?.[2];
@@ -672,6 +683,8 @@ function parseMultipartEpub(contentType: string, body: Buffer): {
     sourceUri?: string;
     titleHint?: string;
     tags?: string[];
+    metadataOpf?: Buffer;
+    cover?: { bytes: Buffer; filename?: string };
   } = {};
 
   for (const part of raw.split(delimiter)) {
@@ -693,6 +706,17 @@ function parseMultipartEpub(contentType: string, body: Buffer): {
       result.file = Buffer.from(dataText, "binary");
       continue;
     }
+    if (name === "metadataOpf") {
+      result.metadataOpf = Buffer.from(dataText, "binary");
+      continue;
+    }
+    if (name === "cover") {
+      result.cover = {
+        bytes: Buffer.from(dataText, "binary"),
+        filename: multipartFilename(headerText)
+      };
+      continue;
+    }
     const value = Buffer.from(dataText, "binary").toString("utf8").trim();
     if (name === "sourceUri") {
       result.sourceUri = value;
@@ -710,7 +734,58 @@ function parseMultipartEpub(contentType: string, body: Buffer): {
     file: result.file,
     sourceUri: result.sourceUri,
     titleHint: result.titleHint,
-    tags: result.tags
+    tags: result.tags,
+    metadataOpf: result.metadataOpf,
+    cover: result.cover
+  };
+}
+
+function bufferFromStringOrBase64(value: unknown, base64: unknown): Buffer | undefined {
+  if (typeof value === "string") {
+    return Buffer.from(value, "utf8");
+  }
+  if (typeof base64 === "string" && base64.trim()) {
+    return Buffer.from(base64, "base64");
+  }
+  return undefined;
+}
+
+function bufferFromBase64(base64: unknown, filename?: string): { bytes: Buffer; filename?: string } | undefined {
+  if (typeof base64 !== "string" || !base64.trim()) {
+    return undefined;
+  }
+  return {
+    bytes: Buffer.from(base64, "base64"),
+    filename
+  };
+}
+
+function multipartFilename(headerText: string): string | undefined {
+  return /filename="([^"]+)"/i.exec(headerText)?.[1];
+}
+
+function calibreMetadataFromRawdoc(rawdoc: RawDoc): CalibreMetadata | undefined {
+  const value = rawdoc.metadata?.calibre;
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  return {
+    id: stringValue(record.id),
+    uuid: stringValue(record.uuid),
+    isbn: stringValue(record.isbn),
+    douban: stringValue(record.douban),
+    title: stringValue(record.title),
+    titleSort: stringValue(record.titleSort),
+    creators: stringArray(record.creators) ?? [],
+    publisher: stringValue(record.publisher),
+    publishedAt: stringValue(record.publishedAt),
+    language: stringValue(record.language),
+    subjects: stringArray(record.subjects) ?? [],
+    description: stringValue(record.description),
+    pages: numberValue(record.pages),
+    wordCount: numberValue(record.wordCount),
+    userMetadata: isObjectRecord(record.userMetadata) ? record.userMetadata : undefined
   };
 }
 
@@ -723,6 +798,14 @@ function stringArray(value: unknown): string[] | undefined {
     return undefined;
   }
   return value.map(String).map((item) => item.trim()).filter(Boolean);
+}
+
+function numberValue(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
 function isAllowedCorsOrigin(origin: string | undefined): boolean {

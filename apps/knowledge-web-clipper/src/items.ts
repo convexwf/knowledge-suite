@@ -4,6 +4,7 @@ import { KnowledgeItem, KnowledgeSourceType } from "./types.js";
 
 const uploadForm = mustGet<HTMLFormElement>("upload-form");
 const fileInput = mustGet<HTMLInputElement>("epub-file");
+const calibreFolderInput = mustGet<HTMLInputElement>("calibre-folder");
 const titleHintInput = mustGet<HTMLInputElement>("title-hint");
 const tagsInput = mustGet<HTMLInputElement>("tags-input");
 const uploadButton = mustGet<HTMLButtonElement>("upload-button");
@@ -37,20 +38,22 @@ setStatus("Ready");
 await refreshItems();
 
 async function importEpub(): Promise<void> {
-  const file = fileInput.files?.[0];
-  if (!file) {
-    setStatus("Choose an EPUB file first.");
+  const selected = selectedImportFiles();
+  if (!selected.file) {
+    setStatus("Choose an EPUB file or a Calibre folder first.");
     return;
   }
 
   uploadButton.disabled = true;
-  setStatus(`Importing ${file.name}...`);
+  setStatus(`Importing ${selected.file.name}...`);
   try {
     const result = await client.importEpub({
-      file,
-      sourceUri: file.name,
+      file: selected.file,
+      sourceUri: selected.sourceUri,
       titleHint: titleHintInput.value,
-      tags: parseTags(tagsInput.value)
+      tags: parseTags(tagsInput.value),
+      metadataOpf: selected.metadataOpf,
+      cover: selected.cover
     });
     setStatus(`Imported ${displayTitle(result.knowledgeItem)}.`);
     uploadForm.reset();
@@ -61,6 +64,41 @@ async function importEpub(): Promise<void> {
   } finally {
     uploadButton.disabled = false;
   }
+}
+
+function selectedImportFiles(): {
+  file?: File;
+  sourceUri?: string;
+  metadataOpf?: File;
+  cover?: File;
+} {
+  const folderFiles = Array.from(calibreFolderInput.files ?? []);
+  if (folderFiles.length) {
+    const file = folderFiles.find((item) => item.name.toLowerCase().endsWith(".epub"));
+    const metadataOpf = folderFiles.find((item) => item.name.toLowerCase() === "metadata.opf");
+    const cover = folderFiles.find((item) => /^cover\.(jpe?g|png|webp)$/i.test(item.name));
+    return {
+      file,
+      sourceUri: calibreFolderName(folderFiles) ?? file?.name,
+      metadataOpf,
+      cover
+    };
+  }
+
+  const file = fileInput.files?.[0];
+  return {
+    file,
+    sourceUri: file?.name
+  };
+}
+
+function calibreFolderName(files: File[]): string | undefined {
+  const relativePath = webkitRelativePath(files[0]);
+  return relativePath?.split("/")[0] || undefined;
+}
+
+function webkitRelativePath(file: File | undefined): string | undefined {
+  return (file as (File & { webkitRelativePath?: string }) | undefined)?.webkitRelativePath;
 }
 
 async function refreshItems(): Promise<void> {

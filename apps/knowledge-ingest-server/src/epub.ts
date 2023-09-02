@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { extname, isAbsolute, join } from "node:path";
 import { promisify } from "node:util";
 import {
   DocumentSection,
@@ -20,7 +20,36 @@ export interface ParsedEpub {
   identityHash: string;
   rawdoc: RawDoc;
   document: KnowledgeDocument;
+  epubMetadata: EpubMetadataSupplement;
   cleanup: () => Promise<void>;
+}
+
+export interface CalibreMetadata {
+  id?: string;
+  uuid?: string;
+  isbn?: string;
+  douban?: string;
+  title?: string;
+  titleSort?: string;
+  creators: string[];
+  publisher?: string;
+  publishedAt?: string;
+  language?: string;
+  subjects: string[];
+  description?: string;
+  pages?: number;
+  wordCount?: number;
+  userMetadata?: Record<string, unknown>;
+}
+
+export interface EpubMetadataSupplement {
+  isbn?: string;
+  publisher?: string;
+  publishedAt?: string;
+  identifiers?: Record<string, string>;
+  coverAssetId?: string;
+  chapterCount?: number;
+  metadata?: Record<string, unknown>;
 }
 
 export interface ParseEpubOptions {
@@ -29,6 +58,12 @@ export interface ParseEpubOptions {
   sourceUri?: string;
   titleHint?: string;
   tags?: string[];
+  metadataOpf?: Buffer | string;
+  calibreMetadata?: CalibreMetadata;
+  cover?: {
+    bytes: Buffer;
+    filename?: string;
+  };
   pandocRunner?: PandocRunner;
 }
 
@@ -51,6 +86,7 @@ export async function parseEpub(bytes: Buffer, options: ParseEpubOptions = {}): 
   const fetchTime = nowIso();
   const tempDir = await mkdtemp(join(tmpdir(), "knowledge-epub-"));
   try {
+  const calibre = options.metadataOpf ? parseCalibreMetadata(options.metadataOpf) : options.calibreMetadata;
 
   const inputPath = join(tempDir, "book.epub");
   const outputPath = join(tempDir, "book.json");
@@ -63,12 +99,23 @@ export async function parseEpub(bytes: Buffer, options: ParseEpubOptions = {}): 
   const ast = JSON.parse(await readFile(outputPath, "utf8")) as PandocDocument;
   const title = firstNonEmpty(
     options.titleHint,
+    calibre?.title,
     metaString(ast.meta?.title),
     "Untitled EPUB"
   );
-  const authors = metaStringList(ast.meta?.author);
-  const language = metaString(ast.meta?.lang) ?? metaString(ast.meta?.language);
+  const authors = firstNonEmptyList(calibre?.creators, metaStringList(ast.meta?.author));
+  const language = normalizeLanguage(firstNonEmpty(calibre?.language, metaString(ast.meta?.lang), metaString(ast.meta?.language)));
+  const tags = unique([...(options.tags ?? []), ...(calibre?.subjects ?? [])]);
   const sections = pandocBlocksToSections(ast.blocks ?? [], tempDir);
+  if (options.cover?.bytes.length) {
+    const coverPath = join(tempDir, `calibre-cover.${sanitizeExtension(extname(options.cover.filename ?? "")) || "jpg"}`);
+    await writeFile(coverPath, options.cover.bytes);
+    sections.unshift({
+      section_id: "cover",
+      type: "figure",
+      assets: [{ path: coverPath, caption: "Cover" }]
+    });
+  }
 
   const rawdoc: RawDoc = {
     rawdoc_id: rawdocId,
@@ -86,7 +133,14 @@ export async function parseEpub(bytes: Buffer, options: ParseEpubOptions = {}): 
       pandocWarnings: run.warnings ?? [],
       blockCount: ast.blocks?.length ?? 0,
       headingCount: sections.filter((section) => section.type === "heading").length,
-      tags: options.tags ?? []
+      tags,
+      importMode: calibre ? "calibre_directory" : "epub_file",
+      epubHash: identityHash,
+      metadataOpfHash: options.metadataOpf ? sha256(toBuffer(options.metadataOpf)) : undefined,
+      externalCoverHash: options.cover?.bytes ? sha256(options.cover.bytes) : undefined,
+      calibre,
+      identifiers: identifiersFor(calibre),
+      book: bookMetadataFor(calibre)
     }
   };
 
@@ -102,7 +156,8 @@ export async function parseEpub(bytes: Buffer, options: ParseEpubOptions = {}): 
       authors,
       ingested_at: fetchTime,
       language,
-      tags: options.tags,
+      tags,
+      published_at: calibre?.publishedAt,
       parser_version: PARSER_VERSION
     },
     sections: sections.length > 0
@@ -115,6 +170,7 @@ export async function parseEpub(bytes: Buffer, options: ParseEpubOptions = {}): 
     identityHash,
     rawdoc,
     document,
+    epubMetadata: epubMetadataFor(calibre, sections),
     cleanup: () => rm(tempDir, { recursive: true, force: true })
   };
   } catch (error) {
@@ -414,6 +470,188 @@ function metaStringList(value: PandocMetaValue | undefined): string[] {
   }
   const single = metaString(value);
   return single ? [single] : [];
+}
+
+export function parseCalibreMetadata(input: Buffer | string): CalibreMetadata {
+  const xml = Buffer.isBuffer(input) ? input.toString("utf8") : input;
+  const identifiers: Record<string, string> = {};
+  for (const match of xml.matchAll(/<dc:identifier\b([^>]*)>([\s\S]*?)<\/dc:identifier>/gi)) {
+    const attrs = match[1] ?? "";
+    const scheme = attrValue(attrs, "opf:scheme")?.toLowerCase() ?? attrValue(attrs, "scheme")?.toLowerCase();
+    const id = attrValue(attrs, "id")?.toLowerCase();
+    const value = decodeXml(match[2] ?? "").trim();
+    if (!value) {
+      continue;
+    }
+    if (scheme === "calibre" || id === "calibre_id") {
+      identifiers.calibre = value;
+    } else if (scheme === "uuid" || id === "uuid_id") {
+      identifiers.uuid = value;
+    } else if (scheme === "isbn") {
+      identifiers.isbn = value;
+    } else if (scheme === "new_douban" || scheme === "douban") {
+      identifiers.douban = value;
+    }
+  }
+
+  const userMetadata: Record<string, unknown> = {};
+  for (const match of xml.matchAll(/<meta\b([^>]*?)\/?>/gi)) {
+    const attrs = match[1] ?? "";
+    const name = attrValue(attrs, "name");
+    const content = attrValue(attrs, "content");
+    if (!name) {
+      continue;
+    }
+    if (name === "calibre:title_sort" && content) {
+      userMetadata.titleSort = decodeXml(content).trim();
+    }
+    if (name.startsWith("calibre:user_metadata:") && content) {
+      const key = name.replace("calibre:user_metadata:", "");
+      const decoded = decodeXml(content);
+      try {
+        userMetadata[key] = JSON.parse(decoded);
+      } catch {
+        userMetadata[key] = decoded;
+      }
+    }
+  }
+
+  return {
+    id: identifiers.calibre,
+    uuid: identifiers.uuid,
+    isbn: identifiers.isbn,
+    douban: identifiers.douban,
+    title: first(extractDc(xml, "title")),
+    titleSort: typeof userMetadata.titleSort === "string" ? userMetadata.titleSort : undefined,
+    creators: extractDc(xml, "creator"),
+    publisher: first(extractDc(xml, "publisher")),
+    publishedAt: first(extractDc(xml, "date")),
+    language: normalizeLanguage(first(extractDc(xml, "language"))),
+    subjects: extractDc(xml, "subject"),
+    description: stripHtml(first(extractDc(xml, "description")) ?? ""),
+    pages: numberUserValue(userMetadata["#pages"]),
+    wordCount: numberUserValue(userMetadata["#words"]),
+    userMetadata
+  };
+}
+
+function epubMetadataFor(calibre: CalibreMetadata | undefined, sections: DocumentSection[]): EpubMetadataSupplement {
+  return {
+    isbn: calibre?.isbn,
+    publisher: calibre?.publisher,
+    publishedAt: calibre?.publishedAt,
+    identifiers: identifiersFor(calibre),
+    chapterCount: sections.filter((section) => section.type === "heading").length,
+    metadata: calibre ? {
+      calibre,
+      book: bookMetadataFor(calibre)
+    } : {}
+  };
+}
+
+function identifiersFor(calibre: CalibreMetadata | undefined): Record<string, string> | undefined {
+  if (!calibre) {
+    return undefined;
+  }
+  return Object.fromEntries(Object.entries({
+    calibre: calibre.id,
+    uuid: calibre.uuid,
+    isbn: calibre.isbn,
+    douban: calibre.douban
+  }).filter(([, value]) => Boolean(value))) as Record<string, string>;
+}
+
+function bookMetadataFor(calibre: CalibreMetadata | undefined): Record<string, unknown> | undefined {
+  if (!calibre) {
+    return undefined;
+  }
+  return {
+    publisher: calibre.publisher,
+    publishedAt: calibre.publishedAt,
+    description: calibre.description,
+    pages: calibre.pages,
+    wordCount: calibre.wordCount,
+    titleSort: calibre.titleSort,
+    subjects: calibre.subjects
+  };
+}
+
+function firstNonEmptyList(...values: Array<string[] | undefined>): string[] {
+  for (const value of values) {
+    const filtered = (value ?? []).map((item) => item.trim()).filter(Boolean);
+    if (filtered.length) {
+      return filtered;
+    }
+  }
+  return [];
+}
+
+function unique(values: string[]): string[] {
+  return [...new Set(values.map((item) => item.trim()).filter(Boolean))];
+}
+
+function toBuffer(input: Buffer | string): Buffer {
+  return Buffer.isBuffer(input) ? input : Buffer.from(input, "utf8");
+}
+
+function extractDc(xml: string, tag: string): string[] {
+  const pattern = new RegExp(`<dc:${tag}\\b[^>]*>([\\s\\S]*?)<\\/dc:${tag}>`, "gi");
+  return [...xml.matchAll(pattern)].map((match) => decodeXml(match[1] ?? "").trim()).filter(Boolean);
+}
+
+function first(values: string[]): string | undefined {
+  return values.find((value) => value.trim());
+}
+
+function attrValue(attrs: string, name: string): string | undefined {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = new RegExp(`${escaped}=["']([^"']*)["']`, "i").exec(attrs);
+  return match ? decodeXml(match[1]) : undefined;
+}
+
+function decodeXml(value: string): string {
+  return value
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, "\"")
+    .replace(/&apos;/g, "'")
+    .replace(/&#(\d+);/g, (_match, code) => String.fromCodePoint(Number(code)))
+    .replace(/&#x([0-9a-f]+);/gi, (_match, code) => String.fromCodePoint(Number.parseInt(code, 16)))
+    .replace(/&amp;/g, "&");
+}
+
+function stripHtml(value: string): string | undefined {
+  const text = decodeXml(value).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+  return text || undefined;
+}
+
+function numberUserValue(value: unknown): number | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  const raw = (value as { "#value#"?: unknown })["#value#"];
+  return typeof raw === "number" ? raw : undefined;
+}
+
+function normalizeLanguage(value: string | undefined): string | undefined {
+  const normalized = value?.trim().toLowerCase();
+  if (!normalized) {
+    return undefined;
+  }
+  return {
+    zho: "zh",
+    chi: "zh",
+    eng: "en",
+    jpn: "ja",
+    fre: "fr",
+    fra: "fr",
+    ger: "de",
+    deu: "de"
+  }[normalized] ?? normalized;
+}
+
+function sanitizeExtension(input: string): string {
+  return input.replace(/^\./, "").replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
 }
 
 function stderrWarnings(stderr: string): string[] {

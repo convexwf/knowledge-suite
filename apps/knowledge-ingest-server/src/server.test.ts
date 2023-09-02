@@ -467,12 +467,33 @@ describe("knowledge ingest server", () => {
     });
 
     const epubBytes = Buffer.from("fake epub bytes");
+    const metadataOpf = `<?xml version="1.0" encoding="UTF-8"?>
+      <package xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">
+        <metadata>
+          <dc:identifier opf:scheme="calibre" id="calibre_id">883</dc:identifier>
+          <dc:identifier opf:scheme="uuid" id="uuid_id">book-uuid</dc:identifier>
+          <dc:identifier opf:scheme="ISBN">9787567511491</dc:identifier>
+          <dc:identifier opf:scheme="NEW_DOUBAN">25707589</dc:identifier>
+          <dc:title>Calibre Handbook</dc:title>
+          <dc:creator>Ada Lovelace</dc:creator>
+          <dc:publisher>Example Press</dc:publisher>
+          <dc:date>2024-01-02</dc:date>
+          <dc:language>zho</dc:language>
+          <dc:subject>Reference</dc:subject>
+          <dc:description>&lt;p&gt;Imported from Calibre.&lt;/p&gt;</dc:description>
+          <meta name="calibre:user_metadata:#pages" content="{&quot;#value#&quot;:55}" />
+          <meta name="calibre:user_metadata:#words" content="{&quot;#value#&quot;:47562}" />
+        </metadata>
+      </package>`;
     const imported = await app.inject({
       method: "POST",
       url: "/api/import/epub",
       headers: { authorization: "Bearer test-token" },
       payload: {
         fileBase64: epubBytes.toString("base64"),
+        metadataOpf,
+        coverBase64: Buffer.from("fake cover bytes").toString("base64"),
+        coverFilename: "cover.jpg",
         sourceUri: "file:///books/handbook.epub",
         tags: ["fixture"]
       }
@@ -483,9 +504,10 @@ describe("knowledge ingest server", () => {
     expect(saved.saved).toBe(true);
     expect(saved.knowledgeItem).toMatchObject({
       sourceType: "epub",
-      title: "EPUB Handbook",
-      creators: ["Ada"],
-      tags: ["fixture"],
+      title: "Calibre Handbook",
+      creators: ["Ada Lovelace"],
+      language: "zh",
+      tags: ["fixture", "Reference"],
       state: "parsed"
     });
     expect(saved.rawdoc).toMatchObject({
@@ -495,20 +517,53 @@ describe("knowledge ingest server", () => {
     });
     expect(saved.rawdoc.metadata).toMatchObject({
       parserBackend: "pandoc",
-      pandocVersion: "pandoc 3.test"
+      pandocVersion: "pandoc 3.test",
+      importMode: "calibre_directory",
+      calibre: {
+        id: "883",
+        isbn: "9787567511491",
+        douban: "25707589",
+        title: "Calibre Handbook",
+        publisher: "Example Press",
+        pages: 55,
+        wordCount: 47562
+      },
+      identifiers: {
+        calibre: "883",
+        uuid: "book-uuid",
+        isbn: "9787567511491",
+        douban: "25707589"
+      }
     });
+    expect(saved.rawdoc.metadata.metadataOpfHash).toEqual(expect.any(String));
+    expect(saved.rawdoc.metadata.externalCoverHash).toEqual(expect.any(String));
     expect(saved.document.meta.source.type).toBe("epub");
+    expect(saved.document.meta.published_at).toBe("2024-01-02");
     expect(saved.document.sections).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: "figure",
+        assets: [expect.objectContaining({ asset_id: expect.stringMatching(/\.jpg$/), path: expect.stringMatching(/^assets\//) })]
+      }),
       expect.objectContaining({ type: "heading", content: "Introduction" }),
       expect.objectContaining({ type: "paragraph", content: "EPUB retrieval content is searchable." }),
       expect.objectContaining({ type: "heading", content: "Nested Section" }),
       expect.objectContaining({ type: "paragraph", content: "Nested EPUB body text is preserved." })
     ]));
-    expect(saved.markdown).toContain("# EPUB Handbook");
+    expect(saved.markdown).toContain("# Calibre Handbook");
+    expect(saved.markdown).toContain("![Cover](assets/");
     expect(saved.markdown).toContain("EPUB retrieval content is searchable.");
     expect(saved.markdown).toContain("Nested EPUB body text is preserved.");
     expect(saved.paths.rawContentPath).toMatch(/\.epub$/);
+    expect(Object.values(saved.paths).some((path) => String(path).endsWith(".opf"))).toBe(false);
     await expect(access(join(storeRoot, saved.paths.rawContentPath))).resolves.toBeUndefined();
+
+    const scan = await app.inject({
+      method: "GET",
+      url: "/api/store/scan",
+      headers: { authorization: "Bearer test-token" }
+    });
+    expect(scan.statusCode).toBe(200);
+    expect(scan.json().tables.epubMetadata).toBe(1);
 
     const list = await app.inject({
       method: "GET",
@@ -525,7 +580,7 @@ describe("knowledge ingest server", () => {
       headers: { authorization: "Bearer test-token" }
     });
     expect(document.statusCode).toBe(200);
-    expect(document.json().meta.title).toBe("EPUB Handbook");
+    expect(document.json().meta.title).toBe("Calibre Handbook");
 
     const markdown = await app.inject({
       method: "GET",
@@ -544,7 +599,7 @@ describe("knowledge ingest server", () => {
     expect(search.json().results[0]).toMatchObject({
       docId: saved.document.doc_id,
       rawdocId: saved.rawdoc.rawdoc_id,
-      title: "EPUB Handbook",
+      title: "Calibre Handbook",
       sourceUrl: "file:///books/handbook.epub",
       normalizedUrl: saved.knowledgeItem.itemId,
       parserMethod: "pandoc_epub"
@@ -573,8 +628,13 @@ describe("knowledge ingest server", () => {
     expect(reparsed.statusCode).toBe(200);
     expect(reparsed.json().knowledgeItem).toMatchObject({
       itemId: saved.knowledgeItem.itemId,
+      title: "Calibre Handbook",
+      creators: ["Ada Lovelace"],
+      language: "zh",
       state: "parsed"
     });
+    expect(reparsed.json().rawdoc.metadata.importMode).toBe("calibre_directory");
+    expect(reparsed.json().rawdoc.metadata.metadataOpfHash).toBeUndefined();
     expect(reparsed.json().rawdoc.rawdoc_id).toBe(saved.rawdoc.rawdoc_id);
     expect(reparsed.json().document.doc_id).not.toBe(saved.document.doc_id);
     expect(pandocRuns).toBe(2);

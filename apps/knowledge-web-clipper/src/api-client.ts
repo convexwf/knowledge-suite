@@ -39,6 +39,8 @@ export interface KnowledgeApiClient {
     sourceUri?: string;
     titleHint?: string;
     tags?: string[];
+    metadataOpf?: File;
+    cover?: File;
   }): Promise<EpubImportResult>;
   reparseItem(itemId: string): Promise<EpubImportResult>;
   deleteItem(itemId: string, mode?: KnowledgeItemDeleteMode): Promise<KnowledgeItemDeleteResult>;
@@ -159,6 +161,12 @@ export function createKnowledgeApiClient(settings: ExtensionSettings): Knowledge
       }
       if (body.tags?.length) {
         form.append("tags", body.tags.join(","));
+      }
+      if (body.metadataOpf) {
+        form.append("metadataOpf", body.metadataOpf, body.metadataOpf.name);
+      }
+      if (body.cover) {
+        form.append("cover", body.cover, body.cover.name);
       }
       return requestForm<EpubImportResult>(baseUrl, settings.token, "/api/import/epub", form, options);
     },
