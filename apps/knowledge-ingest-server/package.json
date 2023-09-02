@@ -4,6 +4,16 @@
   "private": true,
   "type": "module",
   "main": "dist/index.js",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./local-import-api.js": {
+      "types": "./src/local-import-api.ts",
+      "default": "./dist/local-import-api.js"
+    }
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "check": "tsc -p tsconfig.json --noEmit",
