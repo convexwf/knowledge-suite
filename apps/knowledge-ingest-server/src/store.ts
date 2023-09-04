@@ -168,6 +168,47 @@ interface SearchTrace {
   phraseMatched: boolean;
 }
 
+interface ScoredSearchRow {
+  row: SearchRow;
+  trace: SearchTrace;
+}
+
+interface ContextCitation {
+  citationId: string;
+  marker: string;
+  rank: number;
+  chunkId: string;
+  docId: string;
+  rawdocId: string;
+  sectionIds: string[];
+  title: string;
+  pageTitle?: string;
+  contentTitle?: string;
+  displayTitle?: string;
+  sourceUrl?: string;
+  normalizedUrl?: string;
+  headingPath?: string;
+  content: string;
+  score: number;
+  parserVersion?: string;
+  parserMethod?: string;
+  parserProfile?: string;
+  truncated: boolean;
+  trace?: SearchTrace;
+}
+
+interface ContextPackResponse {
+  query: string;
+  retriever: "sqlite_fts";
+  packer: "section_chunk_v1";
+  budget: {
+    maxChars: number;
+    usedChars: number;
+  };
+  contextText: string;
+  citations: ContextCitation[];
+}
+
 interface SavePaths {
   rawHtmlPath: string;
   rawdocPath: string;
@@ -183,6 +224,10 @@ interface SearchOptions {
   url?: string;
   parserMethod?: string;
   trace?: boolean;
+}
+
+interface ContextOptions extends SearchOptions {
+  maxChars?: number;
 }
 
 export class KnowledgeStore {
@@ -257,8 +302,84 @@ export class KnowledgeStore {
       return [];
     }
 
+    const limit = boundedSearchLimit(options.limit ?? 10);
+    return this.searchRankedRows(trimmed, options, limit).map(({ row, trace }) => this.toSearchResult(row, trace, options.trace));
+  }
+
+  async retrieveContext(query: string, options: ContextOptions = {}): Promise<ContextPackResponse> {
+    await this.ensure();
+    const trimmed = query.trim();
+    const maxChars = boundedContextChars(options.maxChars ?? 6000);
+    if (!trimmed) {
+      return emptyContextPack(query, maxChars);
+    }
+
+    const limit = Math.min(boundedSearchLimit(options.limit ?? 5), 20);
+    const rankedRows = this.searchRankedRows(trimmed, options, limit);
+    const citations: ContextCitation[] = [];
+    const contextBlocks: string[] = [];
+
+    for (const { row, trace } of rankedRows) {
+      const citationId = String(citations.length + 1);
+      const marker = `[${citationId}]`;
+      const titles = titleFields(row.page_title, row.title, row.normalized_url ?? row.source_url ?? row.doc_id);
+      const header = contextHeader(marker, titles.displayTitle, row.source_url, row.heading_path);
+      const separator = contextBlocks.length > 0 ? "\n\n" : "";
+      const remaining = maxChars - contextBlocks.join("\n\n").length - separator.length - header.length - 2;
+      if (remaining < MIN_CONTEXT_CONTENT_CHARS) {
+        break;
+      }
+
+      const normalizedContent = normalizeContextContent(row.text);
+      const { content, truncated } = clipContextContent(normalizedContent, remaining);
+      if (!content) {
+        continue;
+      }
+
+      const block = `${header}\n\n${content}`;
+      contextBlocks.push(block);
+      citations.push({
+        citationId,
+        marker,
+        rank: citations.length + 1,
+        chunkId: row.chunk_id,
+        docId: row.doc_id,
+        rawdocId: row.rawdoc_id,
+        sectionIds: safeJsonArray(row.section_ids_json),
+        title: titles.title,
+        pageTitle: row.page_title ?? undefined,
+        contentTitle: row.title,
+        displayTitle: titles.displayTitle,
+        sourceUrl: row.source_url ?? undefined,
+        normalizedUrl: row.normalized_url ?? undefined,
+        headingPath: row.heading_path ?? undefined,
+        content,
+        score: trace.rankingScore,
+        parserVersion: row.parser_version ?? undefined,
+        parserMethod: row.parser_method ?? undefined,
+        parserProfile: row.parser_profile ?? undefined,
+        truncated,
+        trace: options.trace ? trace : undefined
+      });
+    }
+
+    const contextText = contextBlocks.join("\n\n");
+    return {
+      query,
+      retriever: "sqlite_fts",
+      packer: "section_chunk_v1",
+      budget: {
+        maxChars,
+        usedChars: contextText.length
+      },
+      contextText,
+      citations
+    };
+  }
+
+  private searchRankedRows(query: string, options: SearchOptions, limit: number): ScoredSearchRow[] {
     const clauses = ["chunks_fts MATCH ?"];
-    const values: Array<string | number> = [toFtsQuery(trimmed)];
+    const values: Array<string | number> = [toFtsQuery(query)];
 
     if (options.docId) {
       clauses.push("c.doc_id = ?");
@@ -273,8 +394,7 @@ export class KnowledgeStore {
       values.push(options.parserMethod);
     }
 
-    const queryTerms = extractQueryTerms(trimmed);
-    const limit = Math.min(Math.max(Math.trunc(options.limit ?? 10) || 10, 1), 50);
+    const queryTerms = extractQueryTerms(query);
     const candidateLimit = Math.min(Math.max(limit * 5, 50), 200);
     values.push(candidateLimit);
 
@@ -303,28 +423,32 @@ export class KnowledgeStore {
     `).all(...values) as unknown as SearchRow[];
 
     return rows
-      .map((row) => ({ row, trace: scoreSearchRow(row, trimmed, queryTerms) }))
+      .map((row) => ({ row, trace: scoreSearchRow(row, query, queryTerms) }))
       .sort((left, right) => left.trace.rankingScore - right.trace.rankingScore)
-      .slice(0, limit)
-      .map(({ row, trace }) => ({
-        chunkId: row.chunk_id,
-        docId: row.doc_id,
-        rawdocId: row.rawdoc_id,
-        sectionIds: safeJsonArray(row.section_ids_json),
-        title: titleFields(row.page_title, row.title, row.normalized_url ?? row.source_url ?? row.doc_id).title,
-        pageTitle: row.page_title ?? undefined,
-        contentTitle: row.title,
-        displayTitle: titleFields(row.page_title, row.title, row.normalized_url ?? row.source_url ?? row.doc_id).displayTitle,
-        sourceUrl: row.source_url ?? undefined,
-        normalizedUrl: row.normalized_url ?? undefined,
-        headingPath: row.heading_path ?? undefined,
-        snippet: row.snippet,
-        score: trace.rankingScore,
-        parserVersion: row.parser_version ?? undefined,
-        parserMethod: row.parser_method ?? undefined,
-        parserProfile: row.parser_profile ?? undefined,
-        trace: options.trace ? trace : undefined
-      }));
+      .slice(0, limit);
+  }
+
+  private toSearchResult(row: SearchRow, trace: SearchTrace, includeTrace?: boolean): SearchResultItem {
+    const titles = titleFields(row.page_title, row.title, row.normalized_url ?? row.source_url ?? row.doc_id);
+    return {
+      chunkId: row.chunk_id,
+      docId: row.doc_id,
+      rawdocId: row.rawdoc_id,
+      sectionIds: safeJsonArray(row.section_ids_json),
+      title: titles.title,
+      pageTitle: row.page_title ?? undefined,
+      contentTitle: row.title,
+      displayTitle: titles.displayTitle,
+      sourceUrl: row.source_url ?? undefined,
+      normalizedUrl: row.normalized_url ?? undefined,
+      headingPath: row.heading_path ?? undefined,
+      snippet: row.snippet,
+      score: trace.rankingScore,
+      parserVersion: row.parser_version ?? undefined,
+      parserMethod: row.parser_method ?? undefined,
+      parserProfile: row.parser_profile ?? undefined,
+      trace: includeTrace ? trace : undefined
+    };
   }
 
   async upsertCollection(params: {
@@ -1949,6 +2073,52 @@ function safeJsonArray(input: string): string[] {
   }
 }
 
+function emptyContextPack(query: string, maxChars: number): ContextPackResponse {
+  return {
+    query,
+    retriever: "sqlite_fts",
+    packer: "section_chunk_v1",
+    budget: {
+      maxChars,
+      usedChars: 0
+    },
+    contextText: "",
+    citations: []
+  };
+}
+
+function contextHeader(marker: string, title: string, sourceUrl: string | null, headingPath: string | null): string {
+  return [
+    `${marker} ${title}`,
+    sourceUrl ? `Source: ${sourceUrl}` : undefined,
+    headingPath ? `Section: ${headingPath}` : undefined
+  ].filter(Boolean).join("\n");
+}
+
+function normalizeContextContent(input: string): string {
+  return input.replace(/\r\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+function clipContextContent(input: string, maxChars: number): { content: string; truncated: boolean } {
+  if (input.length <= maxChars) {
+    return { content: input, truncated: false };
+  }
+
+  const clipped = input.slice(0, Math.max(0, maxChars - CONTEXT_TRUNCATION_SUFFIX.length)).trimEnd();
+  return {
+    content: clipped ? `${clipped}${CONTEXT_TRUNCATION_SUFFIX}` : "",
+    truncated: true
+  };
+}
+
+function boundedSearchLimit(value: number): number {
+  return Math.min(Math.max(Math.trunc(value) || 10, 1), 50);
+}
+
+function boundedContextChars(value: number): number {
+  return Math.min(Math.max(Math.trunc(value) || 6000, 500), 20000);
+}
+
 function scoreSearchRow(row: SearchRow, query: string, queryTerms: string[]): SearchTrace {
   const titleText = normalizeForRanking(row.title, row.page_title ?? "");
   const headingText = normalizeForRanking(row.heading_path ?? "");
@@ -2029,6 +2199,9 @@ const RANKING_STOPWORDS = new Set([
   "when",
   "with"
 ]);
+
+const CONTEXT_TRUNCATION_SUFFIX = "\n[truncated]";
+const MIN_CONTEXT_CONTENT_CHARS = 120;
 
 function ignoreMissing(error: unknown): void {
   if ((error as NodeJS.ErrnoException).code !== "ENOENT") {

@@ -281,6 +281,33 @@ describe("knowledge ingest server", () => {
     expect(search.json().results[0].sectionIds.length).toBeGreaterThan(0);
     expect(String(search.json().results[0].snippet)).toContain("Second");
 
+    const context = await app.inject({
+      method: "GET",
+      url: "/api/context?q=Second%20point&limit=3&maxChars=2000&trace=true",
+      headers: { authorization: "Bearer test-token" }
+    });
+    expect(context.statusCode).toBe(200);
+    expect(context.json()).toMatchObject({
+      query: "Second point",
+      retriever: "sqlite_fts",
+      packer: "section_chunk_v1",
+      citations: [
+        expect.objectContaining({
+          citationId: "1",
+          marker: "[1]",
+          docId: save.json().document.doc_id,
+          sourceUrl: "https://example.com/a",
+          parserMethod: "defuddle",
+          trace: expect.objectContaining({
+            termCoverage: 1
+          })
+        })
+      ]
+    });
+    expect(context.json().budget.usedChars).toBe(context.json().contextText.length);
+    expect(context.json().contextText).toContain("[1] Example Article - Example Site");
+    expect(context.json().contextText).toContain("Second point");
+
     const markdownPath = save.json().paths.markdownPath;
     await expect(access(join(storeRoot, markdownPath))).resolves.toBeUndefined();
 

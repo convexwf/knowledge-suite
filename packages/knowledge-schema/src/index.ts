@@ -379,6 +379,42 @@ export interface SearchResponse {
   results: SearchResultItem[];
 }
 
+export interface ContextCitation {
+  citationId: string;
+  marker: string;
+  rank: number;
+  chunkId: string;
+  docId: string;
+  rawdocId: string;
+  sectionIds: string[];
+  title: string;
+  pageTitle?: string;
+  contentTitle?: string;
+  displayTitle?: string;
+  sourceUrl?: string;
+  normalizedUrl?: string;
+  headingPath?: string;
+  content: string;
+  score: number;
+  parserVersion?: string;
+  parserMethod?: string;
+  parserProfile?: string;
+  truncated: boolean;
+  trace?: SearchTrace;
+}
+
+export interface ContextPackResponse {
+  query: string;
+  retriever: "sqlite_fts";
+  packer: "section_chunk_v1";
+  budget: {
+    maxChars: number;
+    usedChars: number;
+  };
+  contextText: string;
+  citations: ContextCitation[];
+}
+
 export type BatchItemState =
   | "pending"
   | "fetching"

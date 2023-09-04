@@ -134,6 +134,30 @@ export async function buildServer(config: ServerConfig = loadConfig()) {
     };
   });
 
+  app.get("/api/context", async (request) => {
+    const query = request.query as {
+      q?: string;
+      limit?: string;
+      maxChars?: string;
+      docId?: string;
+      url?: string;
+      parserMethod?: string;
+      trace?: string;
+    };
+    if (!query.q?.trim()) {
+      throw new Error("q is required");
+    }
+
+    return store.retrieveContext(query.q, {
+      limit: query.limit ? Number(query.limit) : undefined,
+      maxChars: query.maxChars ? Number(query.maxChars) : undefined,
+      docId: query.docId,
+      url: query.url,
+      parserMethod: query.parserMethod,
+      trace: query.trace === "true" || query.trace === "1"
+    });
+  });
+
   app.get("/api/store/scan", async () => store.scanMaintenance());
 
   app.post("/api/store/clear", async (request) => {

@@ -356,6 +356,80 @@ describe("KnowledgeStore", () => {
     store.close();
   });
 
+  it("packs ranked chunks into citation-ready context", async () => {
+    const store = new KnowledgeStore(storeRoot);
+    const clip = fixture("12121212-1212-4121-8121-121212121212", "abababab-abab-4bab-8bab-abababababab", "Context Title");
+
+    await store.save(clip);
+
+    const pack = await store.retrieveContext("retrieval systems", { limit: 3, maxChars: 2000, trace: true });
+    expect(pack).toMatchObject({
+      query: "retrieval systems",
+      retriever: "sqlite_fts",
+      packer: "section_chunk_v1",
+      budget: {
+        maxChars: 2000
+      }
+    });
+    expect(pack.budget.usedChars).toBe(pack.contextText.length);
+    expect(pack.budget.usedChars).toBeLessThanOrEqual(2000);
+    expect(pack.contextText).toContain("[1] Context Title");
+    expect(pack.contextText).toContain("Source: https://example.com/article");
+    expect(pack.contextText).toContain("retrieval systems use chunking and citations");
+    expect(pack.citations).toHaveLength(1);
+    expect(pack.citations[0]).toMatchObject({
+      citationId: "1",
+      marker: "[1]",
+      rank: 1,
+      docId: clip.document.doc_id,
+      rawdocId: clip.rawdoc.rawdoc_id,
+      sourceUrl: "https://example.com/article",
+      normalizedUrl: "https://example.com/article",
+      truncated: false,
+      trace: {
+        termCoverage: 1
+      }
+    });
+    expect(pack.citations[0].sectionIds.length).toBeGreaterThan(0);
+    expect(pack.citations[0].content).toContain("Title: Context Title");
+
+    store.close();
+  });
+
+  it("applies context character budget with truncation", async () => {
+    const store = new KnowledgeStore(storeRoot);
+    const clip = fixture(
+      "34343434-3434-4434-8434-343434343434",
+      "cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd",
+      "Long Context",
+      "Long Context",
+      "https://example.com/long-context"
+    );
+    clip.document.sections = [
+      { section_id: "heading-1", type: "heading", level: 1, content: "Long Retrieval" },
+      {
+        section_id: "para-1",
+        type: "paragraph",
+        content: `retrieval citations ${"context packer ".repeat(120)}`
+      }
+    ];
+
+    await store.save(clip);
+
+    const pack = await store.retrieveContext("retrieval citations", { limit: 1, maxChars: 500 });
+    expect(pack.budget.maxChars).toBe(500);
+    expect(pack.budget.usedChars).toBeLessThanOrEqual(500);
+    expect(pack.contextText.length).toBeLessThanOrEqual(500);
+    expect(pack.citations).toHaveLength(1);
+    expect(pack.citations[0]).toMatchObject({
+      citationId: "1",
+      truncated: true
+    });
+    expect(pack.citations[0].content).toContain("[truncated]");
+
+    store.close();
+  });
+
   it("migrates the v2 clips table into the capture and derived split schema", async () => {
     const database = new DatabaseSync(join(storeRoot, "index.sqlite3"));
     database.exec(`
