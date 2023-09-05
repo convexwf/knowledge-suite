@@ -4,8 +4,6 @@ import {
   ExtensionSettings,
   InputMode,
   PanelView,
-  STORE_CLEAR_CONFIRMATION,
-  STORE_CLEAR_PARSED_CONFIRMATION,
   StoreMaintenanceScan
 } from "./types.js";
 
@@ -23,9 +21,7 @@ const defaultPanelTabSelect = mustGet<HTMLSelectElement>("default-panel-tab");
 const testButton = mustGet<HTMLButtonElement>("test-connection");
 const resetButton = mustGet<HTMLButtonElement>("reset-settings");
 const scanStoreButton = mustGet<HTMLButtonElement>("scan-store");
-const clearParsedConfirmationInput = mustGet<HTMLInputElement>("clear-parsed-confirmation");
 const clearParsedButton = mustGet<HTMLButtonElement>("clear-parsed-results");
-const clearStoreConfirmationInput = mustGet<HTMLInputElement>("clear-store-confirmation");
 const clearStoreButton = mustGet<HTMLButtonElement>("clear-store");
 const storeScanOutput = mustGet<HTMLElement>("store-scan-output");
 const statusOutput = mustGet<HTMLElement>("status-output");
@@ -45,8 +41,6 @@ resetButton.addEventListener("click", () => resetToDefaults());
 scanStoreButton.addEventListener("click", () => scanStore());
 clearParsedButton.addEventListener("click", () => clearParsedResults());
 clearStoreButton.addEventListener("click", () => clearStore());
-clearParsedConfirmationInput.addEventListener("input", () => updateClearStoreAvailability());
-clearStoreConfirmationInput.addEventListener("input", () => updateClearStoreAvailability());
 
 async function saveCurrentSettings(): Promise<void> {
   settings = readSettingsFromForm();
@@ -90,7 +84,7 @@ async function scanStore(): Promise<void> {
 }
 
 async function clearStore(): Promise<void> {
-  if (!latestStoreScan || clearStoreConfirmationInput.value.trim() !== STORE_CLEAR_CONFIRMATION) {
+  if (!latestStoreScan) {
     updateClearStoreAvailability();
     return;
   }
@@ -111,7 +105,6 @@ async function clearStore(): Promise<void> {
   try {
     const result = await client.clearStore();
     latestStoreScan = result.after;
-    clearStoreConfirmationInput.value = "";
     setStoreScanStatus(
       "Store cleared",
       [
@@ -131,7 +124,7 @@ async function clearStore(): Promise<void> {
 }
 
 async function clearParsedResults(): Promise<void> {
-  if (!latestStoreScan || clearParsedConfirmationInput.value.trim() !== STORE_CLEAR_PARSED_CONFIRMATION) {
+  if (!latestStoreScan) {
     updateClearStoreAvailability();
     return;
   }
@@ -156,7 +149,6 @@ async function clearParsedResults(): Promise<void> {
   try {
     const result = await client.clearParsedResults();
     latestStoreScan = result.after;
-    clearParsedConfirmationInput.value = "";
     setStoreScanStatus(
       "Parsed results cleared",
       [
@@ -224,10 +216,8 @@ function setOutput(target: HTMLElement, title: string, detail: string): void {
 function updateClearStoreAvailability(): void {
   const impact = latestStoreScan ? parsedImpact(latestStoreScan) : { rows: 0, files: 0 };
   clearParsedButton.disabled = !latestStoreScan ||
-    clearParsedConfirmationInput.value.trim() !== STORE_CLEAR_PARSED_CONFIRMATION ||
     (impact.rows === 0 && impact.files === 0);
   clearStoreButton.disabled = !latestStoreScan ||
-    clearStoreConfirmationInput.value.trim() !== STORE_CLEAR_CONFIRMATION ||
     (latestStoreScan.totals.rows === 0 && latestStoreScan.totals.contentFiles === 0);
 }
 
