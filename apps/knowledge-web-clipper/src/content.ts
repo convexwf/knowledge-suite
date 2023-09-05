@@ -45,10 +45,33 @@
   function serializeSnapshotHtml(): { html: string; shadowRootCount: number } {
     const clone = document.documentElement.cloneNode(true) as HTMLElement;
     const shadowRootCount = flattenOpenShadowRoots(document.documentElement, clone);
+    sanitizeSnapshotClone(clone);
     return {
       html: clone.outerHTML,
       shadowRootCount
     };
+  }
+
+  function sanitizeSnapshotClone(root: Element): void {
+    for (const element of [root, ...Array.from(root.querySelectorAll("*"))]) {
+      sanitizeSvgLengthAttributes(element);
+    }
+  }
+
+  function sanitizeSvgLengthAttributes(element: Element): void {
+    if (element.namespaceURI !== "http://www.w3.org/2000/svg") {
+      return;
+    }
+
+    for (const attribute of Array.from(element.attributes)) {
+      if (SVG_LENGTH_ATTRIBUTES.has(attribute.name.toLowerCase()) && isInvalidSvgLengthPlaceholder(attribute.value)) {
+        element.removeAttribute(attribute.name);
+      }
+    }
+  }
+
+  function isInvalidSvgLengthPlaceholder(value: string): boolean {
+    return /^(?:currentWidth|currentHeight|undefined|null|NaN)$/i.test(value.trim());
   }
 
   function flattenOpenShadowRoots(source: Element, target: Element): number {
@@ -217,4 +240,29 @@
     }
     return Math.max(0, depth - 1);
   }
+
+  const SVG_LENGTH_ATTRIBUTES = new Set([
+    "cx",
+    "cy",
+    "dx",
+    "dy",
+    "font-size",
+    "height",
+    "markerheight",
+    "markerwidth",
+    "r",
+    "refx",
+    "refy",
+    "rx",
+    "ry",
+    "stroke-dashoffset",
+    "stroke-width",
+    "width",
+    "x",
+    "x1",
+    "x2",
+    "y",
+    "y1",
+    "y2"
+  ]);
 })();
