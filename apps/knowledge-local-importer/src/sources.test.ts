@@ -26,7 +26,7 @@ describe("local importer source scanners", () => {
     await mkdir(missingOpf, { recursive: true });
     await mkdir(missingEpub, { recursive: true });
     await writeFile(join(book, "metadata.opf"), "<package />");
-    await writeFile(join(book, "cover.jpg"), "cover");
+    await writeFile(join(book, "folder-image.png"), "cover");
     await writeFile(join(book, "book.epub"), "epub");
     await writeFile(join(missingOpf, "book.epub"), "epub");
     await writeFile(join(missingEpub, "metadata.opf"), "<package />");
@@ -38,10 +38,14 @@ describe("local importer source scanners", () => {
       type: "calibre_book",
       directoryPath: book,
       opfPath: join(book, "metadata.opf"),
-      coverPath: join(book, "cover.jpg")
+      coverPath: join(book, "folder-image.png")
     });
     expect(scan.candidates[0].epubPaths).toEqual([join(book, "book.epub")]);
     expect(scan.skipped.map((item) => item.errorCode).sort()).toEqual(["missing_epub", "missing_opf"]);
+  });
+
+  it("surfaces unreadable Calibre roots instead of returning an empty scan", async () => {
+    await expect(scanCalibre(join(root, "missing"))).rejects.toThrow();
   });
 
   it("finds HTML files and ignores hidden/build directories", async () => {

@@ -436,6 +436,50 @@ describe("knowledge ingest server", () => {
               ]
             },
             {
+              t: "Table",
+              c: [
+                ["", [], []],
+                [null, []],
+                [["AlignDefault", 0], ["AlignDefault", 0]],
+                [
+                  ["", [], []],
+                  [
+                    [
+                      ["", [], []],
+                      [
+                        [["", [], []], "AlignDefault", 1, 1, [{ t: "Plain", c: [{ t: "Str", c: "Name" }] }]],
+                        [["", [], []], "AlignDefault", 1, 1, [{ t: "Plain", c: [{ t: "Str", c: "Value" }] }]]
+                      ]
+                    ]
+                  ]
+                ],
+                [
+                  [
+                    ["", [], []],
+                    0,
+                    [["", [], []], []],
+                    [
+                      [
+                        ["", [], []],
+                        [
+                          [["", [], []], "AlignDefault", 1, 1, [{ t: "Plain", c: [{ t: "Str", c: "Alpha" }] }]],
+                          [["", [], []], "AlignDefault", 1, 1, [{ t: "Plain", c: [{ t: "Str", c: "One" }] }]]
+                        ]
+                      ],
+                      [
+                        ["", [], []],
+                        [
+                          [["", [], []], "AlignDefault", 1, 1, [{ t: "Plain", c: [{ t: "Str", c: "Beta" }] }]],
+                          [["", [], []], "AlignDefault", 1, 1, [{ t: "Plain", c: [{ t: "Str", c: "Two" }] }]]
+                        ]
+                      ]
+                    ]
+                  ]
+                ],
+                [["", [], []], []]
+              ]
+            },
+            {
               t: "Div",
               c: [
                 ["chapter-detail", [], []],
@@ -546,12 +590,15 @@ describe("knowledge ingest server", () => {
       }),
       expect.objectContaining({ type: "heading", content: "Introduction" }),
       expect.objectContaining({ type: "paragraph", content: "EPUB retrieval content is searchable." }),
+      expect.objectContaining({ type: "table", rows: [["Name", "Value"], ["Alpha", "One"], ["Beta", "Two"]] }),
       expect.objectContaining({ type: "heading", content: "Nested Section" }),
       expect.objectContaining({ type: "paragraph", content: "Nested EPUB body text is preserved." })
     ]));
     expect(saved.markdown).toContain("# Calibre Handbook");
     expect(saved.markdown).toContain("![Cover](assets/");
     expect(saved.markdown).toContain("EPUB retrieval content is searchable.");
+    expect(saved.markdown).toContain("| Name | Value |");
+    expect(saved.markdown).toContain("| Alpha | One |");
     expect(saved.markdown).toContain("Nested EPUB body text is preserved.");
     expect(saved.paths.rawContentPath).toMatch(/\.epub$/);
     expect(Object.values(saved.paths).some((path) => String(path).endsWith(".opf"))).toBe(false);

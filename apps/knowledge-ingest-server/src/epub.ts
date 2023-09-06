@@ -421,7 +421,85 @@ function figureBlocks(block: PandocBlock): PandocBlock[] {
 }
 
 function tableRows(block: PandocBlock): string[][] {
-  const rows = collectTableRows(block.c);
+  const rows = structuredTableRows(block.c);
+  if (rows.length) {
+    return rows;
+  }
+  const fallbackRows = collectTableRows(block.c);
+  return normalizeTableRows(fallbackRows);
+}
+
+function structuredTableRows(value: unknown): string[][] {
+  if (!Array.isArray(value) || value.length < 6) {
+    return [];
+  }
+  const [, , , head, bodies, foot] = value;
+  return [
+    ...tablePartRows(head),
+    ...tableBodyRows(bodies),
+    ...tablePartRows(foot)
+  ].filter((row) => row.some(Boolean));
+}
+
+function tableBodyRows(value: unknown): string[][] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.flatMap((body) => {
+    if (!Array.isArray(body)) {
+      return [];
+    }
+    const intermediateHead = body[2];
+    const rows = body[3];
+    return [
+      ...tablePartRows(intermediateHead),
+      ...tableRowGroupRows(rows)
+    ];
+  });
+}
+
+function tablePartRows(value: unknown): string[][] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return tableRowGroupRows(value[1]);
+}
+
+function tableRowGroupRows(value: unknown): string[][] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.map(tableRowCells).filter((row) => row.length > 0);
+}
+
+function tableRowCells(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const cells = Array.isArray(value[1]) ? value[1] : value;
+  return cells.map(tableCellText).map((cell) => cell.trim());
+}
+
+function tableCellText(value: unknown): string {
+  const blocks = pandocBlocksFromTableCell(value);
+  return blocksText(blocks).replace(/\s+/g, " ").trim();
+}
+
+function pandocBlocksFromTableCell(value: unknown): PandocBlock[] {
+  if (isPandocBlock(value)) {
+    return [value];
+  }
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const directBlocks = value.find((item): item is PandocBlock[] => Array.isArray(item) && item.every(isPandocBlock));
+  if (directBlocks) {
+    return directBlocks;
+  }
+  return value.flatMap(pandocBlocksFromTableCell);
+}
+
+function normalizeTableRows(rows: PandocBlock[][][]): string[][] {
   return rows
     .map((row) => row.map((cell) => blocksText(cell)).filter((cell) => cell.length > 0))
     .filter((row) => row.length > 0);

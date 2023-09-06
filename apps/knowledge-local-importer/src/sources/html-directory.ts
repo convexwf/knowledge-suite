@@ -10,7 +10,7 @@ export async function scanHtmlDirectory(root: string): Promise<SourceScan> {
 
   async function visit(directoryPath: string): Promise<void> {
     scanned += 1;
-    const entries = await readdir(directoryPath, { withFileTypes: true }).catch(() => []);
+    const entries = await readdir(directoryPath, { withFileTypes: true });
     for (const entry of entries) {
       const path = join(directoryPath, entry.name);
       if (entry.isDirectory()) {
