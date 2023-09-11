@@ -68,6 +68,22 @@ interface DocumentRow {
   page_title: string | null;
 }
 
+interface DocumentStatistics {
+  sectionCount: number;
+  headingCount: number;
+  paragraphCount: number;
+  tableCount: number;
+  figureCount: number;
+  imageCount: number;
+  assetCount: number;
+  charCount: number;
+}
+
+type DocumentMetaWithDerivedInfo = KnowledgeDocument["meta"] & {
+  cover_asset_id?: string;
+  statistics?: DocumentStatistics;
+};
+
 interface BatchJobRow {
   job_id: string;
   collection_id: string | null;
@@ -1200,6 +1216,9 @@ export class KnowledgeStore {
         asset.path = relativePath;
       }
     }
+    const meta = next.meta as DocumentMetaWithDerivedInfo;
+    meta.cover_asset_id = firstAssetId(next);
+    meta.statistics = documentStatistics(next);
     return next;
   }
 
@@ -2793,6 +2812,33 @@ function firstAssetId(document: KnowledgeDocument): string | undefined {
     }
   }
   return undefined;
+}
+
+function documentStatistics(document: KnowledgeDocument): DocumentStatistics {
+  const assetCount = document.sections.reduce((sum, section) => sum + (section.assets?.length ?? 0), 0);
+  return {
+    sectionCount: document.sections.length,
+    headingCount: document.sections.filter((section) => section.type === "heading").length,
+    paragraphCount: document.sections.filter((section) => section.type === "paragraph").length,
+    tableCount: document.sections.filter((section) => section.type === "table").length,
+    figureCount: document.sections.filter((section) => section.type === "figure").length,
+    imageCount: assetCount,
+    assetCount,
+    charCount: document.sections.reduce((sum, section) => sum + sectionTextLength(section), 0)
+  };
+}
+
+function sectionTextLength(section: KnowledgeDocument["sections"][number]): number {
+  if (section.content) {
+    return section.content.length;
+  }
+  if (section.items) {
+    return section.items.reduce((sum, item) => sum + (typeof item === "string" ? item.length : item.text.length), 0);
+  }
+  if (section.rows) {
+    return JSON.stringify(section.rows).length;
+  }
+  return 0;
 }
 
 function toBatchJobItem(row: BatchItemRow): BatchJobItem {

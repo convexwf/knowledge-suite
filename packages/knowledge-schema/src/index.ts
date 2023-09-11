@@ -197,6 +197,17 @@ export interface KnowledgeDocument {
     language?: string;
     tags?: string[];
     parser_version?: string;
+    cover_asset_id?: string;
+    statistics?: {
+      sectionCount: number;
+      headingCount: number;
+      paragraphCount: number;
+      tableCount: number;
+      figureCount: number;
+      imageCount: number;
+      assetCount: number;
+      charCount: number;
+    };
   };
   references?: Array<{
     ref_id: string;

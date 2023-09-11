@@ -583,6 +583,16 @@ describe("knowledge ingest server", () => {
     expect(saved.rawdoc.metadata.externalCoverHash).toEqual(expect.any(String));
     expect(saved.document.meta.source.type).toBe("epub");
     expect(saved.document.meta.published_at).toBe("2024-01-02");
+    expect(saved.document.meta.cover_asset_id).toMatch(/\.jpg$/);
+    expect(saved.document.meta.statistics).toMatchObject({
+      sectionCount: expect.any(Number),
+      headingCount: 2,
+      paragraphCount: 2,
+      tableCount: 1,
+      figureCount: 1,
+      imageCount: 1,
+      assetCount: 1
+    });
     expect(saved.document.sections).toEqual(expect.arrayContaining([
       expect.objectContaining({
         type: "figure",

@@ -221,6 +221,14 @@ describe("KnowledgeStore", () => {
     const documentWithAssets = await store.prepareDocumentAssets(document);
     const assetPath = documentWithAssets.sections[0].assets?.[0].path;
     expect(assetPath).toMatch(/^assets\/[a-f0-9]+\.jpg$/);
+    expect(documentWithAssets.meta.cover_asset_id).toBe(documentWithAssets.sections[0].assets?.[0].asset_id);
+    expect(documentWithAssets.meta.statistics).toMatchObject({
+      sectionCount: 2,
+      figureCount: 1,
+      imageCount: 1,
+      assetCount: 1,
+      paragraphCount: 1
+    });
     await store.saveImportItem({
       itemId: "epub:sha256:555555",
       identityHash: "555555",
