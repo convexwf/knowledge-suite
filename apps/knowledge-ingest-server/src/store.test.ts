@@ -174,6 +174,75 @@ describe("KnowledgeStore", () => {
     store.close();
   });
 
+  it("purge deletes imported EPUB assets with derived artifacts", async () => {
+    const store = new KnowledgeStore(storeRoot);
+    const coverPath = join(storeRoot, "cover.jpg");
+    await writeFile(coverPath, "cover bytes");
+
+    const rawdoc: RawDoc = {
+      rawdoc_id: "55555555-5555-4555-8555-555555555555",
+      source_type: "epub",
+      source_uri: "file:///books/example.epub",
+      fetch_time: "2026-05-12T00:00:00.000Z",
+      content_type: "application/epub+zip",
+      content_length: 10,
+      metadata: {
+        parserMethod: "pandoc_epub",
+        parserProfile: "epub"
+      }
+    };
+    const document: KnowledgeDocument = {
+      doc_id: "66666666-6666-4666-8666-666666666666",
+      meta: {
+        title: "Imported EPUB",
+        source: {
+          type: "epub",
+          url: rawdoc.source_uri,
+          rawdoc_id: rawdoc.rawdoc_id
+        },
+        authors: ["Ada"],
+        ingested_at: "2026-05-12T00:00:00.000Z",
+        parser_version: "knowledge-ingest-server/epub-0.1:pandoc_epub"
+      },
+      sections: [
+        {
+          section_id: "cover",
+          type: "figure",
+          assets: [{ path: coverPath, caption: "Cover" }]
+        },
+        {
+          section_id: "body",
+          type: "paragraph",
+          content: "Imported EPUB content."
+        }
+      ]
+    };
+
+    const documentWithAssets = await store.prepareDocumentAssets(document);
+    const assetPath = documentWithAssets.sections[0].assets?.[0].path;
+    expect(assetPath).toMatch(/^assets\/[a-f0-9]+\.jpg$/);
+    await store.saveImportItem({
+      itemId: "epub:sha256:555555",
+      identityHash: "555555",
+      rawContent: Buffer.from("epub bytes"),
+      rawdoc,
+      document: documentWithAssets,
+      markdown: "# Imported EPUB\n\n![Cover](" + assetPath + ")\n",
+      contentExt: "epub",
+      epubMetadata: { title: "Imported EPUB", coverAssetId: documentWithAssets.sections[0].assets?.[0].asset_id }
+    });
+    await expect(access(join(storeRoot, assetPath!))).resolves.toBeUndefined();
+
+    const purged = await store.deleteItem("epub:sha256:555555", "purge");
+
+    expect(purged.deletedFiles).toContain(assetPath);
+    await expect(access(join(storeRoot, assetPath!))).rejects.toThrow();
+    expect(tableCount(storeRoot, "knowledge_items")).toBe(0);
+    expect(tableCount(storeRoot, "epub_metadata")).toBe(0);
+
+    store.close();
+  });
+
   it("scans and clears the whole local store", async () => {
     const store = new KnowledgeStore(storeRoot);
     const clip = fixture("77777777-7777-4777-8777-777777777777", "77777777-aaaa-4aaa-8aaa-777777777777", "Clear Title");

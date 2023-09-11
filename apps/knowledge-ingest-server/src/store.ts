@@ -2394,15 +2394,44 @@ export class KnowledgeStore {
 
   private async deleteDerivedArtifacts(docId: string): Promise<string[]> {
     const deletedFiles: string[] = [];
+    const assetPaths = await this.assetPathsForDocument(docId);
     const relativePaths = [
       documentJsonPath(docId),
-      markdownPath(docId)
+      markdownPath(docId),
+      ...assetPaths
     ];
     for (const relativePath of relativePaths) {
       await this.deleteFile(relativePath);
       deletedFiles.push(relativePath);
     }
     return deletedFiles;
+  }
+
+  private async assetPathsForDocument(docId: string): Promise<string[]> {
+    const document = await this.readText(documentJsonPath(docId))
+      .then((content) => JSON.parse(content) as KnowledgeDocument)
+      .catch(() => undefined);
+    if (!document) {
+      return [];
+    }
+
+    const paths = new Set<string>();
+    for (const section of document.sections) {
+      for (const asset of section.assets ?? []) {
+        const safeAssetId = asset.asset_id ? sanitizeAssetId(asset.asset_id) : undefined;
+        if (safeAssetId) {
+          paths.add(`assets/${safeAssetId}`);
+          continue;
+        }
+        if (asset.path?.startsWith("assets/")) {
+          const pathAssetId = sanitizeAssetId(asset.path.slice("assets/".length));
+          if (pathAssetId) {
+            paths.add(`assets/${pathAssetId}`);
+          }
+        }
+      }
+    }
+    return [...paths];
   }
 
   private async deleteCaptureArtifacts(rawdocId: string, contentExt?: string): Promise<string[]> {
