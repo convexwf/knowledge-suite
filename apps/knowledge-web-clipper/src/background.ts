@@ -1,5 +1,6 @@
 import { createKnowledgeApiClient } from "./api-client.js";
 import { getSettings } from "./settings.js";
+import { openKnowledgePage } from "./tabs.js";
 
 const OPEN_READER_MENU_ID = "knowledge-open-reader";
 
@@ -10,7 +11,7 @@ chrome.runtime.onInstalled.addListener(async () => {
 
 chrome.contextMenus.onClicked.addListener((info) => {
   if (info.menuItemId === OPEN_READER_MENU_ID) {
-    void chrome.tabs.create({ url: chrome.runtime.getURL("items.html") });
+    void openKnowledgePage("items.html");
   }
 });
 

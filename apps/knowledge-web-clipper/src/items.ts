@@ -1,5 +1,6 @@
 import { createKnowledgeApiClient } from "./api-client.js";
 import { getSettings } from "./settings.js";
+import { openKnowledgePage } from "./tabs.js";
 import { KnowledgeItem, KnowledgeSourceType } from "./types.js";
 
 const uploadForm = mustGet<HTMLFormElement>("upload-form");
@@ -199,9 +200,7 @@ async function deleteItem(item: KnowledgeItem, mode: "remove" | "purge"): Promis
 }
 
 function openReader(itemId: string): void {
-  void chrome.tabs.create({
-    url: chrome.runtime.getURL(`reader.html?itemId=${encodeURIComponent(itemId)}`)
-  });
+  void openKnowledgePage(`reader.html?itemId=${encodeURIComponent(itemId)}`);
 }
 
 function parseTags(value: string): string[] {

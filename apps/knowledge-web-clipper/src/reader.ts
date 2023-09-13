@@ -1,5 +1,6 @@
 import { createKnowledgeApiClient } from "./api-client.js";
 import { getSettings } from "./settings.js";
+import { openKnowledgePage } from "./tabs.js";
 import { KnowledgeDocument, KnowledgeItem } from "./types.js";
 
 const titleOutput = mustGet<HTMLElement>("reader-title");
@@ -10,6 +11,7 @@ const outlineOutput = mustGet<HTMLElement>("outline-list");
 const copyButton = mustGet<HTMLButtonElement>("copy-markdown");
 const reparseButton = mustGet<HTMLButtonElement>("reparse-item");
 const backButton = mustGet<HTMLButtonElement>("back-to-items");
+const topButton = mustGet<HTMLButtonElement>("back-to-top");
 
 const settings = await getSettings();
 const client = createKnowledgeApiClient(settings);
@@ -22,8 +24,16 @@ let currentItem: KnowledgeItem | undefined;
 const objectUrls = new Set<string>();
 
 backButton.addEventListener("click", () => {
-  void chrome.tabs.create({ url: chrome.runtime.getURL("items.html") });
+  void openKnowledgePage("items.html");
 });
+
+topButton.addEventListener("click", () => {
+  globalThis.scrollTo({ top: 0, behavior: "smooth" });
+});
+
+globalThis.addEventListener("scroll", () => {
+  topButton.hidden = globalThis.scrollY < 360;
+}, { passive: true });
 
 copyButton.addEventListener("click", async () => {
   if (!currentMarkdown) {
@@ -327,7 +337,6 @@ function appendInline(parent: HTMLElement, text: string): void {
         link.href = match[4];
         link.textContent = match[3];
         link.rel = "noreferrer";
-        link.target = "_blank";
         parent.append(link);
       } else {
         parent.append(document.createTextNode(match[3]));

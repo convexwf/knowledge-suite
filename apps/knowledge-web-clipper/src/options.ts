@@ -1,5 +1,6 @@
 import { createKnowledgeApiClient } from "./api-client.js";
 import { DEFAULT_SETTINGS, getSettings, resetSettings, sanitizeSettingsForDiagnostics, saveSettings } from "./settings.js";
+import { openKnowledgePage } from "./tabs.js";
 import {
   ExtensionSettings,
   InputMode,
@@ -38,7 +39,7 @@ form.addEventListener("submit", (event) => {
   void saveCurrentSettings();
 });
 openItemsButton.addEventListener("click", () => {
-  void chrome.tabs.create({ url: chrome.runtime.getURL("items.html") });
+  void openKnowledgePage("items.html");
 });
 testButton.addEventListener("click", () => testConnection());
 resetButton.addEventListener("click", () => resetToDefaults());

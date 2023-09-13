@@ -262,6 +262,18 @@ h2 {
   color: #315bdc;
 }
 
+.back-to-top {
+  bottom: 24px;
+  box-shadow: 0 10px 24px rgba(23, 32, 51, 0.16);
+  position: fixed;
+  right: 24px;
+  z-index: 10;
+}
+
+.back-to-top[hidden] {
+  display: none;
+}
+
 .message-state {
   align-items: center;
   color: #526174;
@@ -290,5 +302,10 @@ h2 {
 
   .reader-content {
     padding: 18px;
+  }
+
+  .back-to-top {
+    bottom: 16px;
+    right: 16px;
   }
 }

@@ -4,3 +4,4 @@ apps/*/dist/
 packages/*/dist/
 knowledge-store/
 .DS_Store
+**/tmp
