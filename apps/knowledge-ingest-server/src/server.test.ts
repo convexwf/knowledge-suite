@@ -1,4 +1,4 @@
-import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { FastifyInstance } from "fastify";
@@ -405,8 +405,10 @@ describe("knowledge ingest server", () => {
       fetchTimeoutMs: 1000,
       maxHtmlBytes: 1024 * 1024,
       maxImportBytes: 1024 * 1024,
-      epubPandocRunner: async ({ outputPath }) => {
+      epubPandocRunner: async ({ outputPath, mediaDir }) => {
         pandocRuns += 1;
+        await mkdir(mediaDir, { recursive: true });
+        await writeFile(join(mediaDir, "image1.jpg"), "inline image bytes");
         await writeFile(outputPath, JSON.stringify({
           meta: {
             title: { t: "MetaInlines", c: [{ t: "Str", c: "EPUB" }, { t: "Space" }, { t: "Str", c: "Handbook" }] },
@@ -433,6 +435,19 @@ describe("knowledge ingest server", () => {
               t: "BulletList",
               c: [
                 [{ t: "Plain", c: [{ t: "Str", c: "First" }, { t: "Space" }, { t: "Str", c: "chapter" }] }]
+              ]
+            },
+            {
+              t: "Para",
+              c: [
+                {
+                  t: "Image",
+                  c: [
+                    ["", [], []],
+                    [{ t: "Str", c: "figure_1_1" }],
+                    ["media/image1.jpg", ""]
+                  ]
+                }
               ]
             },
             {
@@ -589,9 +604,9 @@ describe("knowledge ingest server", () => {
       headingCount: 2,
       paragraphCount: 2,
       tableCount: 1,
-      figureCount: 1,
-      imageCount: 1,
-      assetCount: 1
+      figureCount: 2,
+      imageCount: 2,
+      assetCount: 2
     });
     expect(saved.document.sections).toEqual(expect.arrayContaining([
       expect.objectContaining({
@@ -607,6 +622,8 @@ describe("knowledge ingest server", () => {
     expect(saved.markdown).toContain("# Calibre Handbook");
     expect(saved.markdown).toContain("![Cover](assets/");
     expect(saved.markdown).toContain("EPUB retrieval content is searchable.");
+    expect(saved.markdown).toContain("![](assets/");
+    expect(saved.markdown).not.toContain("figure_1_1");
     expect(saved.markdown).toContain("| Name | Value |");
     expect(saved.markdown).toContain("| Alpha | One |");
     expect(saved.markdown).toContain("Nested EPUB body text is preserved.");

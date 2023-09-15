@@ -242,7 +242,7 @@ function pandocBlockToSections(block: PandocBlock, imageBaseDir?: string): Docum
     case "Plain": {
       const inlines = block.c as PandocInline[];
       const sections: DocumentSection[] = [];
-      const content = inlineText(inlines);
+      const content = inlineText(inlines, { includeImageAlt: false });
       if (content) {
         sections.push({ type: "paragraph", content });
       }
@@ -337,10 +337,11 @@ function blocksText(blocks: PandocBlock[]): string {
   }).join("\n\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
-function inlineText(inlines: PandocInline[] | undefined): string {
+function inlineText(inlines: PandocInline[] | undefined, options: { includeImageAlt?: boolean } = {}): string {
   if (!inlines) {
     return "";
   }
+  const includeImageAlt = options.includeImageAlt ?? true;
   return inlines.map((inline) => {
     switch (inline.t) {
       case "Str":
@@ -355,17 +356,17 @@ function inlineText(inlines: PandocInline[] | undefined): string {
       case "Superscript":
       case "Subscript":
       case "SmallCaps":
-        return inlineText(inline.c as PandocInline[]);
+        return inlineText(inline.c as PandocInline[], options);
       case "Code":
         return String((inline.c as [unknown, string])?.[1] ?? "");
       case "Span":
-        return inlineText((inline.c as [unknown, PandocInline[]])?.[1]);
+        return inlineText((inline.c as [unknown, PandocInline[]])?.[1], options);
       case "Link":
-        return inlineText((inline.c as [unknown, PandocInline[], unknown])?.[1]);
+        return inlineText((inline.c as [unknown, PandocInline[], unknown])?.[1], options);
       case "Image":
-        return inlineText((inline.c as [unknown, PandocInline[], unknown])?.[1]);
+        return includeImageAlt ? inlineText((inline.c as [unknown, PandocInline[], unknown])?.[1], options) : "";
       case "Quoted":
-        return inlineText((inline.c as [unknown, PandocInline[]])?.[1]);
+        return inlineText((inline.c as [unknown, PandocInline[]])?.[1], options);
       case "Math":
         return String((inline.c as [unknown, string])?.[1] ?? "");
       case "Note":
@@ -383,15 +384,24 @@ function inlineImages(inlines: PandocInline[], imageBaseDir?: string): Array<Non
       const [, altInlines, target] = inline.c as [unknown, PandocInline[], [string, string]];
       const [rawPath] = target;
       const path = rawPath && imageBaseDir && !isAbsolute(rawPath) ? join(imageBaseDir, rawPath) : rawPath;
+      const alt = cleanImageAlt(inlineText(altInlines));
       assets.push({
         path,
-        alt: inlineText(altInlines)
+        ...(alt ? { alt } : {})
       });
     } else if (Array.isArray(inline.c)) {
       assets.push(...inlineImages(nestedInlineChildren(inline), imageBaseDir));
     }
   }
   return assets;
+}
+
+function cleanImageAlt(value: string): string | undefined {
+  const text = value.replace(/\s+/g, " ").trim();
+  if (!text || /^fig(?:ure)?[_\s-]*\d+(?:[_\s-]+\d+)*$/i.test(text)) {
+    return undefined;
+  }
+  return text;
 }
 
 function nestedInlineChildren(inline: PandocInline): PandocInline[] {

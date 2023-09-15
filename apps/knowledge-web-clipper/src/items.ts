@@ -133,25 +133,30 @@ function itemRow(item: KnowledgeItem): HTMLElement {
   row.className = "item-row";
 
   const body = document.createElement("div");
+  body.className = "item-body";
   const title = document.createElement("h3");
   title.className = "item-title";
   title.textContent = displayTitle(item);
-  const meta = document.createElement("div");
-  meta.className = "item-meta";
-  meta.append(
-    metaSpan(item.sourceType.toUpperCase()),
-    metaSpan(item.state),
-    metaSpan(item.creators.join(", ") || "Unknown creator"),
-    metaSpan(item.language || "Unknown language"),
-    metaSpan(`Updated ${formatDate(item.updatedAt)}`)
-  );
-  if (item.tags.length) {
-    meta.append(metaSpan(item.tags.join(", ")));
-  }
-  body.append(title, meta);
+  const creator = document.createElement("div");
+  creator.className = "item-creator";
+  creator.textContent = item.creators.join(", ") || "Unknown creator";
+  const sourceLine = document.createElement("div");
+  sourceLine.className = "item-summary-line";
+  sourceLine.textContent = `${item.language || "Unknown language"} · ${item.sourceType.toUpperCase()}`;
+  const dateLine = document.createElement("div");
+  dateLine.className = "item-summary-line";
+  dateLine.textContent = `Updated ${formatDate(item.updatedAt)}`;
+  body.append(title, creator, sourceLine, dateLine);
 
   const actions = document.createElement("div");
   actions.className = "item-actions";
+  const detailsButton = button("i", "info-button", () => {
+    details.hidden = !details.hidden;
+    detailsButton.setAttribute("aria-expanded", String(!details.hidden));
+  });
+  detailsButton.title = "Item details";
+  detailsButton.setAttribute("aria-label", "Item details");
+  detailsButton.setAttribute("aria-expanded", "false");
   const readButton = button("Read", "primary-button", () => openReader(item.itemId));
   readButton.disabled = item.state !== "parsed" || !item.activeDocId;
   const reparseButton = button("Reparse", "", () => {
@@ -164,9 +169,40 @@ function itemRow(item: KnowledgeItem): HTMLElement {
   const purgeButton = button("Purge", "danger-button", () => {
     void deleteItem(item, "purge");
   });
-  actions.append(readButton, reparseButton, removeButton, purgeButton);
+  actions.append(detailsButton, readButton, reparseButton, removeButton, purgeButton);
 
-  row.append(body, actions);
+  const details = itemDetails(item);
+  details.hidden = true;
+  row.append(body, actions, details);
+  return row;
+}
+
+function itemDetails(item: KnowledgeItem): HTMLElement {
+  const wrapper = document.createElement("div");
+  wrapper.className = "item-details";
+  const table = document.createElement("table");
+  table.append(
+    detailsRow("State", item.state),
+    detailsRow("Item ID", item.itemId),
+    detailsRow("RawDoc ID", item.activeRawdocId),
+    detailsRow("Document ID", item.activeDocId || "-"),
+    detailsRow("Identity hash", item.identityHash),
+    detailsRow("Tags", item.tags.join(", ") || "-"),
+    detailsRow("Created", formatDate(item.createdAt)),
+    detailsRow("Parsed", item.parsedAt ? formatDate(item.parsedAt) : "-")
+  );
+  wrapper.append(table);
+  return wrapper;
+}
+
+function detailsRow(label: string, value: string): HTMLTableRowElement {
+  const row = document.createElement("tr");
+  const key = document.createElement("th");
+  key.scope = "row";
+  key.textContent = label;
+  const cell = document.createElement("td");
+  cell.textContent = value;
+  row.append(key, cell);
   return row;
 }
 
@@ -220,12 +256,6 @@ function button(label: string, className: string, onClick: () => void): HTMLButt
   }
   element.addEventListener("click", onClick);
   return element;
-}
-
-function metaSpan(text: string): HTMLSpanElement {
-  const span = document.createElement("span");
-  span.textContent = text;
-  return span;
 }
 
 function loadingNode(): HTMLElement {
