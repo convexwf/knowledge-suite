@@ -146,8 +146,7 @@ h2 {
 }
 
 #outline-list {
-  display: grid;
-  gap: 1px;
+  display: block;
 }
 
 .outline-tree {
@@ -163,8 +162,9 @@ h2 {
 }
 
 .outline-item > .outline-tree {
+  box-sizing: border-box;
   flex: 0 0 100%;
-  padding-left: 14px;
+  padding-left: 24px;
 }
 
 .outline-link {
