@@ -120,22 +120,58 @@ h2 {
 
 #outline-list {
   display: grid;
-  gap: 4px;
+  gap: 2px;
+}
+
+.outline-tree {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.outline-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+}
+
+.outline-item > .outline-tree {
+  flex: 0 0 100%;
+  padding-left: 16px;
 }
 
 #outline-list a {
   border-radius: 6px;
   color: #42526a;
   display: block;
+  flex: 1;
   font-size: 13px;
   line-height: 1.35;
+  min-width: 0;
   overflow-wrap: anywhere;
-  padding: 6px 8px;
+  padding: 4px 8px;
   text-decoration: none;
 }
 
 #outline-list a:hover {
   background: #eef3f8;
+  color: #172033;
+}
+
+.outline-toggle {
+  background: transparent;
+  border: none;
+  color: #8a9bb0;
+  cursor: pointer;
+  flex-shrink: 0;
+  font-size: 12px;
+  line-height: 1;
+  min-height: auto;
+  padding: 4px 2px 4px 6px;
+  width: 20px;
+}
+
+.outline-toggle:hover {
   color: #172033;
 }
 

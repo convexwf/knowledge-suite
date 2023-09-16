@@ -236,6 +236,76 @@ async function renderMarkdown(markdown: string, target: HTMLElement): Promise<vo
   }
 }
 
+interface HeadingNode {
+  level: number;
+  element: HTMLHeadingElement;
+  children: HeadingNode[];
+}
+
+function buildHeadingTree(headings: HTMLHeadingElement[]): HeadingNode[] {
+  const root: HeadingNode[] = [];
+  const stack: HeadingNode[] = [];
+
+  for (const heading of headings) {
+    const level = Number(heading.tagName.slice(1));
+    const node: HeadingNode = { level, element: heading, children: [] };
+
+    while (stack.length > 0 && stack[stack.length - 1].level >= level) {
+      stack.pop();
+    }
+
+    if (stack.length === 0) {
+      root.push(node);
+    } else {
+      stack[stack.length - 1].children.push(node);
+    }
+
+    stack.push(node);
+  }
+
+  return root;
+}
+
+function renderOutlineTree(nodes: HeadingNode[], parentElement: HTMLElement): void {
+  const list = document.createElement("ul");
+  list.className = "outline-tree";
+
+  for (const node of nodes) {
+    const li = document.createElement("li");
+    li.className = "outline-item";
+
+    const link = document.createElement("a");
+    link.href = `#${node.element.id}`;
+    link.textContent = node.element.textContent || "Section";
+    li.append(link);
+
+    if (node.children.length > 0) {
+      const childList = document.createElement("ul");
+      childList.className = "outline-tree";
+      renderOutlineTree(node.children, childList);
+
+      const toggle = document.createElement("button");
+      toggle.className = "outline-toggle";
+      toggle.textContent = "▾";
+      toggle.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const expanded = toggle.dataset.expanded !== "false";
+        toggle.dataset.expanded = String(!expanded);
+        toggle.textContent = expanded ? "▸" : "▾";
+        childList.hidden = !expanded;
+      });
+
+      li.prepend(toggle);
+      li.append(childList);
+    }
+
+    list.append(li);
+  }
+
+  parentElement.append(list);
+}
+
 function renderOutline(): void {
   outlineOutput.replaceChildren();
   const headings = Array.from(contentOutput.querySelectorAll("h1, h2, h3"));
@@ -248,12 +318,10 @@ function renderOutline(): void {
     if (!heading.id) {
       heading.id = slugify(heading.textContent || `section-${index + 1}`, index);
     }
-    const link = document.createElement("a");
-    link.href = `#${heading.id}`;
-    link.textContent = heading.textContent || `Section ${index + 1}`;
-    link.style.paddingLeft = `${(Number(heading.tagName.slice(1)) - 1) * 8}px`;
-    outlineOutput.append(link);
   });
+
+  const tree = buildHeadingTree(headings as HTMLHeadingElement[]);
+  renderOutlineTree(tree, outlineOutput);
 }
 
 function headingNode(level: number, text: string): HTMLElement {
