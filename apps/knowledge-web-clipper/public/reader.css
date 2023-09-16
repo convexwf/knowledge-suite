@@ -110,7 +110,7 @@ h2 {
   border: 1px solid #d9e1ea;
   border-radius: 8px;
   display: grid;
-  gap: 12px;
+  gap: 10px;
   max-height: calc(100vh - 120px);
   overflow: auto;
   padding: 14px;
@@ -118,9 +118,36 @@ h2 {
   top: 16px;
 }
 
+.outline-header {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+
+.outline-header h2 {
+  flex: 1;
+}
+
+#outline-collapse-toggle {
+  background: transparent;
+  border: 1px solid #d9e1ea;
+  border-radius: 4px;
+  color: #6b7f96;
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 1;
+  min-height: auto;
+  padding: 4px 8px;
+}
+
+#outline-collapse-toggle:hover {
+  border-color: #4869d6;
+  color: #315bdc;
+}
+
 #outline-list {
   display: grid;
-  gap: 2px;
+  gap: 1px;
 }
 
 .outline-tree {
@@ -137,12 +164,11 @@ h2 {
 
 .outline-item > .outline-tree {
   flex: 0 0 100%;
-  padding-left: 16px;
+  padding-left: 14px;
 }
 
-#outline-list a {
+.outline-link {
   border-radius: 6px;
-  color: #42526a;
   display: block;
   flex: 1;
   font-size: 13px;
@@ -153,22 +179,38 @@ h2 {
   text-decoration: none;
 }
 
-#outline-list a:hover {
-  background: #eef3f8;
+.outline-link.depth-0 {
   color: #172033;
+  font-weight: 600;
+}
+
+.outline-link.depth-1 {
+  color: #2d4058;
+  font-weight: 500;
+}
+
+.outline-link.depth-2 {
+  color: #5a6d84;
+  font-weight: 400;
+}
+
+.outline-link:hover {
+  background: #eef3f8;
 }
 
 .outline-toggle {
+  align-self: start;
   background: transparent;
   border: none;
   color: #8a9bb0;
   cursor: pointer;
   flex-shrink: 0;
   font-size: 12px;
-  line-height: 1;
+  line-height: 1.5;
+  margin-top: 3px;
   min-height: auto;
-  padding: 4px 2px 4px 6px;
-  width: 20px;
+  padding: 0 2px;
+  width: 18px;
 }
 
 .outline-toggle:hover {

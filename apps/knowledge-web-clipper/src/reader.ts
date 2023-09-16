@@ -12,6 +12,7 @@ const copyButton = mustGet<HTMLButtonElement>("copy-markdown");
 const reparseButton = mustGet<HTMLButtonElement>("reparse-item");
 const backButton = mustGet<HTMLButtonElement>("back-to-items");
 const topButton = mustGet<HTMLButtonElement>("back-to-top");
+const outlineCollapseToggle = mustGet<HTMLButtonElement>("outline-collapse-toggle");
 
 const settings = await getSettings();
 const client = createKnowledgeApiClient(settings);
@@ -34,6 +35,27 @@ topButton.addEventListener("click", () => {
 globalThis.addEventListener("scroll", () => {
   topButton.hidden = globalThis.scrollY < 360;
 }, { passive: true });
+
+outlineCollapseToggle.addEventListener("click", () => {
+  const collapsed = outlineCollapseToggle.dataset.collapsed === "true";
+  outlineCollapseToggle.dataset.collapsed = collapsed ? "false" : "true";
+  outlineCollapseToggle.textContent = collapsed ? "Collapse all" : "Expand all";
+  const toggles = Array.from(outlineOutput.querySelectorAll(".outline-toggle"));
+  for (const toggle of toggles) {
+    const btn = toggle as HTMLButtonElement;
+    const childList = btn.parentElement?.querySelector(":scope > .outline-tree") as HTMLElement | null;
+    if (!childList) continue;
+    if (collapsed) {
+      btn.dataset.expanded = "true";
+      btn.textContent = "▾";
+      childList.hidden = false;
+    } else {
+      btn.dataset.expanded = "false";
+      btn.textContent = "▸";
+      childList.hidden = true;
+    }
+  }
+});
 
 copyButton.addEventListener("click", async () => {
   if (!currentMarkdown) {
@@ -266,7 +288,7 @@ function buildHeadingTree(headings: HTMLHeadingElement[]): HeadingNode[] {
   return root;
 }
 
-function renderOutlineTree(nodes: HeadingNode[], parentElement: HTMLElement): void {
+function renderOutlineTree(nodes: HeadingNode[], parentElement: HTMLElement, depth: number = 0): void {
   const list = document.createElement("ul");
   list.className = "outline-tree";
 
@@ -277,23 +299,25 @@ function renderOutlineTree(nodes: HeadingNode[], parentElement: HTMLElement): vo
     const link = document.createElement("a");
     link.href = `#${node.element.id}`;
     link.textContent = node.element.textContent || "Section";
+    link.className = `outline-link depth-${Math.min(depth, 2)}`;
     li.append(link);
 
     if (node.children.length > 0) {
       const childList = document.createElement("ul");
       childList.className = "outline-tree";
-      renderOutlineTree(node.children, childList);
+      renderOutlineTree(node.children, childList, depth + 1);
 
       const toggle = document.createElement("button");
       toggle.className = "outline-toggle";
       toggle.textContent = "▾";
+      toggle.dataset.expanded = "true";
       toggle.addEventListener("click", (e) => {
         e.preventDefault();
         e.stopPropagation();
-        const expanded = toggle.dataset.expanded !== "false";
-        toggle.dataset.expanded = String(!expanded);
+        const expanded = toggle.dataset.expanded === "true";
+        toggle.dataset.expanded = expanded ? "false" : "true";
         toggle.textContent = expanded ? "▸" : "▾";
-        childList.hidden = !expanded;
+        childList.hidden = expanded;
       });
 
       li.prepend(toggle);
@@ -322,6 +346,8 @@ function renderOutline(): void {
 
   const tree = buildHeadingTree(headings as HTMLHeadingElement[]);
   renderOutlineTree(tree, outlineOutput);
+  outlineCollapseToggle.dataset.collapsed = "false";
+  outlineCollapseToggle.textContent = "Collapse all";
 }
 
 function headingNode(level: number, text: string): HTMLElement {
