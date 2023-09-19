@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { extname, isAbsolute, join } from "node:path";
 import { promisify } from "node:util";
 import {
+  deterministicSectionId,
   DocumentSection,
   KnowledgeDocument,
   makeId,
@@ -183,7 +184,7 @@ export function pandocBlocksToSections(blocks: PandocBlock[], imageBaseDir?: str
   const sections = pandocBlocksToSectionsWithoutIds(blocks, imageBaseDir);
   return sections.map((section, index) => ({
     ...section,
-    section_id: section.section_id ?? sectionId(index)
+    section_id: section.section_id ?? deterministicSectionId(section)
   }));
 }
 
@@ -748,10 +749,6 @@ function stderrWarnings(stderr: string): string[] {
 
 function firstNonEmpty(...values: Array<string | undefined>): string {
   return values.find((value) => value?.trim())?.trim() ?? "Untitled EPUB";
-}
-
-function sectionId(index: number): string {
-  return `epub-section-${String(index + 1).padStart(5, "0")}`;
 }
 
 function sha256(content: Buffer): string {

@@ -1,6 +1,7 @@
 import DefuddleDefault, { type DefuddleOptions, type DefuddleResponse } from "defuddle";
 import { parseHTML } from "linkedom";
 import {
+  assignDeterministicSectionIds,
   KnowledgeDocument,
   makeId,
   nowIso,
@@ -239,8 +240,9 @@ function candidateToDocument(
   const sections = candidate.sections.length > 0
     ? candidate.sections
     : context.fallbackText
-      ? [{ section_id: makeId(), type: "paragraph" as const, content: context.fallbackText }]
+      ? [{ type: "paragraph" as const, content: context.fallbackText }]
       : [];
+  assignDeterministicSectionIds(sections);
 
   return {
     doc_id: makeId(),
@@ -448,20 +450,17 @@ function buildSchemaOrgCandidate(input: ResolvedInput, fallbackTitle: string): P
   const abstract = stringValue(article.abstract);
   if (abstract && normalizeText(abstract) !== normalizeText(body)) {
     sections.push({
-      section_id: makeId(),
       type: "heading",
       level: 2,
       content: "Abstract"
     });
     sections.push({
-      section_id: makeId(),
       type: "paragraph",
       content: normalizeText(abstract)
     });
   }
   for (const paragraph of body.split(/\n{2,}/).map(normalizeText).filter(Boolean)) {
     sections.push({
-      section_id: makeId(),
       type: "paragraph",
       content: paragraph
     });
@@ -538,7 +537,6 @@ function appendRedditCommentSections(
   return [
     ...sections,
     {
-      section_id: makeId(),
       type: "heading",
       level: 2,
       content: "Comments"
@@ -579,7 +577,6 @@ function extractRedditCommentSections(document: Document, baseUrl: string): Know
     ].filter(Boolean).join(" · ");
 
     sections.push({
-      section_id: makeId(),
       type: "blockquote",
       content: redditQuoteLines([meta, "", ...bodyLines], depth).join("\n")
     });
@@ -1299,7 +1296,6 @@ function extractSections(root: Element, title: string): KnowledgeDocument["secti
 
     if (/^h[1-6]$/.test(tagName)) {
       sections.push({
-        section_id: makeId(),
         type: "heading",
         level: Number(tagName.slice(1)),
         content: inlineToMarkdown(node)
@@ -1312,19 +1308,18 @@ function extractSections(root: Element, title: string): KnowledgeDocument["secti
         .map((li) => inlineToMarkdown(li))
         .filter(Boolean);
       if (items.length > 0) {
-        sections.push({ section_id: makeId(), type: "list", items });
+        sections.push({ type: "list", items });
       }
       continue;
     }
 
     if (tagName === "pre") {
-      sections.push({ section_id: makeId(), type: "code", content: node.textContent ?? "" });
+      sections.push({ type: "code", content: node.textContent ?? "" });
       continue;
     }
 
     if (tagName === "blockquote") {
       sections.push({
-        section_id: makeId(),
         type: "blockquote",
         content: inlineToMarkdown(node)
       });
@@ -1344,7 +1339,7 @@ function extractSections(root: Element, title: string): KnowledgeDocument["secti
         .map((row) => [...row.querySelectorAll("th,td")].map((cell) => inlineToMarkdown(cell)))
         .filter((row) => row.length > 0);
       if (rows.length > 0) {
-        sections.push({ section_id: makeId(), type: "table", rows });
+        sections.push({ type: "table", rows });
       }
       continue;
     }
@@ -1354,7 +1349,6 @@ function extractSections(root: Element, title: string): KnowledgeDocument["secti
     }
 
     sections.push({
-      section_id: makeId(),
       type: "paragraph",
       content: inlineToMarkdown(node)
     });
@@ -1411,7 +1405,6 @@ function figureSectionFromNode(node: Element): KnowledgeDocument["sections"][num
 
   const caption = tagName === "img" ? assets[0].caption ?? "" : figureCaption(node, images[0]) ?? "";
   return {
-    section_id: makeId(),
     type: "figure",
     content: caption,
     assets
@@ -1450,7 +1443,6 @@ function textToParagraphSections(text: string, title: string): KnowledgeDocument
     .filter((paragraph) => paragraph && paragraph !== title)
     .slice(0, 200)
     .map((paragraph) => ({
-      section_id: makeId(),
       type: "paragraph" as const,
       content: paragraph
     }));
