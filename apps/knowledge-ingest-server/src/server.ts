@@ -1,12 +1,14 @@
 import cors from "@fastify/cors";
 import fastify from "fastify";
 import {
+  AnnotationSchema,
   BatchDiscoverRequestSchema,
   BatchJobCreateRequestSchema,
   BatchJobItem,
   ClipInputSchema,
   ClipReparseRequestSchema,
   ClipSaveRequestSchema,
+  KnowledgeDocument,
   normalizeUrlForKnowledge,
   RawDoc,
   EpubImportResponse,
@@ -142,6 +144,51 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
     await reply.type("text/markdown; charset=utf-8").send(await store.loadMarkdown(params.docId));
   });
 
+  app.get("/api/documents/:docId/annotations", async (request) => {
+    const params = request.params as { docId: string };
+    return { doc_id: params.docId, annotations: await store.loadAnnotations(params.docId) };
+  });
+
+  app.get("/api/items/:itemId/annotations", async (request) => {
+    const params = request.params as { itemId: string };
+    const detail = await store.loadItemDetail(params.itemId);
+    const docId = detail.document?.doc_id ?? detail.item?.activeDocId;
+    if (!docId) return { doc_id: null, annotations: [] };
+    return { doc_id: docId, annotations: await store.loadAnnotations(docId) };
+  });
+
+  app.post("/api/documents/:docId/annotations", async (request) => {
+    const params = request.params as { docId: string };
+    const annotation = AnnotationSchema.parse(request.body);
+    await store.saveAnnotation(params.docId, annotation);
+    return { saved: true, annotation_id: annotation.annotation_id };
+  });
+
+  app.post("/api/items/:itemId/annotations", async (request) => {
+    const params = request.params as { itemId: string };
+    const detail = await store.loadItemDetail(params.itemId);
+    const docId = detail.document?.doc_id ?? detail.item?.activeDocId;
+    if (!docId) throw new Error("Item has no active document");
+    const annotation = AnnotationSchema.parse(request.body);
+    await store.saveAnnotation(docId, annotation);
+    return { saved: true, annotation_id: annotation.annotation_id };
+  });
+
+  app.delete("/api/documents/:docId/annotations/:annotationId", async (request) => {
+    const params = request.params as { docId: string; annotationId: string };
+    await store.deleteAnnotation(params.docId, params.annotationId);
+    return { deleted: true, annotation_id: params.annotationId };
+  });
+
+  app.delete("/api/items/:itemId/annotations/:annotationId", async (request) => {
+    const params = request.params as { itemId: string; annotationId: string };
+    const detail = await store.loadItemDetail(params.itemId);
+    const docId = detail.document?.doc_id ?? detail.item?.activeDocId;
+    if (!docId) throw new Error("Item has no active document");
+    await store.deleteAnnotation(docId, params.annotationId);
+    return { deleted: true, annotation_id: params.annotationId };
+  });
+
   app.get("/api/assets/:assetId", async (request, reply) => {
     const params = request.params as { assetId: string };
     const asset = await store.loadAsset(params.assetId);
@@ -271,6 +318,7 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
   app.post("/api/clip/reparse", async (request) => {
     const input = ClipReparseRequestSchema.parse(request.body);
     const capture = await store.loadCaptureByUrl(input.url);
+    const oldDocId = capture.clip.docId;
     const resolved = resolvedInputFromCapture(capture.rawdoc, capture.html);
     const parsed = await parsePage(resolved, { rawdocId: capture.rawdoc.rawdoc_id });
     const markdown = documentToMarkdown(parsed.document);
@@ -282,11 +330,15 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
       markdown
     });
     const status = await store.status(resolved.normalizedUrl);
+    const annotationWarnings = await migrateAnnotationsForReparse(
+      store, oldDocId, parsed.document
+    );
     return {
       ...previewPayload(parsed),
       status,
       saved: true,
-      paths
+      paths,
+      ...(annotationWarnings ? { annotationWarnings } : {})
     };
   });
 
@@ -333,6 +385,7 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
     if (capture.rawdoc.source_type !== "epub") {
       throw new Error("reparse currently supports epub items only");
     }
+    const oldDocId = capture.item.activeDocId;
     const parsed = await parseEpub(capture.content, {
       rawdocId: capture.rawdoc.rawdoc_id,
       sourceUri: capture.rawdoc.source_uri,
@@ -360,13 +413,17 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
         epubMetadata: parsed.epubMetadata
       });
       const knowledgeItem = await store.loadItem(capture.item.itemId);
+      const annotationWarnings = await migrateAnnotationsForReparse(
+        store, oldDocId, documentWithAssets
+      );
       return {
         knowledgeItem,
         rawdoc,
         document: documentWithAssets,
         markdown,
         saved: true,
-        paths
+        paths,
+        ...(annotationWarnings ? { annotationWarnings } : {})
       };
     } finally {
       await parsed.cleanup();
@@ -865,4 +922,29 @@ function formatBytes(bytes: number): string {
     return `${mib} MiB`;
   }
   return `${bytes} bytes`;
+}
+
+async function migrateAnnotationsForReparse(
+  store: KnowledgeStore,
+  oldDocId: string | undefined,
+  document: KnowledgeDocument
+): Promise<Record<string, unknown> | null> {
+  if (!oldDocId) return null;
+  const sectionIds = new Set(
+    document.sections.map((s) => s.section_id).filter(Boolean) as string[]
+  );
+  const result = await store.migrateAnnotations(oldDocId, document.doc_id, sectionIds);
+  if (result.orphanedCount === 0) return null;
+  return {
+    orphanedCount: result.orphanedCount,
+    orphanedAnnotations: result.annotations
+      .filter((a) => a.orphaned)
+      .map((a) => ({
+        annotation_id: a.annotation_id,
+        type: a.type,
+        section_id: a.section_id,
+        text_ref: a.type === "highlight" ? a.text_ref : a.type === "note" ? a.text_ref : undefined,
+        label: a.type === "tag" ? a.label : a.type === "bookmark" ? a.label : undefined,
+      }))
+  };
 }

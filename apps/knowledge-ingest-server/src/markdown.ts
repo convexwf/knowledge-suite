@@ -22,21 +22,22 @@ export function documentToMarkdown(document: KnowledgeDocument): string {
 }
 
 function sectionToMarkdown(section: DocumentSection): string[] {
+  const anchor = section.section_id ? [`<!-- section_id:${section.section_id} -->`] : [];
   switch (section.type) {
     case "heading":
-      return [`${"#".repeat(section.level ?? 2)} ${section.content ?? ""}`, ""];
+      return [...anchor, `${"#".repeat(section.level ?? 2)} ${section.content ?? ""}`, ""];
     case "paragraph":
-      return [section.content ?? "", ""];
+      return [...anchor, section.content ?? "", ""];
     case "blockquote":
-      return blockquoteToMarkdown(section);
+      return [...anchor, ...blockquoteToMarkdown(section)];
     case "list":
-      return [...(section.items ?? []).map((item) => `- ${typeof item === "string" ? item : item.text}`), ""];
+      return [...anchor, ...(section.items ?? []).map((item) => `- ${typeof item === "string" ? item : item.text}`), ""];
     case "code":
-      return ["```", section.content ?? "", "```", ""];
+      return [...anchor, "```", section.content ?? "", "```", ""];
     case "figure":
-      return figureToMarkdown(section);
+      return [...anchor, ...figureToMarkdown(section)];
     case "table":
-      return tableToMarkdown(section);
+      return [...anchor, ...tableToMarkdown(section)];
     default:
       return [];
   }
