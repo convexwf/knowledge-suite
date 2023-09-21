@@ -8,6 +8,9 @@ import {
   ClipListItem,
   ClipSaveResponse,
   ClipStatus,
+  Annotation,
+  AnnotationFile,
+  AnnotationFileSchema,
   BatchItemState,
   BatchJobItem,
   BatchJobResponse,
@@ -829,6 +832,113 @@ export class KnowledgeStore {
     }
 
     await this.refreshBatchCounts(item.job_id);
+  }
+
+  async loadAnnotations(docId: string): Promise<Annotation[]> {
+    await this.ensure();
+    const path = resolveInsideRoot(this.root, annotationsPath(docId));
+    try {
+      const raw = await readFile(path, "utf-8");
+      const file = AnnotationFileSchema.parse(JSON.parse(raw));
+      return file.annotations;
+    } catch {
+      return [];
+    }
+  }
+
+  async saveAnnotation(docId: string, annotation: Annotation): Promise<void> {
+    await this.ensure();
+    const path = resolveInsideRoot(this.root, annotationsPath(docId));
+    const existing = await this.loadAnnotations(docId);
+    const index = existing.findIndex(
+      (a) => a.annotation_id === annotation.annotation_id
+    );
+    if (index >= 0) {
+      existing[index] = annotation;
+    } else {
+      existing.push(annotation);
+    }
+    const file: AnnotationFile = {
+      doc_id: docId,
+      version: 1,
+      updated_at: new Date().toISOString(),
+      annotations: existing
+    };
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, JSON.stringify(file, null, 2), "utf-8");
+    this.upsertAnnotationSqlite(docId, annotation);
+  }
+
+  async deleteAnnotation(docId: string, annotationId: string): Promise<void> {
+    await this.ensure();
+    const path = resolveInsideRoot(this.root, annotationsPath(docId));
+    const existing = await this.loadAnnotations(docId);
+    const filtered = existing.filter(
+      (a) => a.annotation_id !== annotationId
+    );
+    if (filtered.length === existing.length) return;
+    if (filtered.length === 0) {
+      await rm(path, { force: true });
+      this.deleteAnnotationSqlite(annotationId);
+      return;
+    }
+    const file: AnnotationFile = {
+      doc_id: docId,
+      version: 1,
+      updated_at: new Date().toISOString(),
+      annotations: filtered
+    };
+    await writeFile(path, JSON.stringify(file, null, 2), "utf-8");
+    this.deleteAnnotationSqlite(annotationId);
+  }
+
+  async migrateAnnotations(
+    oldDocId: string,
+    newDocId: string,
+    newSectionIds: Set<string>
+  ): Promise<{ annotations: Annotation[]; orphanedCount: number }> {
+    await this.ensure();
+    const oldPath = resolveInsideRoot(this.root, annotationsPath(oldDocId));
+    let oldAnnotations: Annotation[] = [];
+    try {
+      const raw = await readFile(oldPath, "utf-8");
+      const file = AnnotationFileSchema.parse(JSON.parse(raw));
+      oldAnnotations = file.annotations;
+    } catch {
+      return { annotations: [], orphanedCount: 0 };
+    }
+
+    let orphanedCount = 0;
+    const now = new Date().toISOString();
+    const migrated: Annotation[] = oldAnnotations.map((anno) => {
+      if (newSectionIds.has(anno.section_id)) {
+        return { ...anno, doc_id: newDocId, orphaned: false, orphaned_at: undefined };
+      }
+      orphanedCount++;
+      return { ...anno, doc_id: newDocId, orphaned: true, orphaned_at: now };
+    });
+
+    const newPath = resolveInsideRoot(this.root, annotationsPath(newDocId));
+    const file: AnnotationFile = {
+      doc_id: newDocId,
+      version: 1,
+      updated_at: now,
+      annotations: migrated
+    };
+    await mkdir(dirname(newPath), { recursive: true });
+    await writeFile(newPath, JSON.stringify(file, null, 2), "utf-8");
+    await rm(oldPath, { force: true });
+
+    this.replaceAnnotationSqlite(oldDocId, newDocId, migrated);
+
+    return { annotations: migrated, orphanedCount };
+  }
+
+  async deleteAnnotationsForDoc(docId: string): Promise<void> {
+    await this.ensure();
+    const path = resolveInsideRoot(this.root, annotationsPath(docId));
+    await rm(path, { force: true });
+    this.deleteAnnotationSqliteForDoc(docId);
   }
 
   close(): void {
@@ -1669,6 +1779,22 @@ export class KnowledgeStore {
         content='chunks',
         content_rowid='rowid'
       );
+
+      CREATE TABLE IF NOT EXISTS annotations (
+        annotation_id TEXT PRIMARY KEY,
+        doc_id TEXT NOT NULL,
+        section_id TEXT NOT NULL,
+        type TEXT NOT NULL,
+        text_ref TEXT,
+        note TEXT,
+        color TEXT,
+        label TEXT,
+        ai_model TEXT,
+        summary_level TEXT,
+        orphaned INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
     `);
     this.database = database;
   }
@@ -1697,6 +1823,9 @@ export class KnowledgeStore {
       CREATE INDEX IF NOT EXISTS idx_collection_items_normalized_url ON collection_items(normalized_url);
       CREATE INDEX IF NOT EXISTS idx_batch_items_job_id ON batch_items(job_id);
       CREATE INDEX IF NOT EXISTS idx_batch_items_normalized_url ON batch_items(normalized_url);
+      CREATE INDEX IF NOT EXISTS idx_annotations_doc_id ON annotations(doc_id);
+      CREATE INDEX IF NOT EXISTS idx_annotations_section_id ON annotations(section_id);
+      CREATE INDEX IF NOT EXISTS idx_annotations_type ON annotations(type);
     `);
   }
 
@@ -2550,6 +2679,54 @@ export class KnowledgeStore {
     this.database!.prepare("DELETE FROM chunks WHERE doc_id = ?").run(docId);
   }
 
+  private upsertAnnotationSqlite(docId: string, annotation: Annotation): void {
+    this.database!.prepare(`
+      INSERT INTO annotations (
+        annotation_id, doc_id, section_id, type, text_ref, note,
+        color, label, ai_model, summary_level, orphaned, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(annotation_id) DO UPDATE SET
+        doc_id = excluded.doc_id,
+        section_id = excluded.section_id,
+        type = excluded.type,
+        text_ref = excluded.text_ref,
+        note = excluded.note,
+        color = excluded.color,
+        label = excluded.label,
+        ai_model = excluded.ai_model,
+        summary_level = excluded.summary_level,
+        orphaned = excluded.orphaned,
+        updated_at = excluded.updated_at
+    `).run(
+      annotation.annotation_id, docId, annotation.section_id,
+      annotation.type,
+      getTextRef(annotation), getNote(annotation),
+      getColor(annotation), getLabel(annotation),
+      getAiModel(annotation), getSummaryLevel(annotation),
+      annotation.orphaned ? 1 : 0,
+      annotation.created_at, annotation.updated_at
+    );
+  }
+
+  private deleteAnnotationSqlite(annotationId: string): void {
+    this.database!.prepare("DELETE FROM annotations WHERE annotation_id = ?").run(annotationId);
+  }
+
+  private deleteAnnotationSqliteForDoc(docId: string): void {
+    this.database!.prepare("DELETE FROM annotations WHERE doc_id = ?").run(docId);
+  }
+
+  private replaceAnnotationSqlite(
+    oldDocId: string,
+    newDocId: string,
+    annotations: Annotation[]
+  ): void {
+    this.database!.prepare("DELETE FROM annotations WHERE doc_id = ?").run(oldDocId);
+    for (const anno of annotations) {
+      this.upsertAnnotationSqlite(newDocId, anno);
+    }
+  }
+
   private rebuildChunksFtsIndex(): void {
     this.database!.exec(`
       DROP TABLE IF EXISTS chunks_fts;
@@ -2891,6 +3068,10 @@ function markdownPath(docId: string): string {
   return `markdown/${docId}.md`;
 }
 
+function annotationsPath(docId: string): string {
+  return `annotations/${docId}.annotations.json`;
+}
+
 function parserInfoFor(document: KnowledgeDocument, rawdoc: RawDoc): { version: string; method: string; profile: string | null } {
   const rawParserMethod = rawdoc.metadata?.parserMethod;
   const combinedVersion = document.meta.parser_version ?? "knowledge-ingest-server/0.1";
@@ -3093,4 +3274,40 @@ function ignoreMissing(error: unknown): void {
   if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
     throw error;
   }
+}
+
+function getTextRef(annotation: Annotation): string | null {
+  return annotation.type === "highlight"
+    ? annotation.text_ref
+    : annotation.type === "note"
+      ? (annotation.text_ref ?? null)
+      : null;
+}
+
+function getNote(annotation: Annotation): string | null {
+  return annotation.type === "highlight"
+    ? (annotation.note ?? null)
+    : annotation.type === "note" || annotation.type === "summary"
+      ? annotation.note
+      : null;
+}
+
+function getColor(annotation: Annotation): string | null {
+  return annotation.type === "highlight" ? (annotation.color ?? null) : null;
+}
+
+function getLabel(annotation: Annotation): string | null {
+  return annotation.type === "tag"
+    ? annotation.label
+    : annotation.type === "bookmark"
+      ? (annotation.label ?? null)
+      : null;
+}
+
+function getAiModel(annotation: Annotation): string | null {
+  return annotation.type === "summary" ? annotation.ai_model : null;
+}
+
+function getSummaryLevel(annotation: Annotation): string | null {
+  return annotation.type === "summary" ? annotation.summary_level : null;
 }
