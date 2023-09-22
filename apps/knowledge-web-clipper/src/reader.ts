@@ -87,7 +87,8 @@ contentOutput.addEventListener("mouseup", () => {
     }
     const range = selection.getRangeAt(0);
     const container = range.commonAncestorContainer;
-    const sectionEl = (container as Element).closest?.("[data-section-id]") as HTMLElement | null;
+    const element = container instanceof Element ? container : container.parentElement;
+    const sectionEl = element?.closest("[data-section-id]") as HTMLElement | null;
     if (!sectionEl) {
       removeAnnotationToolbar();
       return;
