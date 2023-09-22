@@ -390,6 +390,28 @@ h2 {
 
 /* ---- Annotation Panel ---- */
 
+/* ---- Panel Toggle ---- */
+
+.panel-toggle {
+  background: transparent;
+  border: 1px solid #d9e1ea;
+  border-radius: 4px;
+  color: #6b7f96;
+  cursor: pointer;
+  flex-shrink: 0;
+  font-size: 10px;
+  line-height: 1;
+  min-height: auto;
+  padding: 4px 6px;
+}
+
+.panel-toggle:hover {
+  border-color: #4869d6;
+  color: #315bdc;
+}
+
+/* ---- Annotation Panel ---- */
+
 .annotation-panel {
   background: #ffffff;
   border: 1px solid #d9e1ea;
@@ -402,15 +424,35 @@ h2 {
   padding: 14px;
   position: sticky;
   top: 16px;
-  width: 200px;
+  width: 220px;
+  transition: width 0.15s ease;
+}
+
+.annotation-panel.collapsed {
+  overflow: hidden;
+  padding: 14px 10px;
+  width: 44px;
+}
+
+.annotation-panel.collapsed .annotation-header h2,
+.annotation-panel.collapsed .annotation-filter,
+.annotation-panel.collapsed .annotation-list {
+  display: none;
 }
 
 .reader-layout {
-  grid-template-columns: 200px minmax(0, 1fr) 200px;
+  grid-template-columns: 200px minmax(0, 1fr) 220px;
+}
+
+.annotation-header {
+  align-items: center;
+  display: flex;
+  gap: 6px;
 }
 
 .annotation-header h2 {
   color: #172033;
+  flex: 1;
   font-size: 15px;
   font-weight: 600;
   margin: 0;
@@ -444,28 +486,52 @@ h2 {
   color: #315bdc;
 }
 
+.annotation-filter-btn:not(.active) {
+  opacity: 0.6;
+}
+
+.annotation-count-label {
+  color: #8a9bb5;
+  font-size: 11px;
+  font-weight: 500;
+}
+
 .annotation-list {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
 }
 
 .annotation-item {
+  align-items: center;
   border-left: 2px solid #d9e1ea;
   color: #5a6d84;
   cursor: pointer;
+  display: flex;
   font-size: 12px;
+  gap: 5px;
   line-height: 1.4;
   overflow: hidden;
-  padding: 4px 8px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  padding: 3px 6px;
 }
 
 .annotation-item:hover {
   background: #f5f7fa;
   border-left-color: #4869d6;
   color: #172033;
+}
+
+.anno-icon {
+  flex-shrink: 0;
+  font-size: 11px;
+  width: 12px;
+  text-align: center;
+}
+
+.anno-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ---- Annotation Highlight ---- */

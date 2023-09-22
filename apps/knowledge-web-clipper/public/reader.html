@@ -24,17 +24,23 @@
       <section class="reader-layout">
         <aside class="outline-panel" aria-label="Document outline">
           <div class="outline-header">
+            <button id="outline-panel-toggle" class="panel-toggle" type="button" data-collapsed="false" title="Toggle outline">◀</button>
             <h2>Outline</h2>
             <button id="outline-collapse-toggle" type="button">Collapse all</button>
           </div>
-          <nav id="outline-list"></nav>
+          <div id="outline-body" class="panel-body">
+            <nav id="outline-list"></nav>
+          </div>
         </aside>
         <article id="reader-content" class="reader-content"></article>
-        <aside class="annotation-panel" aria-label="Annotations">
+        <aside class="annotation-panel collapsed" aria-label="Annotations">
           <div class="annotation-header">
+            <button id="annotation-panel-toggle" class="panel-toggle" type="button" data-collapsed="true" title="Toggle annotations">▶</button>
             <h2>Annotations</h2>
           </div>
-          <div id="annotation-sidebar"></div>
+          <div id="annotation-body" class="panel-body" hidden>
+            <div id="annotation-sidebar"></div>
+          </div>
         </aside>
       </section>
     </main>
