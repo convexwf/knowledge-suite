@@ -63,7 +63,8 @@ copyButton.addEventListener("click", async () => {
   if (!currentMarkdown) {
     return;
   }
-  await navigator.clipboard.writeText(currentMarkdown);
+  const text = buildExportMarkdown(currentMarkdown, currentAnnotations);
+  await navigator.clipboard.writeText(text);
   const previous = copyButton.textContent;
   copyButton.textContent = "Copied";
   globalThis.setTimeout(() => {
@@ -74,6 +75,31 @@ copyButton.addEventListener("click", async () => {
 reparseButton.addEventListener("click", () => {
   if (itemId) {
     void reparseCurrentItem(itemId);
+  }
+});
+
+contentOutput.addEventListener("mouseup", () => {
+  globalThis.setTimeout(() => {
+    const selection = globalThis.getSelection();
+    if (!selection || selection.isCollapsed || !selection.toString().trim()) {
+      removeAnnotationToolbar();
+      return;
+    }
+    const range = selection.getRangeAt(0);
+    const container = range.commonAncestorContainer;
+    const sectionEl = (container as Element).closest?.("[data-section-id]") as HTMLElement | null;
+    if (!sectionEl) {
+      removeAnnotationToolbar();
+      return;
+    }
+    showAnnotationToolbar(selection, sectionEl);
+  }, 10);
+});
+
+document.addEventListener("click", (e) => {
+  const toolbar = document.getElementById("annotation-toolbar");
+  if (toolbar && !toolbar.contains(e.target as Node)) {
+    removeAnnotationToolbar();
   }
 });
 
@@ -745,4 +771,105 @@ function renderAnnotationSidebar(): void {
     list.append(item);
   }
   container.append(list);
+}
+
+function showAnnotationToolbar(selection: Selection, sectionEl: HTMLElement): void {
+  removeAnnotationToolbar();
+  const range = selection.getRangeAt(0);
+  const rect = range.getBoundingClientRect();
+  const toolbar = document.createElement("div");
+  toolbar.id = "annotation-toolbar";
+  toolbar.style.cssText = `position:fixed;left:${rect.left + rect.width / 2 - 60}px;top:${rect.bottom + 6 + globalThis.scrollY}px;z-index:200;`;
+  toolbar.innerHTML = `
+    <button data-action="highlight">Highlight</button>
+    <button data-action="note">Note</button>
+    <button data-action="tag">Tag</button>
+  `;
+  for (const btn of Array.from(toolbar.querySelectorAll("button"))) {
+    btn.addEventListener("click", async () => {
+      const action = btn.dataset.action ?? "highlight";
+      const text = selection.toString().trim();
+      const sectionId = sectionEl.dataset.sectionId;
+      if (!text || !sectionId || !currentDocId) return;
+      await createAnnotationFromSelection(action, text, sectionId);
+      removeAnnotationToolbar();
+      selection.removeAllRanges();
+    });
+  }
+  document.body.append(toolbar);
+}
+
+function removeAnnotationToolbar(): void {
+  document.getElementById("annotation-toolbar")?.remove();
+}
+
+async function createAnnotationFromSelection(
+  action: string,
+  text: string,
+  sectionId: string
+): Promise<void> {
+  const annotationId = crypto.randomUUID();
+  const now = new Date().toISOString();
+  let annotation: Annotation;
+  if (action === "tag") {
+    annotation = {
+      type: "tag",
+      annotation_id: annotationId,
+      doc_id: currentDocId,
+      section_id: sectionId,
+      label: text.slice(0, 50),
+      created_at: now,
+      updated_at: now
+    };
+  } else if (action === "note") {
+    annotation = {
+      type: "note",
+      annotation_id: annotationId,
+      doc_id: currentDocId,
+      section_id: sectionId,
+      note: "",
+      text_ref: text.slice(0, 200),
+      created_at: now,
+      updated_at: now
+    };
+  } else {
+    annotation = {
+      type: "highlight",
+      annotation_id: annotationId,
+      doc_id: currentDocId,
+      section_id: sectionId,
+      text_ref: text.slice(0, 500),
+      created_at: now,
+      updated_at: now
+    };
+  }
+  try {
+    await client.saveAnnotation(currentDocId, annotation);
+  } catch {
+    return;
+  }
+  await loadAndApplyAnnotations();
+}
+
+function buildExportMarkdown(markdown: string, annotations: Annotation[]): string {
+  if (annotations.length === 0) return markdown;
+  const grouped = new Map<string, Annotation[]>();
+  for (const anno of annotations) {
+    const key = anno.type;
+    if (!grouped.has(key)) grouped.set(key, []);
+    grouped.get(key)!.push(anno);
+  }
+  const parts = [markdown, "", "---", "", "## Annotations", ""];
+  for (const [type, annos] of grouped) {
+    parts.push(`### ${type.charAt(0).toUpperCase() + type.slice(1)}s`, "");
+    for (const anno of annos) {
+      const textRef = anno.type === "highlight" ? anno.text_ref : (anno as Annotation & { text_ref?: string }).text_ref;
+      const note = anno.type === "highlight" ? anno.note : anno.type === "note" || anno.type === "summary" ? anno.note : "";
+      const label = anno.type === "tag" ? anno.label : anno.type === "bookmark" ? anno.label : "";
+      const body = [textRef, note, label].filter(Boolean).join(" — ");
+      parts.push(`- [${type}] ${body || "(empty)"}`);
+    }
+    parts.push("");
+  }
+  return parts.join("\n");
 }

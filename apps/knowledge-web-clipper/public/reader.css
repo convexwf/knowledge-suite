@@ -540,3 +540,30 @@ h2 {
     grid-template-columns: 200px minmax(0, 1fr);
   }
 }
+
+/* ---- Annotation Toolbar ---- */
+
+#annotation-toolbar {
+  background: #ffffff;
+  border: 1px solid #d9e1ea;
+  border-radius: 6px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.12);
+  display: flex;
+  gap: 2px;
+  padding: 4px;
+}
+
+#annotation-toolbar button {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: #315bdc;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 4px 10px;
+}
+
+#annotation-toolbar button:hover {
+  background: #e8edff;
+  border-color: #4869d6;
+}
