@@ -215,7 +215,7 @@ async function renderMarkdown(markdown: string, target: HTMLElement): Promise<vo
   for (let index = 0; index < lines.length;) {
     const line = lines[index] ?? "";
 
-    const sectionAnchor = line.match(/^<!-- section_id:(\S+) -->$/);
+    const sectionAnchor = line.match(/^<!--\s*section_id:(\S+)\s*-->$/);
     if (sectionAnchor) {
       currentSectionId = sectionAnchor[1];
       index += 1;
@@ -779,7 +779,7 @@ function showAnnotationToolbar(selection: Selection, sectionEl: HTMLElement): vo
   const rect = range.getBoundingClientRect();
   const toolbar = document.createElement("div");
   toolbar.id = "annotation-toolbar";
-  toolbar.style.cssText = `position:fixed;left:${rect.left + rect.width / 2 - 60}px;top:${rect.bottom + 6 + globalThis.scrollY}px;z-index:200;`;
+  toolbar.style.cssText = `position:fixed;left:${rect.left + rect.width / 2 - 60}px;top:${rect.bottom + 6}px;z-index:200;`;
   toolbar.innerHTML = `
     <button data-action="highlight">Highlight</button>
     <button data-action="note">Note</button>
