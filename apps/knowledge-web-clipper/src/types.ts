@@ -280,6 +280,97 @@ export interface StoreClearParsedResult {
   after: StoreMaintenanceScan;
 }
 
+// ---- Annotation types ----
+
+export type AnnotationType = "highlight" | "note" | "summary" | "tag" | "bookmark";
+
+export interface HighlightAnnotation {
+  type: "highlight";
+  annotation_id: string;
+  doc_id: string;
+  section_id: string;
+  text_ref: string;
+  note?: string;
+  color?: string;
+  created_at: string;
+  updated_at: string;
+  orphaned?: boolean;
+  orphaned_at?: string;
+}
+
+export interface NoteAnnotation {
+  type: "note";
+  annotation_id: string;
+  doc_id: string;
+  section_id: string;
+  note: string;
+  text_ref?: string;
+  created_at: string;
+  updated_at: string;
+  orphaned?: boolean;
+  orphaned_at?: string;
+}
+
+export interface SummaryAnnotation {
+  type: "summary";
+  annotation_id: string;
+  doc_id: string;
+  section_id: string;
+  note: string;
+  ai_model: string;
+  summary_level: "chapter" | "paragraph" | "document";
+  created_at: string;
+  updated_at: string;
+  orphaned?: boolean;
+  orphaned_at?: string;
+}
+
+export interface TagAnnotation {
+  type: "tag";
+  annotation_id: string;
+  doc_id: string;
+  section_id: string;
+  label: string;
+  created_at: string;
+  updated_at: string;
+  orphaned?: boolean;
+  orphaned_at?: string;
+}
+
+export interface BookmarkAnnotation {
+  type: "bookmark";
+  annotation_id: string;
+  doc_id: string;
+  section_id: string;
+  label?: string;
+  created_at: string;
+  updated_at: string;
+  orphaned?: boolean;
+  orphaned_at?: string;
+}
+
+export type Annotation =
+  | HighlightAnnotation
+  | NoteAnnotation
+  | SummaryAnnotation
+  | TagAnnotation
+  | BookmarkAnnotation;
+
+export interface AnnotationListResult {
+  doc_id: string | null;
+  annotations: Annotation[];
+}
+
+export interface AnnotationSaveResult {
+  saved: boolean;
+  annotation_id: string;
+}
+
+export interface AnnotationDeleteResult {
+  deleted: boolean;
+  annotation_id: string;
+}
+
 export interface ClipStatusResult {
   normalizedUrl: string;
   urlHash: string;

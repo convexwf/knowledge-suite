@@ -1,7 +1,7 @@
 import { createKnowledgeApiClient } from "./api-client.js";
 import { getSettings } from "./settings.js";
 import { openKnowledgePage } from "./tabs.js";
-import { KnowledgeDocument, KnowledgeItem } from "./types.js";
+import { Annotation, KnowledgeDocument, KnowledgeItem } from "./types.js";
 
 const titleOutput = mustGet<HTMLElement>("reader-title");
 const kickerOutput = mustGet<HTMLElement>("reader-kicker");
@@ -22,6 +22,8 @@ const docId = query.get("docId") || undefined;
 let currentMarkdown = "";
 let currentDocument: KnowledgeDocument | undefined;
 let currentItem: KnowledgeItem | undefined;
+let currentAnnotations: Annotation[] = [];
+let currentDocId = "";
 const objectUrls = new Set<string>();
 
 backButton.addEventListener("click", () => {
@@ -116,6 +118,9 @@ async function loadReader(): Promise<void> {
     await renderMarkdown(currentMarkdown || documentFallbackMarkdown(currentDocument), contentOutput);
     renderOutline();
     copyButton.disabled = !currentMarkdown;
+
+    currentDocId = currentDocument.doc_id;
+    await loadAndApplyAnnotations();
   } catch (error) {
     showMessage(error instanceof Error ? error.message : String(error));
     copyButton.disabled = true;
@@ -134,6 +139,15 @@ async function reparseCurrentItem(value: string): Promise<void> {
     await renderMarkdown(currentMarkdown, contentOutput);
     renderOutline();
     copyButton.disabled = false;
+
+    currentDocId = currentDocument.doc_id;
+    await loadAndApplyAnnotations();
+    const warnings = (result as unknown as Record<string, unknown>).annotationWarnings as
+      | { orphanedCount: number; orphanedAnnotations: Array<{ annotation_id: string; type: string; section_id: string; text_ref?: string; label?: string }> }
+      | undefined;
+    if (warnings?.orphanedCount) {
+      showAnnotationOrphanWarning(warnings);
+    }
   } catch (error) {
     showMessage(error instanceof Error ? error.message : String(error));
   } finally {
@@ -171,8 +185,17 @@ async function renderMarkdown(markdown: string, target: HTMLElement): Promise<vo
   }
 
   const lines = body.split(/\r?\n/);
+  let currentSectionId = "";
   for (let index = 0; index < lines.length;) {
     const line = lines[index] ?? "";
+
+    const sectionAnchor = line.match(/^<!-- section_id:(\S+) -->$/);
+    if (sectionAnchor) {
+      currentSectionId = sectionAnchor[1];
+      index += 1;
+      continue;
+    }
+
     if (!line.trim()) {
       index += 1;
       continue;
@@ -186,20 +209,26 @@ async function renderMarkdown(markdown: string, target: HTMLElement): Promise<vo
         index += 1;
       }
       index += 1;
-      target.append(codeBlock(codeLines.join("\n")));
+      const block = codeBlock(codeLines.join("\n"));
+      if (currentSectionId) block.dataset.sectionId = currentSectionId;
+      target.append(block);
       continue;
     }
 
     const heading = line.match(/^(#{1,6})\s+(.+)$/);
     if (heading) {
-      target.append(headingNode(heading[1].length, heading[2]));
+      const block = headingNode(heading[1].length, heading[2]);
+      if (currentSectionId) block.dataset.sectionId = currentSectionId;
+      target.append(block);
       index += 1;
       continue;
     }
 
     const image = line.match(/^!\[([^\]]*)]\(([^)]+)\)$/);
     if (image) {
-      target.append(await imageFigure(image[2], image[1]));
+      const block = await imageFigure(image[2], image[1]);
+      if (currentSectionId) block.dataset.sectionId = currentSectionId;
+      target.append(block);
       index += 1;
       continue;
     }
@@ -212,6 +241,7 @@ async function renderMarkdown(markdown: string, target: HTMLElement): Promise<vo
       }
       const quote = document.createElement("blockquote");
       quote.textContent = quoteLines.join("\n");
+      if (currentSectionId) quote.dataset.sectionId = currentSectionId;
       target.append(quote);
       continue;
     }
@@ -224,6 +254,7 @@ async function renderMarkdown(markdown: string, target: HTMLElement): Promise<vo
         list.append(item);
         index += 1;
       }
+      if (currentSectionId) list.dataset.sectionId = currentSectionId;
       target.append(list);
       continue;
     }
@@ -234,7 +265,9 @@ async function renderMarkdown(markdown: string, target: HTMLElement): Promise<vo
         tableLines.push(lines[index]);
         index += 1;
       }
-      target.append(tableNode(tableLines));
+      const table = tableNode(tableLines);
+      if (currentSectionId) table.dataset.sectionId = currentSectionId;
+      target.append(table);
       continue;
     }
 
@@ -254,6 +287,7 @@ async function renderMarkdown(markdown: string, target: HTMLElement): Promise<vo
     }
     const paragraph = document.createElement("p");
     appendInline(paragraph, paragraphLines.join(" "));
+    if (currentSectionId) paragraph.dataset.sectionId = currentSectionId;
     target.append(paragraph);
   }
 }
@@ -521,4 +555,194 @@ function mustGet<T extends HTMLElement>(id: string): T {
     throw new Error(`Missing element #${id}`);
   }
   return element as T;
+}
+
+async function loadAndApplyAnnotations(): Promise<void> {
+  if (!currentDocId) return;
+  try {
+    const result = await client.annotations(currentDocId);
+    currentAnnotations = result.annotations.filter((a) => !a.orphaned);
+    applyHighlightOverlays(contentOutput, currentAnnotations);
+    renderAnnotationSidebar();
+  } catch {
+    currentAnnotations = [];
+  }
+}
+
+function applyHighlightOverlays(container: HTMLElement, annotations: Annotation[]): void {
+  for (const anno of annotations) {
+    if (anno.type !== "highlight" && anno.type !== "note") continue;
+    const textRef = anno.type === "highlight" ? anno.text_ref : (anno as Annotation & { text_ref?: string }).text_ref;
+    if (!textRef) continue;
+    const elements = Array.from(container.querySelectorAll(`[data-section-id="${anno.section_id}"]`));
+    for (const element of elements) {
+      const text = element.textContent ?? "";
+      const offset = text.indexOf(textRef);
+      if (offset === -1) continue;
+      wrapTextInElement(
+        element as HTMLElement, textRef, anno.annotation_id,
+        anno.type === "highlight" ? (anno as Annotation & { color?: string }).color ?? null : null
+      );
+      break;
+    }
+  }
+}
+
+function wrapTextInElement(
+  element: HTMLElement,
+  searchText: string,
+  annotationId: string,
+  color: string | null
+): void {
+  const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+  let textRemaining = searchText;
+  const nodes: Text[] = [];
+  while (walker.nextNode() && textRemaining.length > 0) {
+    const node = walker.currentNode as Text;
+    const nodeText = node.textContent ?? "";
+    if (nodeText.includes(textRemaining.charAt(0)) || nodes.length > 0) {
+      nodes.push(node);
+      textRemaining = textRemaining.slice(
+        Math.min(nodeText.length, textRemaining.length)
+      );
+    }
+  }
+  if (textRemaining.length > 0) return;
+
+  const mark = document.createElement("mark");
+  mark.className = "annotation-highlight";
+  mark.dataset.annotationId = annotationId;
+  if (color) mark.style.backgroundColor = color;
+  mark.addEventListener("click", (e) => {
+    e.stopPropagation();
+    showAnnotationPopup(annotationId, mark);
+  });
+
+  let targetRemaining = searchText;
+  for (const node of nodes) {
+    const nodeText = node.textContent ?? "";
+    if (targetRemaining.length >= nodeText.length) {
+      mark.append(node.cloneNode(true));
+      if (node.parentNode) node.parentNode.replaceChild(document.createTextNode(""), node);
+      targetRemaining = targetRemaining.slice(nodeText.length);
+    } else {
+      const before = node.splitText(targetRemaining.length);
+      mark.append(node.cloneNode(true));
+      if (node.parentNode) node.parentNode.replaceChild(before, node);
+      targetRemaining = "";
+      break;
+    }
+  }
+
+  if (mark.childNodes.length > 0 && nodes[0]?.parentNode) {
+    nodes[0].parentNode.insertBefore(mark, nodes[0].parentNode.firstChild);
+  }
+}
+
+function showAnnotationPopup(annotationId: string, anchor: HTMLElement): void {
+  const previous = document.querySelector(".annotation-popup");
+  if (previous) previous.remove();
+  const anno = currentAnnotations.find((a) => a.annotation_id === annotationId);
+  if (!anno) return;
+
+  const popup = document.createElement("div");
+  popup.className = "annotation-popup";
+  const note = anno.type === "highlight" ? anno.note : anno.type === "note" ? anno.note : "";
+  const label = anno.type === "tag" ? anno.label : anno.type === "bookmark" ? anno.label : undefined;
+  const colorLabel = anno.type === "highlight" ? anno.color ?? null : null;
+
+  let content = "";
+  if (note) content += note;
+  if (label) content += content ? ` [${label}]` : label;
+  if (!content) content = "(empty)";
+
+  const typeLabel = anno.type.charAt(0).toUpperCase() + anno.type.slice(1);
+  popup.innerHTML = `<div class="annotation-popup-type">${typeLabel}${colorLabel ? ` <span style="display:inline-block;width:12px;height:12px;background:${colorLabel};border-radius:2px;"></span>` : ""}</div><div>${content}</div><button class="annotation-popup-delete" data-id="${anno.annotation_id}">Delete</button>`;
+
+  popup.querySelector(".annotation-popup-delete")?.addEventListener("click", async () => {
+    await client.deleteAnnotation(currentDocId, anno.annotation_id);
+    currentAnnotations = currentAnnotations.filter((a) => a.annotation_id !== anno.annotation_id);
+    popup.remove();
+    const marks = Array.from(document.querySelectorAll(`mark[data-annotation-id="${anno.annotation_id}"]`));
+    for (const mark of marks) {
+      const parent = mark.parentNode;
+      if (!parent) continue;
+      while (mark.firstChild) {
+        parent.insertBefore(mark.firstChild, mark);
+      }
+      parent.removeChild(mark);
+    }
+  });
+
+  anchor.insertAdjacentElement("afterend", popup);
+}
+
+function showAnnotationOrphanWarning(
+  warnings: { orphanedCount: number; orphanedAnnotations: Array<{ annotation_id: string; type: string; section_id: string; text_ref?: string; label?: string }> }
+): void {
+  const banner = document.createElement("div");
+  banner.className = "annotation-orphan-warning";
+  banner.textContent = `${warnings.orphanedCount} annotation(s) could not be matched to new sections. They have been preserved but may need review. `;
+  const details = document.createElement("span");
+  details.style.cursor = "pointer";
+  details.style.textDecoration = "underline";
+  details.textContent = "View details";
+  details.addEventListener("click", () => {
+    const list = warnings.orphanedAnnotations.map(
+      (a) => `  - [${a.type}] ${a.text_ref ?? a.label ?? a.section_id}`
+    ).join("\n");
+    alert(`Orphaned annotations:\n${list}`);
+  });
+  banner.append(details);
+  contentOutput.insertBefore(banner, contentOutput.firstChild);
+}
+
+function renderAnnotationSidebar(): void {
+  const container = document.getElementById("annotation-sidebar");
+  if (!container) return;
+  container.replaceChildren();
+  if (currentAnnotations.length === 0) {
+    container.append(documentCreate("span", "No annotations"));
+    return;
+  }
+
+  const types: string[] = ["highlight", "note", "summary", "tag", "bookmark"];
+  const filterBar = document.createElement("div");
+  filterBar.className = "annotation-filter";
+  for (const type of types) {
+    const count = currentAnnotations.filter((a) => a.type === type).length;
+    if (count === 0) continue;
+    const btn = document.createElement("button");
+    btn.textContent = `${type} (${count})`;
+    btn.className = "annotation-filter-btn active";
+    btn.addEventListener("click", () => {
+      const active = btn.classList.toggle("active");
+      const items = Array.from(container.querySelectorAll(`.annotation-item[data-type="${type}"]`));
+      for (const item of items) {
+        (item as HTMLElement).hidden = !active;
+      }
+    });
+    filterBar.append(btn);
+  }
+  container.append(filterBar);
+
+  const list = document.createElement("div");
+  list.className = "annotation-list";
+  for (const anno of currentAnnotations) {
+    const item = document.createElement("div");
+    item.className = "annotation-item";
+    item.dataset.type = anno.type;
+    const textRef = anno.type === "highlight" ? anno.text_ref : (anno as Annotation & { text_ref?: string }).text_ref;
+    const note = anno.type === "highlight" ? anno.note : anno.type === "note" || anno.type === "summary" ? anno.note : "";
+    const label = anno.type === "tag" ? anno.label : anno.type === "bookmark" ? anno.label : "";
+    const summary = [textRef, note, label].filter(Boolean).join(" — ");
+    item.textContent = `[${anno.type}] ${summary || "(empty)"}`;
+    item.title = summary || "";
+    item.addEventListener("click", () => {
+      const element = contentOutput.querySelector(`[data-section-id="${anno.section_id}"]`);
+      if (element) element.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+    list.append(item);
+  }
+  container.append(list);
 }

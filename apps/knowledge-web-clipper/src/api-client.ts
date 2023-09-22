@@ -1,4 +1,8 @@
 import {
+  Annotation,
+  AnnotationDeleteResult,
+  AnnotationListResult,
+  AnnotationSaveResult,
   ClipDeleteResult,
   ClipDeleteMode,
   ClipListResult,
@@ -73,6 +77,9 @@ export interface KnowledgeApiClient {
     };
   }): Promise<BatchJobResult>;
   batchJob(jobId: string): Promise<BatchJobResult>;
+  annotations(docId: string): Promise<AnnotationListResult>;
+  saveAnnotation(docId: string, annotation: Annotation): Promise<AnnotationSaveResult>;
+  deleteAnnotation(docId: string, annotationId: string): Promise<AnnotationDeleteResult>;
 }
 
 export function createKnowledgeApiClient(settings: ExtensionSettings): KnowledgeApiClient {
@@ -257,7 +264,31 @@ export function createKnowledgeApiClient(settings: ExtensionSettings): Knowledge
       `/api/batch/jobs/${encodeURIComponent(jobId)}`,
       undefined,
       options
-    )
+    ),
+    annotations: (docId) => request<AnnotationListResult>(
+      baseUrl,
+      settings.token,
+      "GET",
+      `/api/documents/${encodeURIComponent(docId)}/annotations`,
+      undefined,
+      options
+    ),
+    saveAnnotation: (docId, annotation) => request<AnnotationSaveResult>(
+      baseUrl,
+      settings.token,
+      "POST",
+      `/api/documents/${encodeURIComponent(docId)}/annotations`,
+      annotation,
+      options
+    ),
+    deleteAnnotation: (docId, annotationId) => request<AnnotationDeleteResult>(
+      baseUrl,
+      settings.token,
+      "DELETE",
+      `/api/documents/${encodeURIComponent(docId)}/annotations/${encodeURIComponent(annotationId)}`,
+      undefined,
+      options
+    ),
   };
 }
 
