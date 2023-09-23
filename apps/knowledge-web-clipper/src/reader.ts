@@ -13,11 +13,9 @@ const reparseButton = mustGet<HTMLButtonElement>("reparse-item");
 const backButton = mustGet<HTMLButtonElement>("back-to-items");
 const topButton = mustGet<HTMLButtonElement>("back-to-top");
 const outlineCollapseToggle = mustGet<HTMLButtonElement>("outline-collapse-toggle");
-const outlinePanelToggle = mustGet<HTMLButtonElement>("outline-panel-toggle");
 const annotationPanelToggle = mustGet<HTMLButtonElement>("annotation-panel-toggle");
-const outlineBody = mustGet<HTMLElement>("outline-body");
 const annotationBody = mustGet<HTMLElement>("annotation-body");
-const annotationPanel = mustGet<HTMLElement>("annotation-panel").closest(".annotation-panel") as HTMLElement;
+const annotationPanel = mustGet<HTMLElement>("annotation-panel");
 const readerLayout = mustGet<HTMLElement>("reader-layout");
 
 const settings = await getSettings();
@@ -65,16 +63,6 @@ outlineCollapseToggle.addEventListener("click", () => {
   }
 });
 
-outlinePanelToggle.addEventListener("click", () => {
-  const collapsed = outlinePanelToggle.dataset.collapsed === "true";
-  outlinePanelToggle.dataset.collapsed = collapsed ? "false" : "true";
-  outlinePanelToggle.textContent = collapsed ? "◀" : "▶";
-  outlinePanelToggle.title = collapsed ? "Hide outline" : "Show outline";
-  outlineBody.hidden = !collapsed;
-  outlineCollapseToggle.hidden = !collapsed;
-  readerLayout.classList.toggle("outline-hidden", !collapsed);
-});
-
 annotationPanelToggle.addEventListener("click", () => {
   const collapsed = annotationPanelToggle.dataset.collapsed === "true";
   annotationPanelToggle.dataset.collapsed = collapsed ? "false" : "true";
@@ -82,7 +70,7 @@ annotationPanelToggle.addEventListener("click", () => {
   annotationPanelToggle.title = collapsed ? "Hide annotations" : "Show annotations";
   annotationBody.hidden = collapsed;
   annotationPanel.classList.toggle("collapsed", collapsed);
-  readerLayout.classList.toggle("annot-hidden", collapsed);
+  readerLayout.classList.toggle("annot-visible", !collapsed);
 });
 
 copyButton.addEventListener("click", async () => {

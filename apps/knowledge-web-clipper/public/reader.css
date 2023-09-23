@@ -109,14 +109,6 @@ h2 {
   grid-template-columns: 200px minmax(0, 1fr) 220px;
 }
 
-.reader-layout.outline-hidden {
-  grid-template-columns: minmax(0, 1fr);
-}
-
-.reader-layout.outline-hidden.annot-visible {
-  grid-template-columns: minmax(0, 1fr) 220px;
-}
-
 .outline-panel {
   background: #ffffff;
   border: 1px solid #d9e1ea;
@@ -378,9 +370,7 @@ h2 {
 
   .reader-header,
   .reader-layout,
-  .reader-layout.annot-visible,
-  .reader-layout.outline-hidden,
-  .reader-layout.outline-hidden.annot-visible {
+  .reader-layout.annot-visible {
     grid-template-columns: 1fr;
   }
 
@@ -434,6 +424,7 @@ h2 {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  grid-column: 3;
   max-height: calc(100vh - 120px);
   overflow: auto;
   padding: 14px;
