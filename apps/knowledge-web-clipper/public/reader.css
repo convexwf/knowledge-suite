@@ -105,6 +105,18 @@ h2 {
   margin-top: 24px;
 }
 
+.reader-layout.annot-visible {
+  grid-template-columns: 200px minmax(0, 1fr) 220px;
+}
+
+.reader-layout.outline-hidden {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.reader-layout.outline-hidden.annot-visible {
+  grid-template-columns: minmax(0, 1fr) 220px;
+}
+
 .outline-panel {
   background: #ffffff;
   border: 1px solid #d9e1ea;
@@ -365,7 +377,10 @@ h2 {
   }
 
   .reader-header,
-  .reader-layout {
+  .reader-layout,
+  .reader-layout.annot-visible,
+  .reader-layout.outline-hidden,
+  .reader-layout.outline-hidden.annot-visible {
     grid-template-columns: 1fr;
   }
 
@@ -438,10 +453,6 @@ h2 {
 .annotation-panel.collapsed .annotation-filter,
 .annotation-panel.collapsed .annotation-list {
   display: none;
-}
-
-.reader-layout {
-  grid-template-columns: 200px minmax(0, 1fr) 220px;
 }
 
 .annotation-header {
@@ -553,21 +564,45 @@ h2 {
   background: #ffffff;
   border: 1px solid #d9e1ea;
   border-radius: 6px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
   font-size: 13px;
-  margin-top: 4px;
   max-width: 280px;
-  padding: 10px;
   position: absolute;
   z-index: 100;
+}
+
+.annotation-popup-header {
+  align-items: center;
+  border-bottom: 1px solid #f0f0f0;
+  display: flex;
+  justify-content: space-between;
+  padding: 8px 10px;
 }
 
 .annotation-popup-type {
   color: #4869d6;
   font-size: 11px;
   font-weight: 600;
-  margin-bottom: 4px;
   text-transform: uppercase;
+}
+
+.annotation-popup-close {
+  background: transparent;
+  border: none;
+  color: #999;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  padding: 0 2px;
+}
+
+.annotation-popup-close:hover {
+  color: #333;
+}
+
+.annotation-popup-body {
+  line-height: 1.5;
+  padding: 8px 10px 4px;
 }
 
 .annotation-popup-delete {
@@ -577,7 +612,7 @@ h2 {
   color: #c0392b;
   cursor: pointer;
   font-size: 11px;
-  margin-top: 6px;
+  margin: 0 10px 8px;
   padding: 2px 8px;
 }
 
@@ -602,7 +637,8 @@ h2 {
     display: none;
   }
 
-  .reader-layout {
+  .reader-layout,
+  .reader-layout.annot-visible {
     grid-template-columns: 200px minmax(0, 1fr);
   }
 }

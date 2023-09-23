@@ -18,6 +18,7 @@ const annotationPanelToggle = mustGet<HTMLButtonElement>("annotation-panel-toggl
 const outlineBody = mustGet<HTMLElement>("outline-body");
 const annotationBody = mustGet<HTMLElement>("annotation-body");
 const annotationPanel = mustGet<HTMLElement>("annotation-panel").closest(".annotation-panel") as HTMLElement;
+const readerLayout = mustGet<HTMLElement>("reader-layout");
 
 const settings = await getSettings();
 const client = createKnowledgeApiClient(settings);
@@ -71,6 +72,7 @@ outlinePanelToggle.addEventListener("click", () => {
   outlinePanelToggle.title = collapsed ? "Hide outline" : "Show outline";
   outlineBody.hidden = !collapsed;
   outlineCollapseToggle.hidden = !collapsed;
+  readerLayout.classList.toggle("outline-hidden", !collapsed);
 });
 
 annotationPanelToggle.addEventListener("click", () => {
@@ -80,6 +82,7 @@ annotationPanelToggle.addEventListener("click", () => {
   annotationPanelToggle.title = collapsed ? "Hide annotations" : "Show annotations";
   annotationBody.hidden = collapsed;
   annotationPanel.classList.toggle("collapsed", collapsed);
+  readerLayout.classList.toggle("annot-hidden", collapsed);
 });
 
 copyButton.addEventListener("click", async () => {
@@ -694,23 +697,34 @@ function wrapTextInElement(
 
 function showAnnotationPopup(annotationId: string, anchor: HTMLElement): void {
   const previous = document.querySelector(".annotation-popup");
-  if (previous) previous.remove();
+  if (previous) {
+    const prevId = (previous as HTMLElement).dataset.annotationId;
+    previous.remove();
+    if (prevId === annotationId) return;
+  }
   const anno = currentAnnotations.find((a) => a.annotation_id === annotationId);
   if (!anno) return;
 
   const popup = document.createElement("div");
   popup.className = "annotation-popup";
+  popup.dataset.annotationId = annotationId;
   const note = anno.type === "highlight" ? anno.note : anno.type === "note" ? anno.note : "";
   const label = anno.type === "tag" ? anno.label : anno.type === "bookmark" ? anno.label : undefined;
   const colorLabel = anno.type === "highlight" ? anno.color ?? null : null;
 
   let content = "";
-  if (note) content += note;
-  if (label) content += content ? ` [${label}]` : label;
+  if (note) content += escapeHtml(note);
+  if (label) content += content ? ` [${escapeHtml(label)}]` : escapeHtml(label ?? "");
   if (!content) content = "(empty)";
 
   const typeLabel = anno.type.charAt(0).toUpperCase() + anno.type.slice(1);
-  popup.innerHTML = `<div class="annotation-popup-type">${typeLabel}${colorLabel ? ` <span style="display:inline-block;width:12px;height:12px;background:${colorLabel};border-radius:2px;"></span>` : ""}</div><div>${content}</div><button class="annotation-popup-delete" data-id="${anno.annotation_id}">Delete</button>`;
+  popup.innerHTML = `<div class="annotation-popup-header">
+    <span class="annotation-popup-type">${typeLabel}${colorLabel ? ` <span style="display:inline-block;width:12px;height:12px;background:${colorLabel};border-radius:2px;"></span>` : ""}</span>
+    <button class="annotation-popup-close">&times;</button>
+  </div><div class="annotation-popup-body">${content}</div><button class="annotation-popup-delete" data-id="${anno.annotation_id}">Delete</button>`;
+
+  const closePopup = () => popup.remove();
+  popup.querySelector(".annotation-popup-close")?.addEventListener("click", closePopup);
 
   popup.querySelector(".annotation-popup-delete")?.addEventListener("click", async () => {
     await client.deleteAnnotation(currentDocId, anno.annotation_id);
@@ -725,7 +739,16 @@ function showAnnotationPopup(annotationId: string, anchor: HTMLElement): void {
       }
       parent.removeChild(mark);
     }
+    renderAnnotationSidebar();
   });
+
+  const outsideClick = (e: MouseEvent) => {
+    if (!popup.contains(e.target as Node) && e.target !== anchor) {
+      popup.remove();
+      document.removeEventListener("click", outsideClick);
+    }
+  };
+  globalThis.setTimeout(() => document.addEventListener("click", outsideClick), 0);
 
   anchor.insertAdjacentElement("afterend", popup);
 }
