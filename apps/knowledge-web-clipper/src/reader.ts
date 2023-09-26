@@ -635,20 +635,41 @@ function wrapTextInElement(
   annotationId: string,
   color: string | null
 ): void {
+  const fullText = element.textContent ?? "";
+  const offset = fullText.indexOf(searchText);
+  if (offset === -1) return;
+
+  const range = document.createRange();
   const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
-  let textRemaining = searchText;
-  const nodes: Text[] = [];
-  while (walker.nextNode() && textRemaining.length > 0) {
+  let walkOffset = 0;
+  let startNode: Text | null = null;
+  let startNodeOffset = 0;
+  let endNode: Text | null = null;
+  let endNodeOffset = 0;
+
+  while (walker.nextNode()) {
     const node = walker.currentNode as Text;
-    const nodeText = node.textContent ?? "";
-    if (nodeText.includes(textRemaining.charAt(0)) || nodes.length > 0) {
-      nodes.push(node);
-      textRemaining = textRemaining.slice(
-        Math.min(nodeText.length, textRemaining.length)
-      );
+    const len = node.textContent?.length ?? 0;
+    if (!startNode && walkOffset + len > offset) {
+      startNode = node;
+      startNodeOffset = offset - walkOffset;
     }
+    if (!endNode && walkOffset + len >= offset + searchText.length) {
+      endNode = node;
+      endNodeOffset = offset + searchText.length - walkOffset;
+      break;
+    }
+    walkOffset += len;
   }
-  if (textRemaining.length > 0) return;
+
+  if (!startNode || !endNode) return;
+
+  try {
+    range.setStart(startNode, startNodeOffset);
+    range.setEnd(endNode, endNodeOffset);
+  } catch {
+    return;
+  }
 
   const mark = document.createElement("mark");
   mark.className = "annotation-highlight";
@@ -659,32 +680,12 @@ function wrapTextInElement(
     showAnnotationPopup(annotationId, mark);
   });
 
-  let targetRemaining = searchText;
-  let insertionRef: Node | null = null;
-  for (const node of nodes) {
-    const nodeText = node.textContent ?? "";
-    if (targetRemaining.length >= nodeText.length) {
-      mark.append(node.cloneNode(true));
-      if (node.parentNode) {
-        const empty = document.createTextNode("");
-        node.parentNode.replaceChild(empty, node);
-        if (!insertionRef) insertionRef = empty;
-      }
-      targetRemaining = targetRemaining.slice(nodeText.length);
-    } else {
-      const before = node.splitText(targetRemaining.length);
-      mark.append(node.cloneNode(true));
-      if (node.parentNode) {
-        node.parentNode.replaceChild(before, node);
-        if (!insertionRef) insertionRef = before;
-      }
-      targetRemaining = "";
-      break;
-    }
-  }
-
-  if (mark.childNodes.length > 0 && insertionRef) {
-    insertionRef.parentNode!.insertBefore(mark, insertionRef);
+  try {
+    range.surroundContents(mark);
+  } catch {
+    const fragment = range.extractContents();
+    mark.append(fragment);
+    range.insertNode(mark);
   }
 }
 
