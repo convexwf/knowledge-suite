@@ -696,13 +696,11 @@ function showAnnotationPopup(annotationId: string, anchor: HTMLElement): void {
   const popup = document.createElement("div");
   popup.className = "annotation-popup";
   popup.dataset.annotationId = annotationId;
-  const note = anno.type === "highlight" ? anno.note : anno.type === "note" ? anno.note : "";
-  const label = anno.type === "tag" ? anno.label : anno.type === "bookmark" ? anno.label : undefined;
+  const noteText = anno.type === "highlight" ? anno.note : anno.type === "note" || anno.type === "summary" ? anno.note : "";
   const colorLabel = anno.type === "highlight" ? anno.color ?? null : null;
 
   let content = "";
-  if (note) content += escapeHtml(note);
-  if (label) content += content ? ` [${escapeHtml(label)}]` : escapeHtml(label ?? "");
+  if (noteText) content += escapeHtml(noteText);
   if (!content) content = "(empty)";
 
   const typeLabel = anno.type.charAt(0).toUpperCase() + anno.type.slice(1);
@@ -775,7 +773,7 @@ function renderAnnotationSidebar(): void {
     return;
   }
 
-  const types = ["highlight", "note", "tag", "bookmark", "summary"] as const;
+  const types = ["highlight", "note", "summary"] as const;
   const filterBar = document.createElement("div");
   filterBar.className = "annotation-filter";
   for (const type of types) {
@@ -786,8 +784,9 @@ function renderAnnotationSidebar(): void {
     btn.className = "annotation-filter-btn active";
     btn.title = `${count} ${type}(s)`;
     btn.addEventListener("click", () => {
-      const active = btn.classList.toggle("active");
-      toggleAnnotationType(container, type, active);
+      const visible = !btn.classList.contains("active");
+      btn.classList.toggle("active", visible);
+      toggleAnnotationType(container, type, visible);
     });
     filterBar.append(btn);
   }
@@ -799,19 +798,20 @@ function renderAnnotationSidebar(): void {
     const item = document.createElement("div");
     item.className = "annotation-item";
     item.dataset.type = anno.type;
-    item.title = "Click to scroll";
-    item.addEventListener("click", () => {
-      const el = contentOutput.querySelector(`[data-section-id="${anno.section_id}"]`);
-      if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
-    });
 
-    const typeIcon = {"highlight":"◆","note":"✎","tag":"#","bookmark":"★","summary":"◈"}[anno.type] ?? "•";
+    const typeIcons: Record<string, string> = {"highlight":"◆","note":"✎","summary":"◈","tag":"#","bookmark":"★"};
+    const typeIcon = typeIcons[anno.type] ?? "•";
     const color = anno.type === "highlight" ? (anno as Annotation & { color?: string }).color : null;
 
     const textRef = anno.type === "highlight" ? anno.text_ref : (anno as Annotation & { text_ref?: string }).text_ref;
     const note = anno.type === "highlight" ? anno.note : anno.type === "note" || anno.type === "summary" ? anno.note : "";
-    const label = anno.type === "tag" ? anno.label : anno.type === "bookmark" ? anno.label : "";
-    const body = [textRef, note, label].filter(Boolean).join(" — ");
+    const body = [textRef, note].filter(Boolean).join(" — ");
+
+    item.title = body || "Click to scroll";
+    item.addEventListener("click", () => {
+      const el = contentOutput.querySelector(`[data-section-id="${anno.section_id}"]`);
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
 
     item.innerHTML = `<span class="anno-icon"${color ? ` style="color:${color}"` : ""}>${typeIcon}</span><span class="anno-text">${escapeHtml(body || "(empty)")}</span>`;
     list.append(item);
@@ -822,7 +822,7 @@ function renderAnnotationSidebar(): void {
 function toggleAnnotationType(container: HTMLElement, type: string, visible: boolean): void {
   const items = Array.from(container.querySelectorAll(`.annotation-item[data-type="${type}"]`));
   for (const item of items) {
-    (item as HTMLElement).hidden = !visible;
+    (item as HTMLElement).style.display = visible ? "" : "none";
   }
 }
 
@@ -840,7 +840,6 @@ function showAnnotationToolbar(selection: Selection, sectionEl: HTMLElement): vo
   toolbar.innerHTML = `
     <button data-action="highlight">Highlight</button>
     <button data-action="note">Note</button>
-    <button data-action="tag">Tag</button>
   `;
   for (const btn of Array.from(toolbar.querySelectorAll("button"))) {
     btn.addEventListener("click", async () => {
@@ -925,9 +924,8 @@ function buildExportMarkdown(markdown: string, annotations: Annotation[]): strin
     parts.push(`### ${type.charAt(0).toUpperCase() + type.slice(1)}s`, "");
     for (const anno of annos) {
       const textRef = anno.type === "highlight" ? anno.text_ref : (anno as Annotation & { text_ref?: string }).text_ref;
-      const note = anno.type === "highlight" ? anno.note : anno.type === "note" || anno.type === "summary" ? anno.note : "";
-      const label = anno.type === "tag" ? anno.label : anno.type === "bookmark" ? anno.label : "";
-      const body = [textRef, note, label].filter(Boolean).join(" — ");
+      const noteText2 = anno.type === "highlight" ? anno.note : anno.type === "note" || anno.type === "summary" ? anno.note : "";
+      const body = [textRef, noteText2].filter(Boolean).join(" — ");
       parts.push(`- [${type}] ${body || "(empty)"}`);
     }
     parts.push("");
