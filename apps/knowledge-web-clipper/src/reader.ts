@@ -68,9 +68,9 @@ annotationPanelToggle.addEventListener("click", () => {
   annotationPanelToggle.dataset.collapsed = collapsed ? "false" : "true";
   annotationPanelToggle.textContent = collapsed ? "◀" : "▶";
   annotationPanelToggle.title = collapsed ? "Hide annotations" : "Show annotations";
-  annotationBody.hidden = collapsed;
-  annotationPanel.classList.toggle("collapsed", collapsed);
-  readerLayout.classList.toggle("annot-visible", !collapsed);
+  annotationBody.hidden = !collapsed;
+  annotationPanel.classList.toggle("collapsed", !collapsed);
+  readerLayout.classList.toggle("annot-visible", collapsed);
 });
 
 copyButton.addEventListener("click", async () => {
@@ -650,9 +650,6 @@ function wrapTextInElement(
   }
   if (textRemaining.length > 0) return;
 
-  const parentNode = nodes[0]?.parentNode;
-  if (!parentNode) return;
-
   const mark = document.createElement("mark");
   mark.className = "annotation-highlight";
   mark.dataset.annotationId = annotationId;
@@ -663,23 +660,31 @@ function wrapTextInElement(
   });
 
   let targetRemaining = searchText;
+  let insertionRef: Node | null = null;
   for (const node of nodes) {
     const nodeText = node.textContent ?? "";
     if (targetRemaining.length >= nodeText.length) {
       mark.append(node.cloneNode(true));
-      if (node.parentNode) node.parentNode.replaceChild(document.createTextNode(""), node);
+      if (node.parentNode) {
+        const empty = document.createTextNode("");
+        node.parentNode.replaceChild(empty, node);
+        if (!insertionRef) insertionRef = empty;
+      }
       targetRemaining = targetRemaining.slice(nodeText.length);
     } else {
       const before = node.splitText(targetRemaining.length);
       mark.append(node.cloneNode(true));
-      if (node.parentNode) node.parentNode.replaceChild(before, node);
+      if (node.parentNode) {
+        node.parentNode.replaceChild(before, node);
+        if (!insertionRef) insertionRef = before;
+      }
       targetRemaining = "";
       break;
     }
   }
 
-  if (mark.childNodes.length > 0) {
-    parentNode.insertBefore(mark, parentNode.firstChild);
+  if (mark.childNodes.length > 0 && insertionRef) {
+    insertionRef.parentNode!.insertBefore(mark, insertionRef);
   }
 }
 
