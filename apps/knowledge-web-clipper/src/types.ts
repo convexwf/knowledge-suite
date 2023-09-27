@@ -318,7 +318,6 @@ export interface SummaryAnnotation {
   section_id: string;
   note: string;
   ai_model: string;
-  summary_level: "chapter" | "paragraph" | "document";
   created_at: string;
   updated_at: string;
   orphaned?: boolean;

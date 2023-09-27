@@ -3308,6 +3308,6 @@ function getAiModel(annotation: Annotation): string | null {
   return annotation.type === "summary" ? annotation.ai_model : null;
 }
 
-function getSummaryLevel(annotation: Annotation): string | null {
-  return annotation.type === "summary" ? annotation.summary_level : null;
+function getSummaryLevel(_annotation: Annotation): string | null {
+  return null;
 }

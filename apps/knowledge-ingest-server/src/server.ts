@@ -1,6 +1,7 @@
 import cors from "@fastify/cors";
 import fastify from "fastify";
 import {
+  AIAnnotationGenerateRequestSchema,
   AnnotationSchema,
   BatchDiscoverRequestSchema,
   BatchJobCreateRequestSchema,
@@ -15,6 +16,8 @@ import {
   StoreClearParsedRequestSchema,
   StoreClearRequestSchema
 } from "@uknowledge/knowledge-schema";
+import { createAIProvider } from "./ai-annotation/provider.js";
+import { generateSummaries } from "./ai-annotation/generate.js";
 import { loadConfig, ServerConfig } from "./config.js";
 import { parseEpub, type CalibreMetadata, type PandocRunner } from "./epub.js";
 import { ResolvedInput, resolveClipInput } from "./input.js";
@@ -188,6 +191,68 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
     await store.deleteAnnotation(docId, params.annotationId);
     return { deleted: true, annotation_id: params.annotationId };
   });
+
+  const aiEnabled = process.env.KNOWLEDGE_AI_ENABLED === "true";
+  if (aiEnabled) {
+    const aiModel = process.env.KNOWLEDGE_AI_OLLAMA_MODEL ?? "qwen2.5:7b";
+    const aiProvider = createAIProvider({
+      enabled: true,
+      provider: process.env.KNOWLEDGE_AI_PROVIDER ?? "ollama",
+      model: aiModel,
+    });
+
+    app.post("/api/documents/:docId/ai-annotations", async (request, reply) => {
+      const params = request.params as { docId: string };
+      const body = AIAnnotationGenerateRequestSchema.parse(request.body);
+      const types = body.types ?? ["summary"];
+      const force = body.force ?? false;
+
+      const document = await store.loadDocument(params.docId);
+      if (!document) {
+        reply.code(404);
+        return { error: "Document not found" };
+      }
+
+      const sections = document.sections;
+      let headingIds = body.section_ids;
+      if (!headingIds || headingIds.length === 0) {
+        headingIds = sections
+          .filter((s) => s.type === "heading" && s.section_id)
+          .map((s) => s.section_id!);
+      }
+
+      // Validate: summary requires heading sections
+      if (types.includes("summary")) {
+        const invalidIds = headingIds.filter((id) => {
+          const s = sections.find((sec) => sec.section_id === id);
+          return !s || s.type !== "heading";
+        });
+        if (invalidIds.length > 0) {
+          reply.code(400);
+          return { error: `summary requires heading sections, invalid: ${invalidIds.join(", ")}` };
+        }
+      }
+
+      const results = await generateSummaries(
+        aiProvider,
+        store,
+        document,
+        aiModel,
+        headingIds,
+        force
+      );
+
+      const generated = results.filter((r) => !r.hit_cache).length;
+      const skipped = results.length - generated;
+
+      return {
+        doc_id: params.docId,
+        generated,
+        skipped,
+        results,
+      };
+    });
+  }
 
   app.get("/api/assets/:assetId", async (request, reply) => {
     const params = request.params as { assetId: string };
