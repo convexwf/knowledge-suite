@@ -1,4 +1,6 @@
 import {
+  AIAnnotationGenerateRequest,
+  AIAnnotationGenerateResult,
   Annotation,
   AnnotationDeleteResult,
   AnnotationListResult,
@@ -80,6 +82,7 @@ export interface KnowledgeApiClient {
   annotations(docId: string): Promise<AnnotationListResult>;
   saveAnnotation(docId: string, annotation: Annotation): Promise<AnnotationSaveResult>;
   deleteAnnotation(docId: string, annotationId: string): Promise<AnnotationDeleteResult>;
+  generateAIAnnotations(docId: string, body: AIAnnotationGenerateRequest): Promise<AIAnnotationGenerateResult>;
 }
 
 export function createKnowledgeApiClient(settings: ExtensionSettings): KnowledgeApiClient {
@@ -288,6 +291,14 @@ export function createKnowledgeApiClient(settings: ExtensionSettings): Knowledge
       `/api/documents/${encodeURIComponent(docId)}/annotations/${encodeURIComponent(annotationId)}`,
       undefined,
       options
+    ),
+    generateAIAnnotations: (docId, body) => request<AIAnnotationGenerateResult>(
+      baseUrl,
+      settings.token,
+      "POST",
+      `/api/documents/${encodeURIComponent(docId)}/ai-annotations`,
+      body,
+      { timeoutMs: 300000 }
     ),
   };
 }

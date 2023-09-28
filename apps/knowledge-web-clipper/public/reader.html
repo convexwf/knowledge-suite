@@ -18,6 +18,7 @@
           <button id="back-to-items" type="button">Items</button>
           <button id="copy-markdown" type="button">Copy Markdown</button>
           <button id="reparse-item" type="button">Reparse</button>
+          <button id="ai-summarize" type="button">AI Summary</button>
         </div>
       </header>
 
@@ -41,6 +42,24 @@
         </aside>
       </section>
     </main>
+    <div id="ai-dialog" class="ai-dialog" hidden>
+      <div class="ai-dialog-content">
+        <h2>Generate AI Summaries</h2>
+        <p class="ai-dialog-desc">Select headings to summarize. Summary scope covers the heading and all its sub-sections.</p>
+        <div id="ai-heading-list" class="ai-heading-list"></div>
+        <div id="ai-progress" class="ai-progress" hidden>
+          <span id="ai-progress-text"></span>
+          <progress id="ai-progress-bar" value="0" max="100"></progress>
+        </div>
+        <div class="ai-dialog-actions">
+          <button id="ai-select-all" type="button">Select All H1</button>
+          <button id="ai-deselect-all" type="button">Deselect All</button>
+          <button id="ai-generate" type="button">Generate</button>
+          <button id="ai-cancel" type="button">Cancel</button>
+        </div>
+      </div>
+    </div>
+    <div id="ai-overlay" class="ai-overlay" hidden></div>
     <button id="back-to-top" class="back-to-top" type="button" hidden>Back to top</button>
     <script type="module" src="reader.js"></script>
   </body>

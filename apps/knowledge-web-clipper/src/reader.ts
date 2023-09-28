@@ -17,6 +17,17 @@ const annotationPanelToggle = mustGet<HTMLButtonElement>("annotation-panel-toggl
 const annotationBody = mustGet<HTMLElement>("annotation-body");
 const annotationPanel = mustGet<HTMLElement>("annotation-panel");
 const readerLayout = mustGet<HTMLElement>("reader-layout");
+const aiSummarizeBtn = mustGet<HTMLButtonElement>("ai-summarize");
+const aiDialog = mustGet<HTMLElement>("ai-dialog");
+const aiOverlay = mustGet<HTMLElement>("ai-overlay");
+const aiHeadingList = mustGet<HTMLElement>("ai-heading-list");
+const aiProgress = mustGet<HTMLElement>("ai-progress");
+const aiProgressText = mustGet<HTMLElement>("ai-progress-text");
+const aiProgressBar = mustGet<HTMLProgressElement>("ai-progress-bar");
+const aiGenerateBtn = mustGet<HTMLButtonElement>("ai-generate");
+const aiCancelBtn = mustGet<HTMLButtonElement>("ai-cancel");
+const aiSelectAllBtn = mustGet<HTMLButtonElement>("ai-select-all");
+const aiDeselectAllBtn = mustGet<HTMLButtonElement>("ai-deselect-all");
 
 const settings = await getSettings();
 const client = createKnowledgeApiClient(settings);
@@ -117,6 +128,13 @@ document.addEventListener("click", (e) => {
     removeAnnotationToolbar();
   }
 });
+
+aiSummarizeBtn.addEventListener("click", () => openAIDialog());
+aiCancelBtn.addEventListener("click", closeAIDialog);
+aiOverlay.addEventListener("click", closeAIDialog);
+aiSelectAllBtn.addEventListener("click", () => setAllCheckboxes(true));
+aiDeselectAllBtn.addEventListener("click", () => setAllCheckboxes(false));
+aiGenerateBtn.addEventListener("click", () => { void runAISummarize(); });
 
 globalThis.addEventListener("unload", () => {
   for (const url of objectUrls) {
@@ -610,6 +628,81 @@ async function loadAndApplyAnnotations(): Promise<void> {
   }
 }
 
+function openAIDialog(): void {
+  aiDialog.hidden = false;
+  aiOverlay.hidden = false;
+  aiProgress.hidden = true;
+  aiGenerateBtn.disabled = false;
+  populateHeadingList();
+}
+
+function closeAIDialog(): void {
+  aiDialog.hidden = true;
+  aiOverlay.hidden = true;
+}
+
+function setAllCheckboxes(checked: boolean): void {
+  const boxes = Array.from(aiHeadingList.querySelectorAll<HTMLInputElement>("input[type=checkbox]"));
+  for (const box of boxes) box.checked = checked;
+}
+
+function populateHeadingList(): void {
+  aiHeadingList.replaceChildren();
+  const headings = Array.from(contentOutput.querySelectorAll<HTMLHeadingElement>("h1, h2, h3"));
+  const existingSummaryIds = new Set(
+    currentAnnotations.filter((a) => a.type === "summary").map((a) => a.section_id)
+  );
+
+  for (const h of headings) {
+    const sectionId = h.dataset.sectionId;
+    if (!sectionId) continue;
+    const level = parseInt(h.tagName[1], 10);
+    const row = document.createElement("label");
+    row.className = `ai-heading-item level-${level}`;
+    if (existingSummaryIds.has(sectionId)) {
+      row.classList.add("has-summary");
+    }
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.value = sectionId;
+    checkbox.checked = level <= 2 && !existingSummaryIds.has(sectionId);
+    row.append(checkbox, h.textContent?.slice(0, 60) ?? sectionId);
+    aiHeadingList.append(row);
+  }
+}
+
+async function runAISummarize(): Promise<void> {
+  const checked = Array.from(
+    aiHeadingList.querySelectorAll<HTMLInputElement>("input[type=checkbox]:checked")
+  );
+  if (checked.length === 0) return;
+  const sectionIds = checked.map((c) => c.value);
+
+  aiGenerateBtn.disabled = true;
+  aiProgress.hidden = false;
+  aiProgressBar.value = 0;
+  aiProgressBar.max = sectionIds.length;
+  aiProgressText.textContent = `Generating 0 / ${sectionIds.length}...`;
+
+  try {
+    const result = await client.generateAIAnnotations(currentDocId, {
+      types: ["summary"],
+      section_ids: sectionIds,
+      force: false,
+    });
+
+    aiProgressBar.value = result.generated + result.skipped;
+    aiProgressText.textContent = `Done: ${result.generated} generated, ${result.skipped} skipped.`;
+
+    await loadAndApplyAnnotations();
+    populateHeadingList();
+  } catch (error) {
+    aiProgressText.textContent = `Error: ${error instanceof Error ? error.message : String(error)}`;
+  } finally {
+    aiGenerateBtn.disabled = false;
+  }
+}
+
 function applyHighlightOverlays(container: HTMLElement, annotations: Annotation[]): void {
   for (const anno of annotations) {
     if (anno.type !== "highlight" && anno.type !== "note") continue;
@@ -800,10 +893,29 @@ function renderAnnotationSidebar(): void {
 
   const list = document.createElement("div");
   list.className = "annotation-list";
+
+  const sectionLevels = new Map<string, number>();
+  if (currentDocument) {
+    for (const s of currentDocument.sections) {
+      if (s.type === "heading") {
+        const sid = s.section_id as string | undefined;
+        const lv = s.level as number | undefined;
+        if (sid && typeof lv === "number") {
+          sectionLevels.set(sid, lv);
+        }
+      }
+    }
+  }
+
   for (const anno of currentAnnotations) {
     const item = document.createElement("div");
     item.className = "annotation-item";
     item.dataset.type = anno.type;
+
+    if (anno.type === "summary") {
+      const level = sectionLevels.get(anno.section_id);
+      if (level) item.classList.add(`summary-level-${level}`);
+    }
 
     const typeIcons: Record<string, string> = {"highlight":"◆","note":"✎","summary":"◈","tag":"#","bookmark":"★"};
     const typeIcon = typeIcons[anno.type] ?? "•";

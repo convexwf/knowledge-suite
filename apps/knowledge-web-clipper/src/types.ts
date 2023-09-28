@@ -370,6 +370,35 @@ export interface AnnotationDeleteResult {
   annotation_id: string;
 }
 
+export interface AIAnnotationGenerateRequest {
+  types?: string[];
+  section_ids?: string[];
+  force?: boolean;
+}
+
+export interface AIAnnotationResultItem {
+  type: string;
+  annotation_id?: string;
+  annotation_ids?: string[];
+  section_id: string;
+  heading_text?: string;
+  heading_level?: number;
+  content?: string;
+  labels?: string[];
+  text_refs?: string[];
+  validated?: number;
+  ai_model?: string;
+  hit_cache: boolean;
+  strategy: string;
+}
+
+export interface AIAnnotationGenerateResult {
+  doc_id: string;
+  generated: number;
+  skipped: number;
+  results: AIAnnotationResultItem[];
+}
+
 export interface ClipStatusResult {
   normalizedUrl: string;
   urlHash: string;
