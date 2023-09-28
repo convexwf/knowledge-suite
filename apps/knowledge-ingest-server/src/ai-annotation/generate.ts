@@ -14,7 +14,8 @@ export async function generateSummaries(
   document: KnowledgeDocument,
   model: string,
   headingSectionIds: string[],
-  force: boolean
+  force: boolean,
+  abortSignal?: AbortSignal
 ): Promise<AIAnnotationResultItem[]> {
   const sections = document.sections;
   const docId = document.doc_id;
@@ -23,6 +24,8 @@ export async function generateSummaries(
   const results: AIAnnotationResultItem[] = [];
 
   for (const sectionId of headingSectionIds) {
+    if (abortSignal?.aborted) break;
+
     const idx = sections.findIndex((s) => s.section_id === sectionId);
     if (idx === -1 || sections[idx].type !== "heading") continue;
 
@@ -62,9 +65,10 @@ export async function generateSummaries(
         scopeText,
         systemPrompt: SUMMARY_SYSTEM_PROMPT,
         maxTokens: 500,
+        signal: abortSignal,
       });
     } else {
-      response = await twoPassSummarize(provider, heading, scopeText);
+      response = await twoPassSummarize(provider, heading, scopeText, abortSignal);
     }
 
     const annotationId = makeId();
@@ -98,24 +102,27 @@ export async function generateSummaries(
 async function twoPassSummarize(
   provider: AIAnnotationProvider,
   heading: { content?: string; level?: number },
-  scopeText: string
+  scopeText: string,
+  abortSignal?: AbortSignal
 ): Promise<AIAnnotationResponse> {
   const chunks = splitIntoChunks(scopeText);
-  const chunkSummaries: string[] = [];
 
-  for (const chunk of chunks) {
-    const resp = await provider.generate({
-      headingText: "",
-      headingLevel: 0,
-      scopeText: chunk,
-      systemPrompt: CHUNK_SUMMARY_PROMPT,
-      maxTokens: 150,
-    });
-    chunkSummaries.push(resp.text);
-  }
+  // Map phase: summarize chunks concurrently
+  const chunkResults = await Promise.all(
+    chunks.map((chunk) =>
+      provider.generate({
+        headingText: "",
+        headingLevel: 0,
+        scopeText: chunk,
+        systemPrompt: CHUNK_SUMMARY_PROMPT,
+        maxTokens: 150,
+        signal: abortSignal,
+      })
+    )
+  );
 
-  const combined = chunkSummaries
-    .map((s, i) => `[段${i + 1}] ${s}`)
+  const combined = chunkResults
+    .map((r, i) => `[段${i + 1}] ${r.text}`)
     .join("\n\n");
 
   return provider.generate({
@@ -124,5 +131,6 @@ async function twoPassSummarize(
     scopeText: combined,
     systemPrompt: SUMMARY_SYSTEM_PROMPT,
     maxTokens: 500,
+    signal: abortSignal,
   });
 }

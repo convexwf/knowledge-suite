@@ -8,6 +8,7 @@ export interface AIAnnotationRequest {
   scopeText: string;
   systemPrompt: string;
   maxTokens: number;
+  signal?: AbortSignal;
 }
 
 export interface AIAnnotationResponse {

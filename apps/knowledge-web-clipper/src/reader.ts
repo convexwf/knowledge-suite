@@ -40,6 +40,7 @@ let currentItem: KnowledgeItem | undefined;
 let currentAnnotations: Annotation[] = [];
 let currentDocId = "";
 const objectUrls = new Set<string>();
+let aiAbortController: AbortController | null = null;
 
 backButton.addEventListener("click", () => {
   void openKnowledgePage("items.html");
@@ -642,6 +643,10 @@ function openAIDialog(): void {
 }
 
 function closeAIDialog(): void {
+  if (aiAbortController) {
+    aiAbortController.abort();
+    aiAbortController = null;
+  }
   aiDialog.hidden = true;
   aiOverlay.hidden = true;
 }
@@ -735,25 +740,39 @@ async function runAISummarize(): Promise<void> {
 
   aiGenerateBtn.disabled = true;
   aiProgress.hidden = false;
-  aiProgressBar.value = 0;
   aiProgressBar.max = sectionIds.length;
+  let completed = 0;
+  aiProgressBar.value = 0;
   aiProgressText.textContent = `Generating 0 / ${sectionIds.length}...`;
+  const BATCH_SIZE = 1;
+  aiAbortController = new AbortController();
+  const signal = aiAbortController.signal;
 
   try {
-    const result = await client.generateAIAnnotations(currentDocId, {
-      types: ["summary"],
-      section_ids: sectionIds,
-      force: false,
-    });
+    for (let i = 0; i < sectionIds.length; i += BATCH_SIZE) {
+      const batch = sectionIds.slice(i, i + BATCH_SIZE);
+      const result = await client.generateAIAnnotations(currentDocId, {
+        types: ["summary"],
+        section_ids: batch,
+        force: false,
+      }, signal);
+      completed += result.generated + result.skipped;
+      aiProgressBar.value = completed;
+      aiProgressText.textContent = `Generating ${completed} / ${sectionIds.length}...`;
+    }
 
-    aiProgressBar.value = result.generated + result.skipped;
-    aiProgressText.textContent = `Done: ${result.generated} generated, ${result.skipped} skipped.`;
+    aiProgressText.textContent = `Done: ${completed} summaries processed.`;
 
     await loadAndApplyAnnotations();
     populateHeadingList();
   } catch (error) {
-    aiProgressText.textContent = `Error: ${error instanceof Error ? error.message : String(error)}`;
+    if (error instanceof DOMException && error.name === "AbortError") {
+      aiProgressText.textContent = "Cancelled.";
+    } else {
+      aiProgressText.textContent = `Error: ${error instanceof Error ? error.message : String(error)}`;
+    }
   } finally {
+    aiAbortController = null;
     aiGenerateBtn.disabled = false;
   }
 }

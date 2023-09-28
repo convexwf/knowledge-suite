@@ -52,7 +52,10 @@ export class OllamaProvider implements AIAnnotationProvider {
             },
           ],
         }),
-        signal: AbortSignal.timeout(this.config.timeoutMs),
+        signal: AbortSignal.any([
+          AbortSignal.timeout(this.config.timeoutMs),
+          ...(request.signal ? [request.signal] : []),
+        ]),
       }
     );
 

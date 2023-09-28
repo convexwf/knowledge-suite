@@ -207,6 +207,27 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
       const types = body.types ?? ["summary"];
       const force = body.force ?? false;
 
+      // Pre-check: verify Ollama is reachable and model is available
+      const ollamaBaseUrl = process.env.KNOWLEDGE_AI_OLLAMA_BASE_URL ?? "http://localhost:11434";
+      try {
+        const healthResp = await fetch(`${ollamaBaseUrl}/v1/models`, {
+          signal: AbortSignal.timeout(10000),
+        });
+        if (!healthResp.ok) {
+          reply.code(503);
+          return { error: `Ollama not available (status ${healthResp.status})` };
+        }
+        const healthData = await healthResp.json() as { data?: Array<{ id: string }> };
+        const models = healthData.data?.map((m: { id: string }) => m.id) ?? [];
+        if (!models.includes(aiModel)) {
+          reply.code(503);
+          return { error: `Model "${aiModel}" not found in Ollama. Available: ${models.join(", ")}` };
+        }
+      } catch (err) {
+        reply.code(503);
+        return { error: `Cannot reach Ollama at ${ollamaBaseUrl}: ${err instanceof Error ? err.message : String(err)}` };
+      }
+
       const document = await store.loadDocument(params.docId);
       if (!document) {
         reply.code(404);
@@ -239,7 +260,8 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
         document,
         aiModel,
         headingIds,
-        force
+        force,
+        request.signal
       );
 
       const generated = results.filter((r) => !r.hit_cache).length;

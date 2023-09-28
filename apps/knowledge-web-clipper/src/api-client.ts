@@ -82,7 +82,7 @@ export interface KnowledgeApiClient {
   annotations(docId: string): Promise<AnnotationListResult>;
   saveAnnotation(docId: string, annotation: Annotation): Promise<AnnotationSaveResult>;
   deleteAnnotation(docId: string, annotationId: string): Promise<AnnotationDeleteResult>;
-  generateAIAnnotations(docId: string, body: AIAnnotationGenerateRequest): Promise<AIAnnotationGenerateResult>;
+  generateAIAnnotations(docId: string, body: AIAnnotationGenerateRequest, signal?: AbortSignal): Promise<AIAnnotationGenerateResult>;
 }
 
 export function createKnowledgeApiClient(settings: ExtensionSettings): KnowledgeApiClient {
@@ -292,13 +292,13 @@ export function createKnowledgeApiClient(settings: ExtensionSettings): Knowledge
       undefined,
       options
     ),
-    generateAIAnnotations: (docId, body) => request<AIAnnotationGenerateResult>(
+    generateAIAnnotations: (docId, body, signal) => request<AIAnnotationGenerateResult>(
       baseUrl,
       settings.token,
       "POST",
       `/api/documents/${encodeURIComponent(docId)}/ai-annotations`,
       body,
-      { timeoutMs: 300000 }
+      { timeoutMs: 300000, signal }
     ),
   };
 }
@@ -309,10 +309,21 @@ async function request<T>(
   method: "DELETE" | "GET" | "POST",
   path: string,
   body?: unknown,
-  options?: { timeoutMs: number }
+  options?: { timeoutMs: number; signal?: AbortSignal }
 ): Promise<T> {
   const abortController = new AbortController();
   const timeout = globalThis.setTimeout(() => abortController.abort(), options?.timeoutMs ?? 15000);
+
+  // Merge external signal with internal timeout
+  const externalSignal = options?.signal;
+  if (externalSignal) {
+    if (externalSignal.aborted) {
+      globalThis.clearTimeout(timeout);
+      throw new DOMException("Aborted", "AbortError");
+    }
+    externalSignal.addEventListener("abort", () => abortController.abort(), { once: true });
+  }
+
   let response: Response;
   try {
     response = await fetch(`${baseUrl}${path}`, {
