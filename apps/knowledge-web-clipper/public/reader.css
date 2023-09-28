@@ -668,6 +668,10 @@ h2 {
   z-index: 500;
 }
 
+.ai-overlay[hidden] {
+  display: none;
+}
+
 .ai-dialog {
   position: fixed;
   top: 50%;
@@ -681,6 +685,10 @@ h2 {
   max-height: 80vh;
   display: flex;
   flex-direction: column;
+}
+
+.ai-dialog[hidden] {
+  display: none;
 }
 
 .ai-dialog-content {

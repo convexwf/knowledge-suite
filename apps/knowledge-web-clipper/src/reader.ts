@@ -147,6 +147,7 @@ await loadReader();
 async function loadReader(): Promise<void> {
   showMessage("Loading document...");
   reparseButton.disabled = !itemId;
+  aiSummarizeBtn.disabled = true;
   try {
     if (itemId) {
       const detail = await client.item(itemId);
@@ -179,6 +180,7 @@ async function loadReader(): Promise<void> {
     copyButton.disabled = !currentMarkdown;
 
     currentDocId = currentDocument.doc_id;
+    aiSummarizeBtn.disabled = false;
     await loadAndApplyAnnotations();
   } catch (error) {
     showMessage(error instanceof Error ? error.message : String(error));
@@ -188,6 +190,7 @@ async function loadReader(): Promise<void> {
 
 async function reparseCurrentItem(value: string): Promise<void> {
   reparseButton.disabled = true;
+  aiSummarizeBtn.disabled = true;
   showMessage("Reparsing EPUB...");
   try {
     const result = await client.reparseItem(value);
@@ -200,6 +203,7 @@ async function reparseCurrentItem(value: string): Promise<void> {
     copyButton.disabled = false;
 
     currentDocId = currentDocument.doc_id;
+    aiSummarizeBtn.disabled = false;
     await loadAndApplyAnnotations();
     const warnings = (result as unknown as Record<string, unknown>).annotationWarnings as
       | { orphanedCount: number; orphanedAnnotations: Array<{ annotation_id: string; type: string; section_id: string; text_ref?: string; label?: string }> }
@@ -649,6 +653,12 @@ function setAllCheckboxes(checked: boolean): void {
 function populateHeadingList(): void {
   aiHeadingList.replaceChildren();
   const headings = Array.from(contentOutput.querySelectorAll<HTMLHeadingElement>("h1, h2, h3"));
+  if (headings.length === 0) {
+    aiHeadingList.append(documentCreate("span", "No headings found in this document."));
+    aiGenerateBtn.disabled = true;
+    return;
+  }
+  aiGenerateBtn.disabled = false;
   const existingSummaryIds = new Set(
     currentAnnotations.filter((a) => a.type === "summary").map((a) => a.section_id)
   );
