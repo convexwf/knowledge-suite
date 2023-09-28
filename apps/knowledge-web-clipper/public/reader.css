@@ -831,3 +831,47 @@ h2 {
   padding-left: 16px;
   opacity: 0.85;
 }
+
+.summary-indicator {
+  display: inline-block;
+  color: #4869d6;
+  font-size: 14px;
+  cursor: pointer;
+  margin-right: 6px;
+  vertical-align: middle;
+  opacity: 0.7;
+  transition: opacity 0.15s;
+  user-select: none;
+}
+
+.summary-indicator:hover {
+  opacity: 1;
+}
+
+.summary-inline-popup {
+  position: absolute;
+  z-index: 150;
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.12);
+  width: 320px;
+  max-width: 90vw;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.summary-inline-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 10px;
+  border-bottom: 1px solid #eee;
+  font-weight: 500;
+  color: #4869d6;
+}
+
+.summary-inline-body {
+  padding: 10px;
+  color: #333;
+}

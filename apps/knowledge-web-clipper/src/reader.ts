@@ -1,7 +1,7 @@
 import { createKnowledgeApiClient } from "./api-client.js";
 import { getSettings } from "./settings.js";
 import { openKnowledgePage } from "./tabs.js";
-import { Annotation, KnowledgeDocument, KnowledgeItem } from "./types.js";
+import { Annotation, KnowledgeDocument, KnowledgeItem, SummaryAnnotation } from "./types.js";
 
 const titleOutput = mustGet<HTMLElement>("reader-title");
 const kickerOutput = mustGet<HTMLElement>("reader-kicker");
@@ -626,6 +626,7 @@ async function loadAndApplyAnnotations(): Promise<void> {
     const result = await client.annotations(currentDocId);
     currentAnnotations = result.annotations.filter((a) => !a.orphaned);
     applyHighlightOverlays(contentOutput, currentAnnotations);
+    applySummaryIndicators();
     renderAnnotationSidebar();
   } catch {
     currentAnnotations = [];
@@ -647,7 +648,13 @@ function closeAIDialog(): void {
 
 function setAllCheckboxes(checked: boolean): void {
   const boxes = Array.from(aiHeadingList.querySelectorAll<HTMLInputElement>("input[type=checkbox]"));
-  for (const box of boxes) box.checked = checked;
+  const isTopLevel = (cb: HTMLInputElement) => cb.dataset.level === "1";
+  const topBoxes = boxes.filter(isTopLevel);
+  const targets = topBoxes.length > 0 ? topBoxes : boxes;
+  for (const box of targets) {
+    box.checked = checked;
+    box.dispatchEvent(new Event("change"));
+  }
 }
 
 function populateHeadingList(): void {
@@ -663,6 +670,7 @@ function populateHeadingList(): void {
     currentAnnotations.filter((a) => a.type === "summary").map((a) => a.section_id)
   );
 
+  const rows: Array<{ checkbox: HTMLInputElement; level: number }> = [];
   for (const h of headings) {
     const sectionId = h.dataset.sectionId;
     if (!sectionId) continue;
@@ -675,9 +683,46 @@ function populateHeadingList(): void {
     const checkbox = document.createElement("input");
     checkbox.type = "checkbox";
     checkbox.value = sectionId;
+    checkbox.dataset.level = String(level);
     checkbox.checked = level <= 2 && !existingSummaryIds.has(sectionId);
+    checkbox.addEventListener("change", () => cascadeCheck(checkbox, rows));
     row.append(checkbox, h.textContent?.slice(0, 60) ?? sectionId);
     aiHeadingList.append(row);
+    rows.push({ checkbox, level });
+  }
+}
+
+function cascadeCheck(changed: HTMLInputElement, rows: Array<{ checkbox: HTMLInputElement; level: number }>): void {
+  const changedIdx = rows.findIndex((r) => r.checkbox === changed);
+  if (changedIdx === -1) return;
+  const targetLevel = rows[changedIdx].level;
+  const checked = changed.checked;
+
+  // Forward: set all deeper-level checkboxes until we hit same or higher level
+  for (let i = changedIdx + 1; i < rows.length; i++) {
+    if (rows[i].level <= targetLevel) break;
+    rows[i].checkbox.checked = checked;
+  }
+
+  // Backward: if this was unchecked, also uncheck any parent that now has no checked children
+  if (!checked) {
+    let parentLevel = targetLevel - 1;
+    for (let i = changedIdx - 1; i >= 0; i--) {
+      if (rows[i].level < parentLevel && rows[i].checkbox.checked) {
+        // Check if this parent still has any checked children
+        let hasCheckedChild = false;
+        for (let j = i + 1; j < rows.length; j++) {
+          if (rows[j].level <= rows[i].level) break;
+          if (rows[j].checkbox.checked) { hasCheckedChild = true; break; }
+        }
+        if (!hasCheckedChild) {
+          rows[i].checkbox.checked = false;
+          parentLevel = rows[i].level - 1;
+        } else {
+          break;
+        }
+      }
+    }
   }
 }
 
@@ -837,6 +882,61 @@ function showAnnotationPopup(annotationId: string, anchor: HTMLElement): void {
     renderAnnotationSidebar();
   });
 
+  const outsideClick = (e: MouseEvent) => {
+    if (!popup.contains(e.target as Node) && e.target !== anchor) {
+      popup.remove();
+      document.removeEventListener("click", outsideClick);
+    }
+  };
+  globalThis.setTimeout(() => document.addEventListener("click", outsideClick), 0);
+
+  anchor.insertAdjacentElement("afterend", popup);
+}
+
+function applySummaryIndicators(): void {
+  // Remove old indicators
+  for (const old of Array.from(contentOutput.querySelectorAll(".summary-indicator"))) {
+    old.remove();
+  }
+
+  const summaries = currentAnnotations.filter((a) => a.type === "summary");
+  for (const anno of summaries) {
+    const el = contentOutput.querySelector(`[data-section-id="${anno.section_id}"]`);
+    if (!el || el.querySelector(".summary-indicator")) continue;
+
+    const icon = document.createElement("span");
+    icon.className = "summary-indicator";
+    icon.textContent = "◈";
+    icon.title = "AI Summary";
+    icon.addEventListener("click", (e) => {
+      e.stopPropagation();
+      showSummaryInlinePopup(anno.section_id, icon);
+    });
+    el.insertBefore(icon, el.firstChild);
+  }
+}
+
+function showSummaryInlinePopup(sectionId: string, anchor: HTMLElement): void {
+  // Close any existing summary popup
+  const existing = document.querySelector(".summary-inline-popup");
+  if (existing?.parentNode) existing.remove();
+
+  const anno = currentAnnotations.find(
+    (a): a is SummaryAnnotation => a.type === "summary" && a.section_id === sectionId
+  );
+  if (!anno) return;
+
+  const popup = document.createElement("div");
+  popup.className = "summary-inline-popup";
+  popup.innerHTML = `
+    <div class="summary-inline-header">
+      <span>AI Summary</span>
+      <span style="font-size:10px;opacity:0.6">${escapeHtml(anno.ai_model ?? "")}</span>
+    </div>
+    <div class="summary-inline-body">${escapeHtml(anno.note ?? "")}</div>
+  `;
+
+  const closePopup = () => popup.remove();
   const outsideClick = (e: MouseEvent) => {
     if (!popup.contains(e.target as Node) && e.target !== anchor) {
       popup.remove();
