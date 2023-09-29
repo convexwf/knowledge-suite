@@ -480,6 +480,11 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
       pandocRunner: config.epubPandocRunner
     });
     try {
+      // Delete old derived artifacts before preparing new ones,
+      // otherwise shared assets (same hash) get deleted after copy.
+      if (oldDocId) {
+        await store.deleteDerivedArtifacts(oldDocId);
+      }
       const documentWithAssets = await store.prepareDocumentAssets(parsed.document);
       const markdown = documentToMarkdown(documentWithAssets);
       const rawdoc = {
