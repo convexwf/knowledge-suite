@@ -2540,7 +2540,7 @@ export class KnowledgeStore {
     };
   }
 
-  private async deleteDerivedArtifacts(docId: string): Promise<string[]> {
+  async deleteDerivedArtifacts(docId: string): Promise<string[]> {
     const deletedFiles: string[] = [];
     const assetPaths = await this.assetPathsForDocument(docId);
     const relativePaths = [
