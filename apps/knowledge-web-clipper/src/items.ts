@@ -173,7 +173,7 @@ function itemRow(item: KnowledgeItem): HTMLElement {
   const purgeButton = button("Purge", "danger-button", () => {
     void deleteItem(item, "purge");
   });
-  actions.append(detailsButton, readButton, reparseButton, removeButton, purgeButton);
+  actions.append(detailsButton, readButton, annotateButton, reparseButton, removeButton, purgeButton);
 
   const details = itemDetails(item);
   details.hidden = true;
