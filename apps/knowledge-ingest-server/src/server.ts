@@ -192,6 +192,14 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
     return { deleted: true, annotation_id: params.annotationId };
   });
 
+  app.delete("/api/documents/:docId/annotations", async (request) => {
+    const params = request.params as { docId: string };
+    const before = await store.loadAnnotations(params.docId);
+    const count = before.length;
+    await store.deleteAnnotationsForDoc(params.docId);
+    return { deleted: true, doc_id: params.docId, count };
+  });
+
   const aiEnabled = process.env.KNOWLEDGE_AI_ENABLED === "true";
   if (aiEnabled) {
     const aiModel = process.env.KNOWLEDGE_AI_OLLAMA_MODEL ?? "qwen2.5:7b";

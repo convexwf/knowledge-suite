@@ -2,6 +2,7 @@ import {
   AIAnnotationGenerateRequest,
   AIAnnotationGenerateResult,
   Annotation,
+  AnnotationDeleteAllResult,
   AnnotationDeleteResult,
   AnnotationListResult,
   AnnotationSaveResult,
@@ -82,6 +83,7 @@ export interface KnowledgeApiClient {
   annotations(docId: string): Promise<AnnotationListResult>;
   saveAnnotation(docId: string, annotation: Annotation): Promise<AnnotationSaveResult>;
   deleteAnnotation(docId: string, annotationId: string): Promise<AnnotationDeleteResult>;
+  deleteAnnotationsForDoc(docId: string): Promise<AnnotationDeleteAllResult>;
   generateAIAnnotations(docId: string, body: AIAnnotationGenerateRequest, signal?: AbortSignal): Promise<AIAnnotationGenerateResult>;
 }
 
@@ -289,6 +291,14 @@ export function createKnowledgeApiClient(settings: ExtensionSettings): Knowledge
       settings.token,
       "DELETE",
       `/api/documents/${encodeURIComponent(docId)}/annotations/${encodeURIComponent(annotationId)}`,
+      undefined,
+      options
+    ),
+    deleteAnnotationsForDoc: (docId) => request<AnnotationDeleteAllResult>(
+      baseUrl,
+      settings.token,
+      "DELETE",
+      `/api/documents/${encodeURIComponent(docId)}/annotations`,
       undefined,
       options
     ),

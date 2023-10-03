@@ -370,6 +370,12 @@ export interface AnnotationDeleteResult {
   annotation_id: string;
 }
 
+export interface AnnotationDeleteAllResult {
+  deleted: boolean;
+  doc_id: string;
+  count: number;
+}
+
 export interface AIAnnotationGenerateRequest {
   types?: string[];
   section_ids?: string[];

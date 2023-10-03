@@ -12,6 +12,8 @@ const files = [
   ["public/items.css", "dist/items.css"],
   ["public/reader.html", "dist/reader.html"],
   ["public/reader.css", "dist/reader.css"],
+  ["public/annotations.html", "dist/annotations.html"],
+  ["public/annotations.css", "dist/annotations.css"],
   ["../../node_modules/katex/dist/katex.min.css", "dist/vendor/katex/katex.min.css"],
   ["../../node_modules/katex/dist/katex.min.js", "dist/vendor/katex/katex.min.js"],
   ["../../node_modules/katex/dist/fonts", "dist/vendor/katex/fonts"],

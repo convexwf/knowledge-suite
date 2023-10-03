@@ -159,6 +159,10 @@ function itemRow(item: KnowledgeItem): HTMLElement {
   detailsButton.setAttribute("aria-expanded", "false");
   const readButton = button("Read", "primary-button", () => openReader(item.itemId));
   readButton.disabled = item.state !== "parsed" || !item.activeDocId;
+  const annotateButton = button("Annotations", "", () => {
+    void openKnowledgePage(`annotations.html?docId=${encodeURIComponent(item.activeDocId!)}&itemId=${encodeURIComponent(item.itemId)}`);
+  });
+  annotateButton.disabled = !item.activeDocId;
   const reparseButton = button("Reparse", "", () => {
     void reparseItem(item.itemId);
   });
