@@ -1,22 +1,19 @@
 import { createKnowledgeApiClient } from "./api-client.js";
 import { getSettings } from "./settings.js";
 import { openKnowledgePage } from "./tabs.js";
-import type { Annotation, AnnotationType } from "./types.js";
+import type { Annotation, AnnotationType, AnnotationDocSummary } from "./types.js";
 
 const settings = await getSettings();
 const client = createKnowledgeApiClient(settings);
 const query = new URLSearchParams(globalThis.location.search);
-const docId = query.get("docId") || "";
-const itemId = query.get("itemId") || undefined;
+const initialDocId = query.get("docId") || undefined;
 
 const backBtn = mustGet<HTMLButtonElement>("back-to-items");
-const titleEl = mustGet<HTMLHeadingElement>("anno-title");
-const subtitleEl = mustGet<HTMLElement>("anno-subtitle");
-const filterBar = mustGet<HTMLElement>("anno-filter");
-const deleteAllBtn = mustGet<HTMLButtonElement>("anno-delete-all");
-const listEl = mustGet<HTMLElement>("anno-list");
-const emptyEl = mustGet<HTMLElement>("anno-empty");
+const navList = mustGet<HTMLElement>("anno-nav-list");
+const detailEl = mustGet<HTMLElement>("anno-detail");
 
+let docs: AnnotationDocSummary[] = [];
+let currentDocId: string | null = null;
 let currentAnnotations: Annotation[] = [];
 let currentFilter: AnnotationType | "all" = "all";
 
@@ -24,38 +21,104 @@ backBtn.addEventListener("click", () => {
   void openKnowledgePage("items.html");
 });
 
-if (!docId) {
-  titleEl.textContent = "No document selected";
-  subtitleEl.textContent = "Open this page from the Items list.";
-} else {
-  await loadAnnotations();
+await loadDocs();
+
+async function loadDocs(): Promise<void> {
+  try {
+    const result = await client.listAnnotationDocs();
+    docs = result.docs;
+    renderNav();
+
+    if (initialDocId && docs.some((d) => d.doc_id === initialDocId)) {
+      selectDoc(initialDocId);
+    } else if (docs.length > 0) {
+      selectDoc(docs[0].doc_id);
+    }
+  } catch (error) {
+    navList.textContent = error instanceof Error ? error.message : "Failed to load";
+  }
 }
 
-async function loadAnnotations(): Promise<void> {
-  try {
-    // Try to get document title
-    let title = docId;
-    try {
-      const doc = await client.document(docId);
-      title = doc.meta.title || docId;
-    } catch {
-      // Document JSON may not exist (purged item)
-    }
-    titleEl.textContent = title;
-    subtitleEl.textContent = `doc_id: ${docId.slice(0, 8)}...`;
+function renderNav(): void {
+  navList.replaceChildren();
+  for (const doc of docs) {
+    const item = document.createElement("div");
+    item.className = "anno-nav-item" + (doc.doc_id === currentDocId ? " active" : "");
+    item.dataset.docId = doc.doc_id;
+    item.innerHTML = `
+      <span class="anno-nav-item-title">${escapeHtml(doc.title ?? doc.doc_id.slice(0, 8) + "...")}</span>
+      <span class="anno-nav-item-count">${doc.count}</span>
+    `;
+    item.addEventListener("click", () => selectDoc(doc.doc_id));
+    navList.append(item);
+  }
+}
 
-    const result = await client.annotations(docId);
-    currentAnnotations = result.annotations;
-    renderFilter();
-    renderList();
-  } catch (error) {
-    titleEl.textContent = "Error";
-    subtitleEl.textContent = error instanceof Error ? error.message : String(error);
+async function selectDoc(docId: string): Promise<void> {
+  currentDocId = docId;
+  renderNav();
+  try {
+    currentAnnotations = (await client.annotations(docId)).annotations;
+  } catch {
+    currentAnnotations = [];
+  }
+  currentFilter = "all";
+  renderDetail();
+}
+
+function renderDetail(): void {
+  const doc = docs.find((d) => d.doc_id === currentDocId);
+  if (!doc || !currentDocId) {
+    detailEl.innerHTML = `<div class="anno-detail-empty">Select a document to view annotations.</div>`;
+    return;
+  }
+
+  const title = doc.title ?? currentDocId.slice(0, 8) + "...";
+
+  detailEl.innerHTML = `
+    <div class="anno-detail-header">
+      <div class="anno-detail-title">${escapeHtml(title)}</div>
+      <div class="anno-detail-subtitle"><code>${currentDocId.slice(0, 8)}...</code> · ${currentAnnotations.length} annotations</div>
+    </div>
+    <div class="anno-toolbar">
+      <div class="anno-filter" id="anno-filter"></div>
+      <button class="anno-delete-all" id="anno-delete-all"${currentAnnotations.length === 0 ? " hidden" : ""}>Delete All ${currentAnnotations.length}</button>
+    </div>
+    <div class="anno-list" id="anno-list"></div>
+    <div class="anno-detail-empty" id="anno-empty"${currentAnnotations.length > 0 ? " hidden" : ""}>No annotations for this document.</div>
+  `;
+
+  setupDetailHandlers();
+  renderFilter();
+  renderList();
+}
+
+function setupDetailHandlers(): void {
+  const deleteAllBtn = detailEl.querySelector("#anno-delete-all") as HTMLButtonElement | null;
+  if (deleteAllBtn) {
+    deleteAllBtn.addEventListener("click", async () => {
+      if (!currentDocId) return;
+      if (!confirm(`Delete all ${currentAnnotations.length} annotations for this document?`)) return;
+      try {
+        await client.deleteAnnotationsForDoc(currentDocId);
+        currentAnnotations = [];
+        // Update doc summary
+        const doc = docs.find((d) => d.doc_id === currentDocId);
+        if (doc) { doc.count = 0; doc.types = {}; }
+        renderNav();
+        renderDetail();
+      } catch (error) {
+        alert(`Delete failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    });
   }
 }
 
 function renderFilter(): void {
-  filterBar.replaceChildren();
+  const filterBar = detailEl.querySelector("#anno-filter");
+  if (!filterBar) return;
+  filterBar.innerHTML = "";
+
   const counts = new Map<string, number>();
   counts.set("all", currentAnnotations.length);
   for (const a of currentAnnotations) {
@@ -76,27 +139,33 @@ function renderFilter(): void {
     });
     filterBar.append(btn);
   }
-
-  deleteAllBtn.hidden = currentAnnotations.length === 0;
-  deleteAllBtn.textContent = `Delete All ${currentAnnotations.length}`;
 }
 
 function renderList(): void {
-  listEl.replaceChildren();
+  const listEl = detailEl.querySelector("#anno-list");
+  const emptyEl = detailEl.querySelector("#anno-empty");
+  if (!listEl || !emptyEl) return;
+
+  listEl.innerHTML = "";
   const filtered = currentFilter === "all"
     ? currentAnnotations
     : currentAnnotations.filter((a) => a.type === currentFilter);
 
   if (filtered.length === 0) {
-    emptyEl.hidden = currentAnnotations.length > 0;
-    listEl.style.display = "none";
+    emptyEl.removeAttribute("hidden");
     return;
   }
-  emptyEl.hidden = true;
-  listEl.style.display = "";
+  emptyEl.setAttribute("hidden", "");
 
   for (const anno of filtered) {
     listEl.append(renderCard(anno));
+  }
+
+  // Update delete all count
+  const deleteAllBtn = detailEl.querySelector("#anno-delete-all") as HTMLButtonElement | null;
+  if (deleteAllBtn) {
+    deleteAllBtn.textContent = `Delete All ${currentAnnotations.length}`;
+    deleteAllBtn.hidden = currentAnnotations.length === 0;
   }
 }
 
@@ -135,10 +204,17 @@ function renderCard(anno: Annotation): HTMLElement {
 
   const deleteBtn = card.querySelector(".anno-card-delete") as HTMLButtonElement;
   deleteBtn.addEventListener("click", async () => {
+    if (!currentDocId) return;
     if (!confirm(`Delete this ${anno.type} annotation?`)) return;
     try {
-      await client.deleteAnnotation(docId, anno.annotation_id);
+      await client.deleteAnnotation(currentDocId, anno.annotation_id);
       currentAnnotations = currentAnnotations.filter((a) => a.annotation_id !== anno.annotation_id);
+      const doc = docs.find((d) => d.doc_id === currentDocId);
+      if (doc) {
+        doc.count = Math.max(0, doc.count - 1);
+        doc.types[anno.type] = Math.max(0, (doc.types[anno.type] ?? 1) - 1);
+      }
+      renderNav();
       renderFilter();
       renderList();
     } catch (error) {
@@ -148,18 +224,6 @@ function renderCard(anno: Annotation): HTMLElement {
 
   return card;
 }
-
-deleteAllBtn.addEventListener("click", async () => {
-  if (!confirm(`Delete all ${currentAnnotations.length} annotations for this document?`)) return;
-  try {
-    const result = await client.deleteAnnotationsForDoc(docId);
-    currentAnnotations = [];
-    renderFilter();
-    renderList();
-  } catch (error) {
-    alert(`Delete failed: ${error instanceof Error ? error.message : String(error)}`);
-  }
-});
 
 function mustGet<T extends HTMLElement>(id: string): T {
   const el = document.getElementById(id);

@@ -5,41 +5,119 @@ body {
   background: #f5f5f5;
   color: #333;
   font-size: 14px;
+  height: 100vh;
+  overflow: hidden;
 }
 
-.anno-shell {
-  max-width: 720px;
-  margin: 0 auto;
-  padding: 20px;
+.anno-layout {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  height: 100vh;
 }
 
-.anno-header {
+/* ---- Left Nav ---- */
+.anno-nav {
+  background: #fff;
+  border-right: 1px solid #e0e0e0;
   display: flex;
-  align-items: flex-start;
-  gap: 16px;
-  margin-bottom: 16px;
+  flex-direction: column;
+  overflow: hidden;
 }
 
-.anno-header button {
+.anno-nav-header {
+  padding: 16px;
+  border-bottom: 1px solid #eee;
   flex-shrink: 0;
-  font-size: 13px;
-  padding: 6px 12px;
-  border: 1px solid #ccc;
+}
+
+.anno-nav-header button {
+  font-size: 12px;
+  padding: 3px 8px;
+  border: 1px solid #ddd;
   border-radius: 4px;
   background: #fff;
   cursor: pointer;
+  margin-bottom: 6px;
 }
 
-.anno-title-block h1 {
+.anno-nav-header h2 {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.anno-nav-list {
+  overflow-y: auto;
+  flex: 1;
+}
+
+.anno-nav-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 16px;
+  cursor: pointer;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.anno-nav-item:hover {
+  background: #f5f5f5;
+}
+
+.anno-nav-item.active {
+  background: #e8efff;
+  border-left: 3px solid #4869d6;
+}
+
+.anno-nav-item-title {
+  font-size: 13px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.anno-nav-item-count {
+  font-size: 11px;
+  color: #999;
+  margin-left: 8px;
+  flex-shrink: 0;
+}
+
+/* ---- Right Detail ---- */
+.anno-detail {
+  overflow-y: auto;
+  padding: 20px;
+}
+
+.anno-detail-empty {
+  text-align: center;
+  padding: 60px 20px;
+  color: #999;
+  font-size: 14px;
+}
+
+.anno-detail-header {
+  margin-bottom: 16px;
+}
+
+.anno-detail-title {
   font-size: 18px;
   font-weight: 600;
-  word-break: break-all;
 }
 
-.anno-title-block p {
+.anno-detail-subtitle {
   font-size: 12px;
   color: #888;
-  margin-top: 2px;
+  margin-top: 4px;
+}
+
+.anno-detail-subtitle code {
+  font-size: 11px;
+  background: #f0f0f0;
+  padding: 1px 4px;
+  border-radius: 2px;
 }
 
 .anno-toolbar {
@@ -163,9 +241,11 @@ body {
   border-color: #e88;
 }
 
-.anno-empty {
-  text-align: center;
-  padding: 40px 0;
-  color: #999;
-  font-size: 14px;
+@media (max-width: 640px) {
+  .anno-layout {
+    grid-template-columns: 1fr;
+  }
+  .anno-nav {
+    display: none;
+  }
 }

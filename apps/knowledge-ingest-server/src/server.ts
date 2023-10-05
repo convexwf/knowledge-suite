@@ -200,6 +200,10 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
     return { deleted: true, doc_id: params.docId, count };
   });
 
+  app.get("/api/annotations", async () => {
+    return { docs: await store.listAnnotationDocs() };
+  });
+
   const aiEnabled = process.env.KNOWLEDGE_AI_ENABLED === "true";
   if (aiEnabled) {
     const aiModel = process.env.KNOWLEDGE_AI_OLLAMA_MODEL ?? "qwen2.5:7b";

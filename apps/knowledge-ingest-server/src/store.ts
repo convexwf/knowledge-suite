@@ -941,6 +941,40 @@ export class KnowledgeStore {
     this.deleteAnnotationSqliteForDoc(docId);
   }
 
+  async listAnnotationDocs(): Promise<Array<{ doc_id: string; title: string | null; count: number; types: Record<string, number> }>> {
+    await this.ensure();
+    const dir = resolveInsideRoot(this.root, "annotations");
+    let files: string[];
+    try {
+      files = await readdir(dir);
+    } catch {
+      return [];
+    }
+    const results: Array<{ doc_id: string; title: string | null; count: number; types: Record<string, number> }> = [];
+    for (const name of files) {
+      if (!name.endsWith(".annotations.json")) continue;
+      const docId = name.slice(0, -".annotations.json".length);
+      try {
+        const annos = await this.loadAnnotations(docId);
+        const types: Record<string, number> = {};
+        for (const a of annos) {
+          types[a.type] = (types[a.type] ?? 0) + 1;
+        }
+        let title: string | null = null;
+        try {
+          const doc = await this.loadDocument(docId);
+          title = doc.meta.title;
+        } catch {
+          // document JSON may not exist
+        }
+        results.push({ doc_id: docId, title, count: annos.length, types });
+      } catch {
+        // skip unreadable files
+      }
+    }
+    return results;
+  }
+
   close(): void {
     this.database?.close();
     this.database = undefined;

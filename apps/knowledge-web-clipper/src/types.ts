@@ -376,6 +376,17 @@ export interface AnnotationDeleteAllResult {
   count: number;
 }
 
+export interface AnnotationDocSummary {
+  doc_id: string;
+  title: string | null;
+  count: number;
+  types: Record<string, number>;
+}
+
+export interface AnnotationDocListResult {
+  docs: AnnotationDocSummary[];
+}
+
 export interface AIAnnotationGenerateRequest {
   types?: string[];
   section_ids?: string[];

@@ -7,23 +7,20 @@
     <link rel="stylesheet" href="annotations.css" />
   </head>
   <body>
-    <main class="anno-shell">
-      <header class="anno-header">
-        <button id="back-to-items" type="button">← Back to Items</button>
-        <div class="anno-title-block">
-          <h1 id="anno-title">Annotations</h1>
-          <p id="anno-subtitle"></p>
+    <div class="anno-layout">
+      <nav class="anno-nav">
+        <div class="anno-nav-header">
+          <button id="back-to-items" type="button">← Back</button>
+          <h2>Annotations</h2>
         </div>
-      </header>
-
-      <div id="anno-toolbar" class="anno-toolbar">
-        <div id="anno-filter" class="anno-filter"></div>
-        <button id="anno-delete-all" class="anno-delete-all danger-button" type="button" hidden>Delete All</button>
-      </div>
-
-      <div id="anno-list" class="anno-list" aria-live="polite"></div>
-      <div id="anno-empty" class="anno-empty" hidden>No annotations found for this document.</div>
-    </main>
+        <div id="anno-nav-list" class="anno-nav-list" role="listbox"></div>
+      </nav>
+      <main class="anno-detail" id="anno-detail">
+        <div class="anno-detail-empty">
+          Select a document from the left to view its annotations.
+        </div>
+      </main>
+    </div>
     <script type="module" src="annotations.js"></script>
   </body>
 </html>
