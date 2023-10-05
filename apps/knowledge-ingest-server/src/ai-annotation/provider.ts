@@ -28,7 +28,7 @@ export function createAIProvider(config: AIConfig): AIAnnotationProvider {
       return new OllamaProvider({
         baseUrl: process.env.KNOWLEDGE_AI_OLLAMA_BASE_URL ?? "http://localhost:11434",
         model: config.model,
-        temperature: Number(process.env.KNOWLEDGE_AI_OLLAMA_TEMPERATURE ?? 0.3),
+        temperature: Number(process.env.KNOWLEDGE_AI_OLLAMA_TEMPERATURE ?? 0.5),
         apiKey: process.env.KNOWLEDGE_AI_OLLAMA_API_KEY,
         timeoutMs: Number(process.env.KNOWLEDGE_AI_OLLAMA_TIMEOUT_MS ?? 60000),
       });
@@ -37,13 +37,17 @@ export function createAIProvider(config: AIConfig): AIAnnotationProvider {
   }
 }
 
-const MAX_TOKENS: Record<AIAnnotationType, number> = {
-  summary: 500,
-  tag: 100,
-  note: 300,
-  highlight: 400,
-};
-
-export function getMaxTokens(type: AIAnnotationType): number {
-  return MAX_TOKENS[type];
+export function getMaxTokens(type: AIAnnotationType, headingLevel?: number): number {
+  if (type === "summary" && headingLevel != null) {
+    if (headingLevel <= 1) return 400;
+    if (headingLevel === 2) return 250;
+    return 200;
+  }
+  const defaults: Record<AIAnnotationType, number> = {
+    summary: 500,
+    tag: 100,
+    note: 300,
+    highlight: 400,
+  };
+  return defaults[type];
 }
