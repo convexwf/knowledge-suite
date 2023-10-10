@@ -17,7 +17,7 @@ import {
   StoreClearRequestSchema
 } from "@uknowledge/knowledge-schema";
 import { createAIProvider } from "./ai-annotation/provider.js";
-import { generateSummaries } from "./ai-annotation/generate.js";
+import { taskManager } from "./ai-annotation/task.js";
 import { loadConfig, ServerConfig } from "./config.js";
 import { parseEpub, type CalibreMetadata, type PandocRunner } from "./epub.js";
 import { ResolvedInput, resolveClipInput } from "./input.js";
@@ -219,7 +219,7 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
       const types = body.types ?? ["summary"];
       const force = body.force ?? false;
 
-      // Pre-check: verify Ollama is reachable and model is available
+      // Pre-check Ollama
       const ollamaBaseUrl = process.env.KNOWLEDGE_AI_OLLAMA_BASE_URL ?? "http://localhost:11434";
       try {
         const healthResp = await fetch(`${ollamaBaseUrl}/v1/models`, {
@@ -246,18 +246,16 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
         return { error: "Document not found" };
       }
 
-      const sections = document.sections;
       let headingIds = body.section_ids;
       if (!headingIds || headingIds.length === 0) {
-        headingIds = sections
+        headingIds = document.sections
           .filter((s) => s.type === "heading" && s.section_id)
           .map((s) => s.section_id!);
       }
 
-      // Validate: summary requires heading sections
       if (types.includes("summary")) {
         const invalidIds = headingIds.filter((id) => {
-          const s = sections.find((sec) => sec.section_id === id);
+          const s = document.sections.find((sec) => sec.section_id === id);
           return !s || s.type !== "heading";
         });
         if (invalidIds.length > 0) {
@@ -266,25 +264,61 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
         }
       }
 
-      const results = await generateSummaries(
-        aiProvider,
-        store,
-        document,
-        aiModel,
-        headingIds,
-        force,
-        request.signal
+      const { task, replaced } = taskManager.createTask(
+        aiProvider, store, document, aiModel, headingIds, force
       );
+      void task.start();
 
-      const generated = results.filter((r) => !r.hit_cache).length;
-      const skipped = results.length - generated;
+      const state = task.toState();
+      return { ...state, ...(replaced ? { replaced } : {}) };
+    });
 
-      return {
-        doc_id: params.docId,
-        generated,
-        skipped,
-        results,
-      };
+    app.get("/api/tasks/:taskId", async (request, reply) => {
+      const params = request.params as { taskId: string };
+      const task = taskManager.getTask(params.taskId);
+      if (!task) {
+        reply.code(404);
+        return { error: "Task not found" };
+      }
+      return task.toState();
+    });
+
+    app.delete("/api/tasks/:taskId", async (request) => {
+      const params = request.params as { taskId: string };
+      const task = taskManager.getTask(params.taskId);
+      if (!task) return { cancelled: false, error: "Task not found" };
+      const completed = task.completed;
+      taskManager.cancelTask(params.taskId);
+      return { cancelled: true, task_id: params.taskId, completed };
+    });
+
+    app.patch("/api/tasks/:taskId/headings", async (request, reply) => {
+      const params = request.params as { taskId: string };
+      const body = request.body as { add?: string[]; remove?: string[] } | undefined;
+      const task = taskManager.getTask(params.taskId);
+      if (!task) { reply.code(404); return { error: "Task not found" }; }
+
+      let added = 0;
+      let removed = 0;
+      if (body?.add) added = task.addHeadings(body.add, false);
+      if (body?.remove) removed = task.removeHeadings(body.remove);
+      return { added, removed, state: task.toState() };
+    });
+
+    app.post("/api/tasks/:taskId/pause", async (request, reply) => {
+      const params = request.params as { taskId: string };
+      const task = taskManager.getTask(params.taskId);
+      if (!task) { reply.code(404); return { error: "Task not found" }; }
+      task.pause();
+      return task.toState();
+    });
+
+    app.post("/api/tasks/:taskId/resume", async (request, reply) => {
+      const params = request.params as { taskId: string };
+      const task = taskManager.getTask(params.taskId);
+      if (!task) { reply.code(404); return { error: "Task not found" }; }
+      task.resume();
+      return task.toState();
     });
   }
 
