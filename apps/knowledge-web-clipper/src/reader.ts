@@ -643,6 +643,8 @@ function openAIDialog(): void {
 }
 
 function closeAIDialog(): void {
+  const cleanup = (aiDialog as unknown as Record<string, unknown>)._pollCleanup as (() => void) | undefined;
+  if (cleanup) cleanup();
   if (aiAbortController) {
     aiAbortController.abort();
     aiAbortController = null;
@@ -740,40 +742,85 @@ async function runAISummarize(): Promise<void> {
 
   aiGenerateBtn.disabled = true;
   aiProgress.hidden = false;
-  aiProgressBar.max = sectionIds.length;
-  let completed = 0;
   aiProgressBar.value = 0;
-  aiProgressText.textContent = `Generating 0 / ${sectionIds.length}...`;
-  const BATCH_SIZE = 1;
-  aiAbortController = new AbortController();
-  const signal = aiAbortController.signal;
+  aiProgressText.textContent = "Creating task...";
 
   try {
-    for (let i = 0; i < sectionIds.length; i += BATCH_SIZE) {
-      const batch = sectionIds.slice(i, i + BATCH_SIZE);
-      const result = await client.generateAIAnnotations(currentDocId, {
-        types: ["summary"],
-        section_ids: batch,
-        force: false,
-      }, signal);
-      completed += result.generated + result.skipped;
-      aiProgressBar.value = completed;
-      aiProgressText.textContent = `Generating ${completed} / ${sectionIds.length}...`;
-    }
+    const task = await client.createAITask(currentDocId, {
+      types: ["summary"],
+      section_ids: sectionIds,
+      force: false,
+    });
 
-    aiProgressText.textContent = `Done: ${completed} summaries processed.`;
+    aiProgressBar.max = task.total;
+    aiProgressBar.value = task.completed + task.skipped;
+    aiProgressText.textContent = `Processing ${task.completed + task.skipped} / ${task.total}...`;
 
-    await loadAndApplyAnnotations();
-    populateHeadingList();
+    // Poll every 3 seconds
+    const pollInterval = globalThis.setInterval(async () => {
+      try {
+        const state = await client.getTask(task.task_id);
+        aiProgressBar.value = state.completed + state.skipped + state.failed;
+        aiProgressText.textContent = state.status === "running" && state.current_heading_text
+          ? `${state.current_heading_text.slice(0, 30)}... (${state.completed + state.skipped} / ${state.total})`
+          : `${state.status}: ${state.completed + state.skipped} / ${state.total}`;
+
+        // Update heading status indicators
+        updateHeadingStatus(state);
+
+        if (state.status === "done" || state.status === "cancelled") {
+          globalThis.clearInterval(pollInterval);
+          aiProgressText.textContent = state.status === "done"
+            ? `Done: ${state.completed} generated, ${state.skipped} skipped, ${state.failed} failed.`
+            : "Cancelled.";
+          aiGenerateBtn.disabled = false;
+          await loadAndApplyAnnotations();
+          populateHeadingList();
+        }
+      } catch {
+        // polling error, ignore
+      }
+    }, 3000);
+
+    // Store poll interval for cleanup
+    const cleanup = () => { globalThis.clearInterval(pollInterval); };
+    aiAbortController = new AbortController();
+    aiAbortController.signal.addEventListener("abort", () => {
+      cleanup();
+      void client.cancelTask(task.task_id);
+    });
+
+    // Also store for dialog close
+    (aiDialog as unknown as Record<string, unknown>)._pollCleanup = cleanup;
+    (aiDialog as unknown as Record<string, unknown>)._taskId = task.task_id;
+
   } catch (error) {
-    if (error instanceof DOMException && error.name === "AbortError") {
-      aiProgressText.textContent = "Cancelled.";
-    } else {
-      aiProgressText.textContent = `Error: ${error instanceof Error ? error.message : String(error)}`;
-    }
-  } finally {
-    aiAbortController = null;
+    aiProgressText.textContent = `Error: ${error instanceof Error ? error.message : String(error)}`;
     aiGenerateBtn.disabled = false;
+  }
+}
+
+function updateHeadingStatus(state: import("./types.js").TaskState): void {
+  const boxes = Array.from(aiHeadingList.querySelectorAll<HTMLInputElement>("input[type=checkbox]"));
+  for (const box of boxes) {
+    const sid = box.value;
+    const label = box.parentElement;
+    if (!label) continue;
+    // Remove old status
+    const oldStatus = label.querySelector(".heading-status");
+    if (oldStatus) oldStatus.remove();
+
+    let statusText = "";
+    if (state.completed_section_ids.includes(sid)) statusText = " ✅";
+    else if (state.failed_section_ids.includes(sid)) statusText = " ⚠️";
+    else if (sid === state.current_section_id) statusText = " 🔄";
+
+    if (statusText) {
+      const span = document.createElement("span");
+      span.className = "heading-status";
+      span.textContent = statusText;
+      label.append(span);
+    }
   }
 }
 

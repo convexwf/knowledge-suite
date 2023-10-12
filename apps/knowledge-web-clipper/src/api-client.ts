@@ -7,6 +7,7 @@ import {
   AnnotationDocListResult,
   AnnotationListResult,
   AnnotationSaveResult,
+  TaskState,
   ClipDeleteResult,
   ClipDeleteMode,
   ClipListResult,
@@ -87,6 +88,9 @@ export interface KnowledgeApiClient {
   deleteAnnotationsForDoc(docId: string): Promise<AnnotationDeleteAllResult>;
   listAnnotationDocs(): Promise<AnnotationDocListResult>;
   generateAIAnnotations(docId: string, body: AIAnnotationGenerateRequest, signal?: AbortSignal): Promise<AIAnnotationGenerateResult>;
+  createAITask(docId: string, body: AIAnnotationGenerateRequest): Promise<TaskState>;
+  getTask(taskId: string): Promise<TaskState>;
+  cancelTask(taskId: string): Promise<{ cancelled: boolean; task_id: string; completed: number }>;
 }
 
 export function createKnowledgeApiClient(settings: ExtensionSettings): KnowledgeApiClient {
@@ -319,6 +323,30 @@ export function createKnowledgeApiClient(settings: ExtensionSettings): Knowledge
       `/api/documents/${encodeURIComponent(docId)}/ai-annotations`,
       body,
       { timeoutMs: 300000, signal }
+    ),
+    createAITask: (docId, body) => request<TaskState>(
+      baseUrl,
+      settings.token,
+      "POST",
+      `/api/documents/${encodeURIComponent(docId)}/ai-annotations`,
+      body,
+      { timeoutMs: 30000 }
+    ),
+    getTask: (taskId) => request<TaskState>(
+      baseUrl,
+      settings.token,
+      "GET",
+      `/api/tasks/${encodeURIComponent(taskId)}`,
+      undefined,
+      options
+    ),
+    cancelTask: (taskId) => request<{ cancelled: boolean; task_id: string; completed: number }>(
+      baseUrl,
+      settings.token,
+      "DELETE",
+      `/api/tasks/${encodeURIComponent(taskId)}`,
+      undefined,
+      options
     ),
   };
 }

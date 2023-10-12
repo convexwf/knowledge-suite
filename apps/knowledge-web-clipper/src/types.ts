@@ -387,6 +387,22 @@ export interface AnnotationDocListResult {
   docs: AnnotationDocSummary[];
 }
 
+export interface TaskState {
+  task_id: string;
+  doc_id: string;
+  status: "running" | "paused" | "cancelled" | "done";
+  total: number;
+  skipped: number;
+  completed: number;
+  failed: number;
+  pending_section_ids: string[];
+  completed_section_ids: string[];
+  failed_section_ids: string[];
+  current_section_id: string | null;
+  current_heading_text: string | null;
+  replaced?: string;
+}
+
 export interface AIAnnotationGenerateRequest {
   types?: string[];
   section_ids?: string[];
