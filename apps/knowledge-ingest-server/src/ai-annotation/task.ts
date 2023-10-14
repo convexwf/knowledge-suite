@@ -69,10 +69,17 @@ class Task {
 
     this.pendingIds = [...headingMap.keys()];
 
-    if (!force) {
-      // Need to check cache — will be done async in start()
-    }
+    // Sort deepest first for hierarchical summarization (h3→h2→h1)
+    this.pendingIds.sort((a, b) => {
+      const la = headingMap.get(a)?.level ?? 1;
+      const lb = headingMap.get(b)?.level ?? 1;
+      return lb - la;
+    });
+
+    this.headingMap = headingMap;
   }
+
+  private headingMap: Map<string, { index: number; level: number; content: string }> = new Map();
 
   get total(): number {
     return this.pendingIds.length + this.completedIds.length + this.failedIds.length + this.skipped;
@@ -230,23 +237,22 @@ class Task {
     this.abortController.abort();
   }
 
+  cancelAndRemove(manager: { removeTask(taskId: string): void }): void {
+    this.cancel();
+    // Remove after a short delay to allow current heading to finish
+    setTimeout(() => manager.removeTask(this.task_id), 5000);
+  }
+
   addHeadings(sectionIds: string[], force: boolean): number {
     const sections = this.document.sections;
     const added: string[] = [];
     for (const sid of sectionIds) {
       const idx = sections.findIndex((s) => s.section_id === sid);
       if (idx === -1 || sections[idx].type !== "heading") continue;
-      // Don't add if already in completed/failed/pending
       if (this.completedIds.includes(sid) || this.failedIds.includes(sid) || this.pendingIds.includes(sid)) continue;
       added.push(sid);
     }
-
-    if (!force) {
-      // Filter cached — but we need async. For simplicity, add all and skip during processing.
-      // The start() method already handles cache filtering in processLoop via the same check.
-      // But since we're mid-task, we skip cache at add time here by checking existing annotations.
-    }
-
+    // Add at end — they'll be processed after current pending items
     this.pendingIds.push(...added);
     return added.length;
   }
@@ -303,9 +309,7 @@ class TaskManager {
   cancelTask(taskId: string): boolean {
     const task = this.tasks.get(taskId);
     if (!task) return false;
-    task.cancel();
-    this.tasks.delete(taskId);
-    this.docTasks.delete(task.doc_id);
+    task.cancelAndRemove(this);
     return true;
   }
 

@@ -41,6 +41,8 @@ let currentAnnotations: Annotation[] = [];
 let currentDocId = "";
 const objectUrls = new Set<string>();
 let aiAbortController: AbortController | null = null;
+let aiTaskId: string | null = null;
+let aiPollCleanup: (() => void) | null = null;
 
 backButton.addEventListener("click", () => {
   void openKnowledgePage("items.html");
@@ -639,10 +641,8 @@ function openAIDialog(): void {
   aiOverlay.hidden = false;
   aiGenerateBtn.disabled = false;
 
-  const storedTask = (aiDialog as unknown as Record<string, unknown>)._taskId as string | undefined;
-  if (storedTask) {
-    // Resume polling from existing task
-    resumeTaskPolling(storedTask);
+  if (aiTaskId) {
+    resumeTaskPolling(aiTaskId);
     return;
   }
 
@@ -651,8 +651,10 @@ function openAIDialog(): void {
 }
 
 function closeAIDialog(): void {
-  const cleanup = (aiDialog as unknown as Record<string, unknown>)._pollCleanup as (() => void) | undefined;
-  if (cleanup) cleanup();
+  if (aiPollCleanup) {
+    aiPollCleanup();
+    aiPollCleanup = null;
+  }
   aiAbortController = null;
   aiDialog.hidden = true;
   aiOverlay.hidden = true;
@@ -761,7 +763,7 @@ async function startTaskPolling(sectionIds: string[]): Promise<void> {
       force: false,
     });
 
-    (aiDialog as unknown as Record<string, unknown>)._taskId = task.task_id;
+    aiTaskId = task.task_id;
     beginPolling(task.task_id);
   } catch (error) {
     aiProgressText.textContent = `Error: ${error instanceof Error ? error.message : String(error)}`;
@@ -776,7 +778,7 @@ async function resumeTaskPolling(taskId: string): Promise<void> {
   try {
     const state = await client.getTask(taskId);
     if (state.status === "done" || state.status === "cancelled") {
-      (aiDialog as unknown as Record<string, unknown>)._taskId = undefined;
+      aiTaskId = null;
       aiProgress.hidden = true;
       aiGenerateBtn.disabled = false;
       await loadAndApplyAnnotations();
@@ -785,7 +787,7 @@ async function resumeTaskPolling(taskId: string): Promise<void> {
     }
     beginPolling(taskId);
   } catch {
-    (aiDialog as unknown as Record<string, unknown>)._taskId = undefined;
+    aiTaskId = null;
     aiProgress.hidden = true;
     aiGenerateBtn.disabled = false;
   }
@@ -806,8 +808,8 @@ function beginPolling(taskId: string): void {
 
       if (state.status === "done" || state.status === "cancelled") {
         globalThis.clearInterval(pollInterval);
-        (aiDialog as unknown as Record<string, unknown>)._taskId = undefined;
-        (aiDialog as unknown as Record<string, unknown>)._pollCleanup = undefined;
+        aiTaskId = null;
+        aiPollCleanup = null;
         aiGenerateBtn.disabled = false;
         await loadAndApplyAnnotations();
         populateHeadingList();
@@ -818,7 +820,7 @@ function beginPolling(taskId: string): void {
   }, 3000);
 
   const cleanup = () => { globalThis.clearInterval(pollInterval); };
-  (aiDialog as unknown as Record<string, unknown>)._pollCleanup = cleanup;
+  aiPollCleanup = cleanup;
 }
 
 function updateProgressFromState(state: import("./types.js").TaskState): void {
@@ -830,12 +832,12 @@ function updateProgressFromState(state: import("./types.js").TaskState): void {
 }
 
 async function cancelCurrentTask(): Promise<void> {
-  const taskId = (aiDialog as unknown as Record<string, unknown>)._taskId as string | undefined;
+  const taskId = aiTaskId;
   if (!taskId) return;
   try {
     await client.cancelTask(taskId);
   } catch { /* ignore */ }
-  (aiDialog as unknown as Record<string, unknown>)._taskId = undefined;
+  aiTaskId = null;
   aiProgress.hidden = true;
   aiGenerateBtn.disabled = false;
 }
