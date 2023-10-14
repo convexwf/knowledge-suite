@@ -131,7 +131,7 @@ document.addEventListener("click", (e) => {
 });
 
 aiSummarizeBtn.addEventListener("click", () => openAIDialog());
-aiCancelBtn.addEventListener("click", closeAIDialog);
+aiCancelBtn.addEventListener("click", () => { void cancelCurrentTask(); });
 aiOverlay.addEventListener("click", closeAIDialog);
 aiSelectAllBtn.addEventListener("click", () => setAllCheckboxes(true));
 aiDeselectAllBtn.addEventListener("click", () => setAllCheckboxes(false));
@@ -637,18 +637,23 @@ async function loadAndApplyAnnotations(): Promise<void> {
 function openAIDialog(): void {
   aiDialog.hidden = false;
   aiOverlay.hidden = false;
-  aiProgress.hidden = true;
   aiGenerateBtn.disabled = false;
+
+  const storedTask = (aiDialog as unknown as Record<string, unknown>)._taskId as string | undefined;
+  if (storedTask) {
+    // Resume polling from existing task
+    resumeTaskPolling(storedTask);
+    return;
+  }
+
+  aiProgress.hidden = true;
   populateHeadingList();
 }
 
 function closeAIDialog(): void {
   const cleanup = (aiDialog as unknown as Record<string, unknown>)._pollCleanup as (() => void) | undefined;
   if (cleanup) cleanup();
-  if (aiAbortController) {
-    aiAbortController.abort();
-    aiAbortController = null;
-  }
+  aiAbortController = null;
   aiDialog.hidden = true;
   aiOverlay.hidden = true;
 }
@@ -741,6 +746,10 @@ async function runAISummarize(): Promise<void> {
   const sectionIds = checked.map((c) => c.value);
 
   aiGenerateBtn.disabled = true;
+  startTaskPolling(sectionIds);
+}
+
+async function startTaskPolling(sectionIds: string[]): Promise<void> {
   aiProgress.hidden = false;
   aiProgressBar.value = 0;
   aiProgressText.textContent = "Creating task...";
@@ -752,52 +761,83 @@ async function runAISummarize(): Promise<void> {
       force: false,
     });
 
-    aiProgressBar.max = task.total;
-    aiProgressBar.value = task.completed + task.skipped;
-    aiProgressText.textContent = `Processing ${task.completed + task.skipped} / ${task.total}...`;
-
-    // Poll every 3 seconds
-    const pollInterval = globalThis.setInterval(async () => {
-      try {
-        const state = await client.getTask(task.task_id);
-        aiProgressBar.value = state.completed + state.skipped + state.failed;
-        aiProgressText.textContent = state.status === "running" && state.current_heading_text
-          ? `${state.current_heading_text.slice(0, 30)}... (${state.completed + state.skipped} / ${state.total})`
-          : `${state.status}: ${state.completed + state.skipped} / ${state.total}`;
-
-        // Update heading status indicators
-        updateHeadingStatus(state);
-
-        if (state.status === "done" || state.status === "cancelled") {
-          globalThis.clearInterval(pollInterval);
-          aiProgressText.textContent = state.status === "done"
-            ? `Done: ${state.completed} generated, ${state.skipped} skipped, ${state.failed} failed.`
-            : "Cancelled.";
-          aiGenerateBtn.disabled = false;
-          await loadAndApplyAnnotations();
-          populateHeadingList();
-        }
-      } catch {
-        // polling error, ignore
-      }
-    }, 3000);
-
-    // Store poll interval for cleanup
-    const cleanup = () => { globalThis.clearInterval(pollInterval); };
-    aiAbortController = new AbortController();
-    aiAbortController.signal.addEventListener("abort", () => {
-      cleanup();
-      void client.cancelTask(task.task_id);
-    });
-
-    // Also store for dialog close
-    (aiDialog as unknown as Record<string, unknown>)._pollCleanup = cleanup;
     (aiDialog as unknown as Record<string, unknown>)._taskId = task.task_id;
-
+    beginPolling(task.task_id);
   } catch (error) {
     aiProgressText.textContent = `Error: ${error instanceof Error ? error.message : String(error)}`;
     aiGenerateBtn.disabled = false;
   }
+}
+
+async function resumeTaskPolling(taskId: string): Promise<void> {
+  aiProgress.hidden = false;
+  aiProgressText.textContent = "Resuming...";
+  aiGenerateBtn.disabled = true;
+  try {
+    const state = await client.getTask(taskId);
+    if (state.status === "done" || state.status === "cancelled") {
+      (aiDialog as unknown as Record<string, unknown>)._taskId = undefined;
+      aiProgress.hidden = true;
+      aiGenerateBtn.disabled = false;
+      await loadAndApplyAnnotations();
+      populateHeadingList();
+      return;
+    }
+    beginPolling(taskId);
+  } catch {
+    (aiDialog as unknown as Record<string, unknown>)._taskId = undefined;
+    aiProgress.hidden = true;
+    aiGenerateBtn.disabled = false;
+  }
+}
+
+function beginPolling(taskId: string): void {
+  // Fetch initial state immediately
+  void client.getTask(taskId).then((state) => {
+    updateProgressFromState(state);
+    updateHeadingStatus(state);
+  });
+
+  const pollInterval = globalThis.setInterval(async () => {
+    try {
+      const state = await client.getTask(taskId);
+      updateProgressFromState(state);
+      updateHeadingStatus(state);
+
+      if (state.status === "done" || state.status === "cancelled") {
+        globalThis.clearInterval(pollInterval);
+        (aiDialog as unknown as Record<string, unknown>)._taskId = undefined;
+        (aiDialog as unknown as Record<string, unknown>)._pollCleanup = undefined;
+        aiGenerateBtn.disabled = false;
+        await loadAndApplyAnnotations();
+        populateHeadingList();
+      }
+    } catch {
+      // polling error, ignore
+    }
+  }, 3000);
+
+  const cleanup = () => { globalThis.clearInterval(pollInterval); };
+  (aiDialog as unknown as Record<string, unknown>)._pollCleanup = cleanup;
+}
+
+function updateProgressFromState(state: import("./types.js").TaskState): void {
+  aiProgressBar.max = state.total;
+  aiProgressBar.value = state.completed + state.skipped + state.failed;
+  aiProgressText.textContent = state.status === "running" && state.current_heading_text
+    ? `${state.current_heading_text.slice(0, 30)}... (${state.completed + state.skipped} / ${state.total})`
+    : `${state.status}: ${state.completed + state.skipped} / ${state.total}`;
+}
+
+async function cancelCurrentTask(): Promise<void> {
+  const taskId = (aiDialog as unknown as Record<string, unknown>)._taskId as string | undefined;
+  if (!taskId) return;
+  try {
+    await client.cancelTask(taskId);
+  } catch { /* ignore */ }
+  (aiDialog as unknown as Record<string, unknown>)._taskId = undefined;
+  aiProgress.hidden = true;
+  aiGenerateBtn.disabled = false;
 }
 
 function updateHeadingStatus(state: import("./types.js").TaskState): void {
