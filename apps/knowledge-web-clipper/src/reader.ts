@@ -639,13 +639,17 @@ async function loadAndApplyAnnotations(): Promise<void> {
 function openAIDialog(): void {
   aiDialog.hidden = false;
   aiOverlay.hidden = false;
-  aiGenerateBtn.disabled = false;
+  aiCancelBtn.disabled = true;
 
   if (aiTaskId) {
+    aiProgress.hidden = false;
+    aiCancelBtn.disabled = false;
+    aiGenerateBtn.disabled = true;
     resumeTaskPolling(aiTaskId);
     return;
   }
 
+  aiGenerateBtn.disabled = false;
   aiProgress.hidden = true;
   populateHeadingList();
 }
@@ -755,6 +759,7 @@ async function startTaskPolling(sectionIds: string[]): Promise<void> {
   aiProgress.hidden = false;
   aiProgressBar.value = 0;
   aiProgressText.textContent = "Creating task...";
+  aiCancelBtn.disabled = false;
 
   try {
     const task = await client.createAITask(currentDocId, {
@@ -768,6 +773,7 @@ async function startTaskPolling(sectionIds: string[]): Promise<void> {
   } catch (error) {
     aiProgressText.textContent = `Error: ${error instanceof Error ? error.message : String(error)}`;
     aiGenerateBtn.disabled = false;
+    aiCancelBtn.disabled = true;
   }
 }
 
@@ -781,15 +787,18 @@ async function resumeTaskPolling(taskId: string): Promise<void> {
       aiTaskId = null;
       aiProgress.hidden = true;
       aiGenerateBtn.disabled = false;
+      aiCancelBtn.disabled = true;
       await loadAndApplyAnnotations();
       populateHeadingList();
       return;
     }
+    aiCancelBtn.disabled = false;
     beginPolling(taskId);
   } catch {
     aiTaskId = null;
     aiProgress.hidden = true;
     aiGenerateBtn.disabled = false;
+    aiCancelBtn.disabled = true;
   }
 }
 
@@ -811,6 +820,7 @@ function beginPolling(taskId: string): void {
         aiTaskId = null;
         aiPollCleanup = null;
         aiGenerateBtn.disabled = false;
+        aiCancelBtn.disabled = true;
         await loadAndApplyAnnotations();
         populateHeadingList();
       }
@@ -834,10 +844,13 @@ function updateProgressFromState(state: import("./types.js").TaskState): void {
 async function cancelCurrentTask(): Promise<void> {
   const taskId = aiTaskId;
   if (!taskId) return;
+  aiCancelBtn.disabled = true;
+  aiProgressText.textContent = "Cancelling...";
   try {
     await client.cancelTask(taskId);
   } catch { /* ignore */ }
   aiTaskId = null;
+  aiPollCleanup = null;
   aiProgress.hidden = true;
   aiGenerateBtn.disabled = false;
 }
