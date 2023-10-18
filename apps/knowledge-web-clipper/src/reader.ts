@@ -732,7 +732,7 @@ function cascadeCheck(changed: HTMLInputElement, rows: Array<{ checkbox: HTMLInp
   const checked = changed.checked;
 
   if (checked) {
-    // Forward: check all deeper-level descendants
+    // Only cascade downward: check all deeper-level descendants
     for (let i = changedIdx + 1; i < rows.length; i++) {
       if (rows[i].level <= targetLevel) break;
       if (!rows[i].checkbox.checked) {
@@ -740,19 +740,8 @@ function cascadeCheck(changed: HTMLInputElement, rows: Array<{ checkbox: HTMLInp
         cascadeCheck(rows[i].checkbox, rows);
       }
     }
-    // Backward: check all shallower ancestors
-    let ancestorLevel = targetLevel - 1;
-    for (let i = changedIdx - 1; i >= 0; i--) {
-      if (rows[i].level === ancestorLevel) {
-        if (!rows[i].checkbox.checked) {
-          rows[i].checkbox.checked = true;
-          cascadeCheck(rows[i].checkbox, rows);
-        }
-        ancestorLevel--;
-      }
-    }
   } else {
-    // Unchecked: cascade uncheck to descendants
+    // Cascade down: uncheck all descendants
     for (let i = changedIdx + 1; i < rows.length; i++) {
       if (rows[i].level <= targetLevel) break;
       if (rows[i].checkbox.checked) {
@@ -760,24 +749,11 @@ function cascadeCheck(changed: HTMLInputElement, rows: Array<{ checkbox: HTMLInp
         cascadeCheck(rows[i].checkbox, rows);
       }
     }
-    // Uncheck ancestors if no siblings remain checked
-    let parentLevel = targetLevel - 1;
+    // Cascade up: unconditionally uncheck all ancestors
     for (let i = changedIdx - 1; i >= 0; i--) {
-      if (rows[i].level === parentLevel && rows[i].checkbox.checked) {
-        let hasCheckedSibling = false;
-        for (let j = i + 1; j < rows.length; j++) {
-          if (rows[j].level <= rows[i].level) break;
-          if (rows[j].checkbox.checked && rows[j].level > rows[i].level) {
-            hasCheckedSibling = true; break;
-          }
-        }
-        if (!hasCheckedSibling) {
-          rows[i].checkbox.checked = false;
-          cascadeCheck(rows[i].checkbox, rows);
-          parentLevel--;
-        } else {
-          break;
-        }
+      if (rows[i].level < targetLevel && rows[i].checkbox.checked) {
+        rows[i].checkbox.checked = false;
+        cascadeCheck(rows[i].checkbox, rows);
       }
     }
   }
