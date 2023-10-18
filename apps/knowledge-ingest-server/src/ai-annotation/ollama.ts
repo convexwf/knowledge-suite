@@ -40,6 +40,7 @@ export class OllamaProvider implements AIAnnotationProvider {
           model: this.config.model,
           temperature: this.config.temperature,
           max_tokens: request.maxTokens,
+          options: { num_ctx: 8192 },
           messages: [
             { role: "system", content: request.systemPrompt },
             {

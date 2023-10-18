@@ -688,11 +688,15 @@ function populateHeadingList(): void {
     currentAnnotations.filter((a) => a.type === "summary").map((a) => a.section_id)
   );
 
+  const skipLabels = /^(序|序言|前言|目录|参考文献|致谢|后记|附录|版权|书评|本书所获赞誉)$/;
+
   const rows: Array<{ checkbox: HTMLInputElement; level: number }> = [];
   for (const h of headings) {
     const sectionId = h.dataset.sectionId;
     if (!sectionId) continue;
     const level = parseInt(h.tagName[1], 10);
+    const label = h.textContent?.trim() ?? "";
+    const isGeneric = skipLabels.test(label);
     const row = document.createElement("label");
     row.className = `ai-heading-item level-${level}`;
     if (existingSummaryIds.has(sectionId)) {
@@ -702,9 +706,9 @@ function populateHeadingList(): void {
     checkbox.type = "checkbox";
     checkbox.value = sectionId;
     checkbox.dataset.level = String(level);
-    checkbox.checked = level <= 2 && !existingSummaryIds.has(sectionId);
+    checkbox.checked = level <= 2 && !existingSummaryIds.has(sectionId) && !isGeneric;
     checkbox.addEventListener("change", () => cascadeCheck(checkbox, rows));
-    row.append(checkbox, h.textContent?.slice(0, 60) ?? sectionId);
+    row.append(checkbox, label.slice(0, 60));
     aiHeadingList.append(row);
     rows.push({ checkbox, level });
   }
@@ -720,6 +724,7 @@ function cascadeCheck(changed: HTMLInputElement, rows: Array<{ checkbox: HTMLInp
   for (let i = changedIdx + 1; i < rows.length; i++) {
     if (rows[i].level <= targetLevel) break;
     rows[i].checkbox.checked = checked;
+    rows[i].checkbox.dispatchEvent(new Event("change"));
   }
 
   // Backward: if this was unchecked, also uncheck any parent that now has no checked children
@@ -727,7 +732,6 @@ function cascadeCheck(changed: HTMLInputElement, rows: Array<{ checkbox: HTMLInp
     let parentLevel = targetLevel - 1;
     for (let i = changedIdx - 1; i >= 0; i--) {
       if (rows[i].level < parentLevel && rows[i].checkbox.checked) {
-        // Check if this parent still has any checked children
         let hasCheckedChild = false;
         for (let j = i + 1; j < rows.length; j++) {
           if (rows[j].level <= rows[i].level) break;
@@ -735,6 +739,7 @@ function cascadeCheck(changed: HTMLInputElement, rows: Array<{ checkbox: HTMLInp
         }
         if (!hasCheckedChild) {
           rows[i].checkbox.checked = false;
+          rows[i].checkbox.dispatchEvent(new Event("change"));
           parentLevel = rows[i].level - 1;
         } else {
           break;
