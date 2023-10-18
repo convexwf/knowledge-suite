@@ -43,6 +43,7 @@ const objectUrls = new Set<string>();
 let aiAbortController: AbortController | null = null;
 let aiTaskId: string | null = null;
 let aiPollCleanup: (() => void) | null = null;
+let aiCascadeRows: Array<{ checkbox: HTMLInputElement; level: number }> = [];
 
 backButton.addEventListener("click", () => {
   void openKnowledgePage("items.html");
@@ -665,13 +666,22 @@ function closeAIDialog(): void {
 }
 
 function setAllCheckboxes(checked: boolean): void {
-  const boxes = Array.from(aiHeadingList.querySelectorAll<HTMLInputElement>("input[type=checkbox]"));
-  const isTopLevel = (cb: HTMLInputElement) => cb.dataset.level === "1";
-  const topBoxes = boxes.filter(isTopLevel);
-  const targets = topBoxes.length > 0 ? topBoxes : boxes;
-  for (const box of targets) {
-    box.checked = checked;
-    box.dispatchEvent(new Event("change"));
+  if (aiCascadeRows.length === 0) return;
+  // Toggle first h1 to trigger full cascade (both down and up via recursive events)
+  const firstH1 = aiCascadeRows.find((r) => r.level === 1);
+  if (firstH1) {
+    firstH1.checkbox.checked = checked;
+    cascadeCheck(firstH1.checkbox, aiCascadeRows);
+  } else {
+    // No h1 — toggle all with cascading
+    for (const r of aiCascadeRows) {
+      r.checkbox.checked = checked;
+    }
+    // Cascade from each top-level (shallowest) heading
+    const minLevel = Math.min(...aiCascadeRows.map((r) => r.level));
+    for (const r of aiCascadeRows.filter((r) => r.level === minLevel)) {
+      cascadeCheck(r.checkbox, aiCascadeRows);
+    }
   }
 }
 
@@ -707,11 +717,12 @@ function populateHeadingList(): void {
     checkbox.value = sectionId;
     checkbox.dataset.level = String(level);
     checkbox.checked = level <= 2 && !existingSummaryIds.has(sectionId) && !isGeneric;
-    checkbox.addEventListener("change", () => cascadeCheck(checkbox, rows));
+    checkbox.addEventListener("change", () => cascadeCheck(checkbox, aiCascadeRows));
     row.append(checkbox, label.slice(0, 60));
     aiHeadingList.append(row);
     rows.push({ checkbox, level });
   }
+  aiCascadeRows = rows;
 }
 
 function cascadeCheck(changed: HTMLInputElement, rows: Array<{ checkbox: HTMLInputElement; level: number }>): void {
@@ -720,27 +731,50 @@ function cascadeCheck(changed: HTMLInputElement, rows: Array<{ checkbox: HTMLInp
   const targetLevel = rows[changedIdx].level;
   const checked = changed.checked;
 
-  // Forward: set all deeper-level checkboxes until we hit same or higher level
-  for (let i = changedIdx + 1; i < rows.length; i++) {
-    if (rows[i].level <= targetLevel) break;
-    rows[i].checkbox.checked = checked;
-    rows[i].checkbox.dispatchEvent(new Event("change"));
-  }
-
-  // Backward: if this was unchecked, also uncheck any parent that now has no checked children
-  if (!checked) {
+  if (checked) {
+    // Forward: check all deeper-level descendants
+    for (let i = changedIdx + 1; i < rows.length; i++) {
+      if (rows[i].level <= targetLevel) break;
+      if (!rows[i].checkbox.checked) {
+        rows[i].checkbox.checked = true;
+        cascadeCheck(rows[i].checkbox, rows);
+      }
+    }
+    // Backward: check all shallower ancestors
+    let ancestorLevel = targetLevel - 1;
+    for (let i = changedIdx - 1; i >= 0; i--) {
+      if (rows[i].level === ancestorLevel) {
+        if (!rows[i].checkbox.checked) {
+          rows[i].checkbox.checked = true;
+          cascadeCheck(rows[i].checkbox, rows);
+        }
+        ancestorLevel--;
+      }
+    }
+  } else {
+    // Unchecked: cascade uncheck to descendants
+    for (let i = changedIdx + 1; i < rows.length; i++) {
+      if (rows[i].level <= targetLevel) break;
+      if (rows[i].checkbox.checked) {
+        rows[i].checkbox.checked = false;
+        cascadeCheck(rows[i].checkbox, rows);
+      }
+    }
+    // Uncheck ancestors if no siblings remain checked
     let parentLevel = targetLevel - 1;
     for (let i = changedIdx - 1; i >= 0; i--) {
-      if (rows[i].level < parentLevel && rows[i].checkbox.checked) {
-        let hasCheckedChild = false;
+      if (rows[i].level === parentLevel && rows[i].checkbox.checked) {
+        let hasCheckedSibling = false;
         for (let j = i + 1; j < rows.length; j++) {
           if (rows[j].level <= rows[i].level) break;
-          if (rows[j].checkbox.checked) { hasCheckedChild = true; break; }
+          if (rows[j].checkbox.checked && rows[j].level > rows[i].level) {
+            hasCheckedSibling = true; break;
+          }
         }
-        if (!hasCheckedChild) {
+        if (!hasCheckedSibling) {
           rows[i].checkbox.checked = false;
-          rows[i].checkbox.dispatchEvent(new Event("change"));
-          parentLevel = rows[i].level - 1;
+          cascadeCheck(rows[i].checkbox, rows);
+          parentLevel--;
         } else {
           break;
         }
