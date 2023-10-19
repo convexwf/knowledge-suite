@@ -1,4 +1,5 @@
 import { createKnowledgeApiClient } from "./api-client.js";
+import { applyCascadeSelection, normalizeHeadingSelections } from "./heading-cascade.js";
 import { getSettings } from "./settings.js";
 import { openKnowledgePage } from "./tabs.js";
 import { Annotation, KnowledgeDocument, KnowledgeItem, SummaryAnnotation } from "./types.js";
@@ -667,20 +668,22 @@ function closeAIDialog(): void {
 
 function setAllCheckboxes(checked: boolean): void {
   if (aiCascadeRows.length === 0) return;
-  // Toggle first h1 to trigger full cascade (both down and up via recursive events)
-  const firstH1 = aiCascadeRows.find((r) => r.level === 1);
-  if (firstH1) {
-    firstH1.checkbox.checked = checked;
-    cascadeCheck(firstH1.checkbox, aiCascadeRows);
-  } else {
-    // No h1 — toggle all with cascading
-    for (const r of aiCascadeRows) {
-      r.checkbox.checked = checked;
+  if (!checked) {
+    for (const row of aiCascadeRows) {
+      row.checkbox.checked = false;
     }
-    // Cascade from each top-level (shallowest) heading
-    const minLevel = Math.min(...aiCascadeRows.map((r) => r.level));
-    for (const r of aiCascadeRows.filter((r) => r.level === minLevel)) {
-      cascadeCheck(r.checkbox, aiCascadeRows);
+    return;
+  }
+
+  const rootLevel = aiCascadeRows.some((r) => r.level === 1)
+    ? 1
+    : Math.min(...aiCascadeRows.map((r) => r.level));
+  for (const row of aiCascadeRows) {
+    row.checkbox.checked = row.level === rootLevel;
+  }
+  for (const row of aiCascadeRows) {
+    if (row.level === rootLevel) {
+      cascadeCheck(row.checkbox, aiCascadeRows);
     }
   }
 }
@@ -723,39 +726,27 @@ function populateHeadingList(): void {
     rows.push({ checkbox, level });
   }
   aiCascadeRows = rows;
+  const normalized = normalizeHeadingSelections(rows.map((row) => ({
+    level: row.level,
+    checked: row.checkbox.checked
+  })));
+  for (let i = 0; i < aiCascadeRows.length; i++) {
+    aiCascadeRows[i].checkbox.checked = normalized[i].checked;
+  }
 }
 
 function cascadeCheck(changed: HTMLInputElement, rows: Array<{ checkbox: HTMLInputElement; level: number }>): void {
   const changedIdx = rows.findIndex((r) => r.checkbox === changed);
   if (changedIdx === -1) return;
-  const targetLevel = rows[changedIdx].level;
-  const checked = changed.checked;
-
-  if (checked) {
-    // Only cascade downward: check all deeper-level descendants
-    for (let i = changedIdx + 1; i < rows.length; i++) {
-      if (rows[i].level <= targetLevel) break;
-      if (!rows[i].checkbox.checked) {
-        rows[i].checkbox.checked = true;
-        cascadeCheck(rows[i].checkbox, rows);
-      }
-    }
-  } else {
-    // Cascade down: uncheck all descendants
-    for (let i = changedIdx + 1; i < rows.length; i++) {
-      if (rows[i].level <= targetLevel) break;
-      if (rows[i].checkbox.checked) {
-        rows[i].checkbox.checked = false;
-        cascadeCheck(rows[i].checkbox, rows);
-      }
-    }
-    // Cascade up: unconditionally uncheck all ancestors
-    for (let i = changedIdx - 1; i >= 0; i--) {
-      if (rows[i].level < targetLevel && rows[i].checkbox.checked) {
-        rows[i].checkbox.checked = false;
-        cascadeCheck(rows[i].checkbox, rows);
-      }
-    }
+  const next = applyCascadeSelection(
+    rows.map((row) => ({
+      level: row.level,
+      checked: row.checkbox.checked
+    })),
+    changedIdx
+  );
+  for (let i = 0; i < rows.length; i++) {
+    rows[i].checkbox.checked = next[i].checked;
   }
 }
 
