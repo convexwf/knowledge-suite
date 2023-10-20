@@ -269,7 +269,16 @@ async function renderMarkdown(markdown: string, target: HTMLElement): Promise<vo
       continue;
     }
 
+    if (/^(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) {
+      const hr = document.createElement("hr");
+      if (currentSectionId) hr.dataset.sectionId = currentSectionId;
+      target.append(hr);
+      index += 1;
+      continue;
+    }
+
     if (line.startsWith("```")) {
+      const lang = line.slice(3).trim();
       const codeLines: string[] = [];
       index += 1;
       while (index < lines.length && !lines[index].startsWith("```")) {
@@ -277,7 +286,7 @@ async function renderMarkdown(markdown: string, target: HTMLElement): Promise<vo
         index += 1;
       }
       index += 1;
-      const block = codeBlock(codeLines.join("\n"));
+      const block = codeBlock(codeLines.join("\n"), lang);
       if (currentSectionId) block.dataset.sectionId = currentSectionId;
       target.append(block);
       continue;
@@ -303,9 +312,17 @@ async function renderMarkdown(markdown: string, target: HTMLElement): Promise<vo
 
     if (line.startsWith(">")) {
       const quoteLines: string[] = [];
-      while (index < lines.length && lines[index].startsWith(">")) {
-        quoteLines.push(lines[index].replace(/^>\s?/, ""));
-        index += 1;
+      while (index < lines.length) {
+        const cur = lines[index];
+        if (cur.startsWith(">")) {
+          quoteLines.push(cur.replace(/^>\s?/, ""));
+          index += 1;
+        } else if (!cur.trim() && index + 1 < lines.length && lines[index + 1].startsWith(">")) {
+          quoteLines.push("");
+          index += 1;
+        } else {
+          break;
+        }
       }
       const quote = document.createElement("blockquote");
       quote.textContent = quoteLines.join("\n");
@@ -314,16 +331,13 @@ async function renderMarkdown(markdown: string, target: HTMLElement): Promise<vo
       continue;
     }
 
-    if (/^\s*[-*]\s+/.test(line)) {
-      const list = document.createElement("ul");
-      while (index < lines.length && /^\s*[-*]\s+/.test(lines[index])) {
-        const item = document.createElement("li");
-        appendInline(item, lines[index].replace(/^\s*[-*]\s+/, ""));
-        list.append(item);
-        index += 1;
-      }
-      if (currentSectionId) list.dataset.sectionId = currentSectionId;
-      target.append(list);
+    const listItem = matchListItem(line);
+    if (listItem) {
+      const items = collectListItems(lines, index);
+      const block = buildNestedList(items, 0, items[0].indent);
+      if (currentSectionId) block.dataset.sectionId = currentSectionId;
+      target.append(block);
+      index += items.length;
       continue;
     }
 
@@ -347,7 +361,8 @@ async function renderMarkdown(markdown: string, target: HTMLElement): Promise<vo
       !/^(#{1,6})\s+/.test(lines[index]) &&
       !lines[index].startsWith("```") &&
       !lines[index].startsWith(">") &&
-      !/^\s*[-*]\s+/.test(lines[index]) &&
+      !/^(-{3,}|\*{3,}|_{3,})\s*$/.test(lines[index]) &&
+      !matchListItem(lines[index]) &&
       !isTableStart(lines, index)
     ) {
       paragraphLines.push(lines[index]);
@@ -460,10 +475,13 @@ function headingNode(level: number, text: string): HTMLElement {
   return heading;
 }
 
-function codeBlock(code: string): HTMLElement {
+function codeBlock(code: string, lang?: string): HTMLElement {
   const pre = document.createElement("pre");
   const codeNode = document.createElement("code");
   codeNode.textContent = code;
+  if (lang) {
+    codeNode.className = `language-${lang}`;
+  }
   pre.append(codeNode);
   return pre;
 }
@@ -517,17 +535,17 @@ function tableRow(line: string, cellName: "td" | "th"): HTMLTableRowElement {
 }
 
 function appendInline(parent: HTMLElement, text: string): void {
-  const pattern = /(`([^`]+)`|\[([^\]]+)]\(([^)]+)\))/g;
+  const pattern = /(`([^`]+)`|\[([^\]]+)]\(([^)]+)\)|\$([^$\n]+)\$)/g;
   let lastIndex = 0;
   for (const match of text.matchAll(pattern)) {
     if (match.index > lastIndex) {
       appendFormattedText(parent, text.slice(lastIndex, match.index));
     }
-    if (match[2]) {
+    if (match[2] !== undefined) {
       const code = document.createElement("code");
       code.textContent = match[2];
       parent.append(code);
-    } else if (match[3] && match[4]) {
+    } else if (match[3] !== undefined && match[4] !== undefined) {
       if (isSafeUrl(match[4], "link")) {
         const link = document.createElement("a");
         link.href = match[4];
@@ -537,6 +555,11 @@ function appendInline(parent: HTMLElement, text: string): void {
       } else {
         parent.append(document.createTextNode(match[3]));
       }
+    } else if (match[5] !== undefined) {
+      const span = document.createElement("span");
+      span.className = "math-inline";
+      span.textContent = match[5];
+      parent.append(span);
     }
     lastIndex = match.index + match[0].length;
   }
@@ -547,14 +570,15 @@ function appendInline(parent: HTMLElement, text: string): void {
 
 function appendFormattedText(parent: HTMLElement, text: string): void {
   if (!text) return;
-  const segments = parseInlineFormatting(text);
+  const unescaped = unescapeBackslashes(text);
+  const segments = parseInlineFormatting(unescaped);
   if (!segments) {
-    parent.append(document.createTextNode(text));
+    appendAutolinks(parent, text);
     return;
   }
   for (const segment of segments) {
     if (typeof segment === "string") {
-      parent.append(document.createTextNode(segment));
+      appendAutolinks(parent, segment);
     } else {
       appendFormattedText(segment.element, segment.content);
       parent.append(segment.element);
@@ -638,12 +662,105 @@ function parseInlineFormatting(text: string): FormatSegment[] | null {
   return changed ? result : null;
 }
 
+function unescapeBackslashes(text: string): string {
+  return text.replace(/\\([\\`*_{}[\]()#+\-.!|~<>])/g, "$1");
+}
+
+function appendAutolinks(parent: HTMLElement, text: string): void {
+  const pattern = /(https?:\/\/[^\s<>"']+)/g;
+  let lastIndex = 0;
+  let matched = false;
+  for (const match of text.matchAll(pattern)) {
+    matched = true;
+    if (match.index > lastIndex) {
+      parent.append(document.createTextNode(text.slice(lastIndex, match.index)));
+    }
+    const url = match[1];
+    const stripped = url.replace(/[.,;:!?)]+$/, "");
+    if (isSafeUrl(stripped, "link")) {
+      const link = document.createElement("a");
+      link.href = stripped;
+      link.textContent = stripped;
+      link.rel = "noreferrer";
+      parent.append(link);
+    } else {
+      parent.append(document.createTextNode(url));
+    }
+    lastIndex = match.index + match[0].length;
+  }
+  if (matched) {
+    if (lastIndex < text.length) {
+      parent.append(document.createTextNode(text.slice(lastIndex)));
+    }
+  } else {
+    parent.append(document.createTextNode(text));
+  }
+}
+
 function isTableStart(lines: string[], index: number): boolean {
   return Boolean(
     lines[index]?.trim().startsWith("|") &&
       lines[index + 1]?.trim().startsWith("|") &&
       /^\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?$/.test(lines[index + 1].trim())
   );
+}
+
+interface ListItemInfo {
+  type: "ul" | "ol";
+  content: string;
+  indent: number;
+}
+
+function matchListItem(line: string): ListItemInfo | null {
+  const match = line.match(/^(\s*)([-*+]|\d+\.)\s+(.+)$/);
+  if (!match) return null;
+  return {
+    indent: match[1].length,
+    type: /^\d+\.$/.test(match[2]) ? "ol" : "ul",
+    content: match[3]
+  };
+}
+
+function collectListItems(lines: string[], startIndex: number): ListItemInfo[] {
+  const items: ListItemInfo[] = [];
+  let index = startIndex;
+  while (index < lines.length) {
+    const item = matchListItem(lines[index]);
+    if (!item) break;
+    items.push(item);
+    index += 1;
+  }
+  return items;
+}
+
+function buildNestedList(items: ListItemInfo[], startIdx: number, baseIndent: number): HTMLElement {
+  const listType = items[startIdx].type;
+  const list = document.createElement(listType);
+  let i = startIdx;
+
+  while (i < items.length) {
+    const item = items[i];
+    if (item.indent < baseIndent) break;
+
+    if (item.indent === baseIndent) {
+      const li = document.createElement("li");
+      appendInline(li, item.content);
+      i += 1;
+
+      if (i < items.length && items[i].indent > baseIndent) {
+        const sub = buildNestedList(items, i, items[i].indent);
+        li.append(sub);
+        i = items.findIndex((it, idx) => idx >= i && it.indent <= baseIndent);
+        if (i === -1) i = items.length;
+      }
+
+      list.append(li);
+    } else {
+      break;
+    }
+  }
+
+  return list;
 }
 
 function stripFrontmatter(markdown: string): string {
