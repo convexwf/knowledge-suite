@@ -93,7 +93,7 @@ const ALLOWED_ATTR = [
 let markdownItInstance: MarkdownItInstance | undefined;
 
 export function renderMarkdownPreview(markdown: string): DocumentFragment {
-  const body = stripFrontmatter(markdown).trim();
+  const body = stripSectionAnchors(stripFrontmatter(markdown)).trim();
   const fragment = document.createDocumentFragment();
   if (!body) {
     const empty = document.createElement("p");
@@ -211,6 +211,10 @@ function collectElements(root: ParentNode, tagName?: string): Element[] {
   };
   visit(root);
   return elements;
+}
+
+function stripSectionAnchors(markdown: string): string {
+  return markdown.replace(/^<!--\s*section_id:\S+\s*-->\n/gm, "");
 }
 
 function stripFrontmatter(markdown: string): string {

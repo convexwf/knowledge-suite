@@ -1285,7 +1285,7 @@ function extractSections(root: Element, title: string): KnowledgeDocument["secti
 
   for (const node of nodes) {
     const tagName = node.tagName.toLowerCase();
-    if (isInsideMediaContainer(node)) {
+    if (isInsideMediaContainer(node) || isInsideListItem(node)) {
       continue;
     }
     const text = normalizeText(node.textContent ?? "");
@@ -1355,6 +1355,17 @@ function extractSections(root: Element, title: string): KnowledgeDocument["secti
   }
 
   return dedupeAdjacent(sections);
+}
+
+function isInsideListItem(node: Element): boolean {
+  let current: Element | null = node;
+  while (current) {
+    if (current.tagName.toLowerCase() === "li") {
+      return true;
+    }
+    current = current.parentElement;
+  }
+  return false;
 }
 
 function isInsideMediaContainer(node: Element): boolean {
