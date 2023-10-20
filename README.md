@@ -16,12 +16,35 @@ knowledge-suite/
 ## Quick Start
 
 ```bash
-npm install
-npm run build
-npm run dev:server
+make setup    # install deps + build all packages
+make dev      # start the ingest server
 ```
 
-Load `apps/knowledge-web-clipper/dist` as an unpacked Chrome extension after building the extension.
+In Chrome, open `chrome://extensions`, enable **Developer mode**, then
+**Load unpacked** → select `apps/knowledge-web-clipper/dist`.
+
+```bash
+make build-extension   # rebuild extension after code changes
+```
+
+For a full list of targets:
+
+```bash
+make help
+```
+
+### With AI Summary (experimental)
+
+```bash
+make setup-ai   # setup + pull ollama model
+make dev-ai     # start server with AI enabled
+```
+
+Or run via Docker:
+
+```bash
+make docker-up-ai
+```
 After rebuilding the extension, click reload in `chrome://extensions` and reload the target page once.
 If the side panel reports that the receiving end does not exist, the extension will try to inject the content script and retry.
 

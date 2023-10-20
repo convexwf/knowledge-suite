@@ -1,49 +1,168 @@
-.PHONY: import-calibre import-calibre-dry import-calibre-docker import-calibre-docker-dry import-html import-html-dry import-urls import-urls-dry ai-up ai-down ai-pull-model
+.PHONY: help setup setup-ai build check test build-extension clean clean-store distclean \
+        dev smoke e2e fixtures fixtures-update \
+        docker-build docker-up docker-down docker-logs docker-up-ai docker-down-ai \
+        import-calibre import-calibre-dry import-calibre-docker import-calibre-docker-dry \
+        import-html import-html-dry import-urls import-urls-dry \
+        ai-pull-model ai-up ai-down dev-ai
 
-IMPORTER_WORKSPACE := @uknowledge/knowledge-local-importer
-DOCKER_IMAGE ?= uknowledge-ingest-server:local
-DOCKER_STORE_ROOT ?= $(CURDIR)/tmp/docker-import-store
-CALIBRE_ROOT ?= tmp/epub
+# ── Variables ──────────────────────────────────────────────────────────────
 
-import-calibre:
-	npm run build -w $(IMPORTER_WORKSPACE)
-	npm run import:calibre -w $(IMPORTER_WORKSPACE) -- --root "$(ROOT)" $(ARGS)
+SERVER_HOST    ?= 127.0.0.1
+SERVER_PORT    ?= 18765
+SERVER_TOKEN   ?= dev-token
+AI_MODEL       ?= qwen2.5:7b
+AI_OLLAMA_URL  ?= http://localhost:11434
 
-import-calibre-dry:
-	npm run build -w $(IMPORTER_WORKSPACE)
-	npm run import:calibre -w $(IMPORTER_WORKSPACE) -- --root "$(ROOT)" --dry-run $(ARGS)
+IMPORTER_WS    := @uknowledge/knowledge-local-importer
+DOCKER_IMAGE   ?= knowledge-ingest-server:local
+DOCKER_STORE   ?= $(CURDIR)/tmp/docker-import-store
+CALIBRE_ROOT   ?= tmp/epub
 
-import-calibre-docker:
-	docker build -t $(DOCKER_IMAGE) -f apps/knowledge-ingest-server/Dockerfile .
-	mkdir -p "$(DOCKER_STORE_ROOT)"
-	docker run --rm -v "$(abspath $(or $(ROOT),$(CALIBRE_ROOT)))":/input:ro -v "$(DOCKER_STORE_ROOT)":/data $(DOCKER_IMAGE) npm run import:calibre -w $(IMPORTER_WORKSPACE) -- --root /input --store-root /data --report-dir /data/reports $(ARGS)
+# ── Help (default target) ──────────────────────────────────────────────────
 
-import-calibre-docker-dry:
-	docker build -t $(DOCKER_IMAGE) -f apps/knowledge-ingest-server/Dockerfile .
-	mkdir -p "$(DOCKER_STORE_ROOT)"
-	docker run --rm -v "$(abspath $(or $(ROOT),$(CALIBRE_ROOT)))":/input:ro -v "$(DOCKER_STORE_ROOT)":/data $(DOCKER_IMAGE) npm run import:calibre -w $(IMPORTER_WORKSPACE) -- --root /input --store-root /data --report-dir /data/reports --dry-run $(ARGS)
+help: ## Show all targets
+	@echo "Usage: make [target]"
+	@echo ""
+	@echo "── Setup ──"
+	@echo "  setup                  Install deps + build all (one-click bootstrap)"
+	@echo "  setup-ai               setup + verify Ollama model for AI summary"
+	@echo ""
+	@echo "── Build & Check ──"
+	@echo "  build                  Build all packages"
+	@echo "  check                  Typecheck all packages"
+	@echo "  test                   Run all tests"
+	@echo "  build-extension        Build Chrome extension only"
+	@echo ""
+	@echo "── Development ──"
+	@echo "  dev                    Start ingest server (foreground)"
+	@echo "  dev-ai                 Start ingest server with AI enabled (foreground)"
+	@echo ""
+	@echo "── Docker ──"
+	@echo "  docker-build           Build Docker image"
+	@echo "  docker-up              Start server in Docker (no AI)"
+	@echo "  docker-up-ai           Start server in Docker with AI (experimental)"
+	@echo "  docker-down            Stop Docker services"
+	@echo "  docker-logs            Tail Docker logs"
+	@echo ""
+	@echo "── AI Summary (experimental) ──"
+	@echo "  ai-pull-model          Pull AI model via Ollama"
+	@echo ""
+	@echo "── Import ──"
+	@echo "  import-calibre         Import Calibre EPUB library"
+	@echo "  import-calibre-dry     Dry-run Calibre import"
+	@echo "  import-html            Import HTML files"
+	@echo "  import-html-dry        Dry-run HTML import"
+	@echo "  import-urls            Import URLs from file"
+	@echo "  import-urls-dry        Dry-run URL import"
+	@echo ""
+	@echo "── Smoke & E2E ──"
+	@echo "  smoke                  Run ingest smoke tests"
+	@echo "  e2e                    Run Chrome extension E2E tests"
+	@echo "  fixtures               Run parser fixture tests"
+	@echo "  fixtures-update        Update parser fixture snapshots"
+	@echo ""
+	@echo "── Cleanup ──"
+	@echo "  clean                  Remove dist/ directories"
+	@echo "  clean-store            Remove knowledge-store/ (⚠ destructive)"
+	@echo "  distclean              clean + clean-store + remove node_modules"
+	@echo ""
 
-import-html:
-	npm run build -w $(IMPORTER_WORKSPACE)
-	npm run import:html -w $(IMPORTER_WORKSPACE) -- --root "$(ROOT)" $(ARGS)
+# ── Setup ──────────────────────────────────────────────────────────────────
 
-import-html-dry:
-	npm run build -w $(IMPORTER_WORKSPACE)
-	npm run import:html -w $(IMPORTER_WORKSPACE) -- --root "$(ROOT)" --dry-run $(ARGS)
+setup: ## Install deps and build all packages
+	@echo "==> Installing dependencies..."
+	npm install
+	@echo ""
+	@echo "==> Building all packages..."
+	npm run build
+	@echo ""
+	@echo "✓ Setup complete."
+	@echo "────────────────────────────────────────────────────────────"
+	@echo "Next steps:"
+	@echo "  Start server:   make dev"
+	@echo "  Load extension: In Chrome, open chrome://extensions"
+	@echo "                  → Enable Developer mode"
+	@echo "                  → Load unpacked: apps/knowledge-web-clipper/dist"
+	@echo ""
+	@echo "  Server endpoint: http://$(SERVER_HOST):$(SERVER_PORT)"
+	@echo "  Token:           $(SERVER_TOKEN)"
+	@echo ""
+	@echo "  AI summary (experimental): make setup-ai"
+	@echo "────────────────────────────────────────────────────────────"
 
-import-urls:
-	npm run build -w $(IMPORTER_WORKSPACE)
-	npm run import:urls -w $(IMPORTER_WORKSPACE) -- --file "$(FILE)" $(ARGS)
+setup-ai: setup ## setup + verify Ollama model (experimental)
+	@echo ""
+	@echo "==> Checking Ollama..."
+	@if ! command -v ollama >/dev/null 2>&1; then \
+		echo "⚠  Ollama not found. Install from https://ollama.com"; \
+		echo "   Then run: make ai-pull-model"; \
+	else \
+		$(MAKE) ai-pull-model; \
+		echo ""; \
+		echo "✓ AI setup complete."; \
+		echo "  Start server with AI:  make dev-ai"; \
+		echo "  Or use Docker:          make docker-up-ai"; \
+	fi
 
-import-urls-dry:
-	npm run build -w $(IMPORTER_WORKSPACE)
-	npm run import:urls -w $(IMPORTER_WORKSPACE) -- --file "$(FILE)" --dry-run $(ARGS)
+# ── Build & Check ──────────────────────────────────────────────────────────
 
-# --- AI Summary ---
+build: ## Build all packages
+	npm run build
 
-AI_MODEL ?= qwen2.5:7b
+check: ## Typecheck all packages
+	npm run check
 
-ai-pull-model:
+test: ## Run all tests
+	npm run test
+
+build-extension: ## Build Chrome extension only
+	npm run build:extension
+
+# ── Development ────────────────────────────────────────────────────────────
+
+dev: build ## Start ingest server (foreground, http://$(SERVER_HOST):$(SERVER_PORT))
+	@echo "Starting server at http://$(SERVER_HOST):$(SERVER_PORT)..."
+	npm run dev:server
+
+dev-ai: build ## Start ingest server with AI enabled (foreground, experimental)
+	@echo "Starting server with AI at http://$(SERVER_HOST):$(SERVER_PORT)..."
+	KNOWLEDGE_AI_ENABLED=true \
+	KNOWLEDGE_AI_PROVIDER=ollama \
+	KNOWLEDGE_AI_OLLAMA_BASE_URL=$(AI_OLLAMA_URL) \
+	KNOWLEDGE_AI_OLLAMA_MODEL=$(AI_MODEL) \
+	npm run dev:server
+
+# ── Docker ─────────────────────────────────────────────────────────────────
+
+docker-build: ## Build Docker image
+	docker compose build
+
+docker-up: docker-build ## Start server in Docker (no AI, http://$(SERVER_HOST):$(SERVER_PORT))
+	KNOWLEDGE_AI_ENABLED=false \
+	KNOWLEDGE_TOKEN=$(SERVER_TOKEN) \
+	docker compose up -d
+	@echo "Server running at http://$(SERVER_HOST):$(SERVER_PORT)"
+
+docker-up-ai: docker-build ## Start server in Docker with AI (experimental)
+	@echo "==> Checking Ollama model..."
+	@$(MAKE) ai-pull-model
+	KNOWLEDGE_TOKEN=$(SERVER_TOKEN) \
+	docker compose up -d
+	@echo "AI-enabled server running at http://$(SERVER_HOST):$(SERVER_PORT)"
+
+docker-down: ## Stop Docker services
+	docker compose down
+
+docker-logs: ## Tail Docker logs
+	docker compose logs -f
+
+# ── AI Summary (experimental) ──────────────────────────────────────────────
+
+ai-pull-model: ## Pull AI model via Ollama (AI_MODEL=$(AI_MODEL))
+	@if ! command -v ollama >/dev/null 2>&1; then \
+		echo "⚠  Ollama not found. Install from https://ollama.com"; \
+		exit 1; \
+	fi
 	@if ollama list | grep -q "$(AI_MODEL)"; then \
 		echo "Model $(AI_MODEL) already pulled."; \
 	else \
@@ -51,15 +170,74 @@ ai-pull-model:
 		ollama pull $(AI_MODEL); \
 	fi
 
-ai-up: ai-pull-model
-	@echo "Building Docker image..."
-	docker compose build
-	@echo "Starting services..."
-	docker compose up -d
-	@echo ""
-	@echo "AI summary enabled. Endpoint: http://127.0.0.1:18765"
-	@echo "API: POST /api/documents/:docId/ai-annotations"
-	@echo ""
+# ── Import ─────────────────────────────────────────────────────────────────
 
-ai-down:
-	docker compose down
+import-calibre: ## Import Calibre EPUB library (ROOT=<dir>)
+	npm run build -w $(IMPORTER_WS)
+	npm run import:calibre -w $(IMPORTER_WS) -- --root "$(ROOT)" $(ARGS)
+
+import-calibre-dry: ## Dry-run Calibre import (ROOT=<dir>)
+	npm run build -w $(IMPORTER_WS)
+	npm run import:calibre -w $(IMPORTER_WS) -- --root "$(ROOT)" --dry-run $(ARGS)
+
+import-calibre-docker: ## Import Calibre via Docker (ROOT=<dir>)
+	docker build -t $(DOCKER_IMAGE) -f apps/knowledge-ingest-server/Dockerfile .
+	mkdir -p "$(DOCKER_STORE)"
+	docker run --rm \
+		-v "$(abspath $(or $(ROOT),$(CALIBRE_ROOT)))":/input:ro \
+		-v "$(DOCKER_STORE)":/data \
+		$(DOCKER_IMAGE) npm run import:calibre -w $(IMPORTER_WS) -- \
+			--root /input --store-root /data --report-dir /data/reports $(ARGS)
+
+import-calibre-docker-dry: ## Dry-run Calibre import via Docker (ROOT=<dir>)
+	docker build -t $(DOCKER_IMAGE) -f apps/knowledge-ingest-server/Dockerfile .
+	mkdir -p "$(DOCKER_STORE)"
+	docker run --rm \
+		-v "$(abspath $(or $(ROOT),$(CALIBRE_ROOT)))":/input:ro \
+		-v "$(DOCKER_STORE)":/data \
+		$(DOCKER_IMAGE) npm run import:calibre -w $(IMPORTER_WS) -- \
+			--root /input --store-root /data --report-dir /data/reports --dry-run $(ARGS)
+
+import-html: ## Import HTML files (ROOT=<dir>)
+	npm run build -w $(IMPORTER_WS)
+	npm run import:html -w $(IMPORTER_WS) -- --root "$(ROOT)" $(ARGS)
+
+import-html-dry: ## Dry-run HTML import (ROOT=<dir>)
+	npm run build -w $(IMPORTER_WS)
+	npm run import:html -w $(IMPORTER_WS) -- --root "$(ROOT)" --dry-run $(ARGS)
+
+import-urls: ## Import URLs from file (FILE=<path>)
+	npm run build -w $(IMPORTER_WS)
+	npm run import:urls -w $(IMPORTER_WS) -- --file "$(FILE)" $(ARGS)
+
+import-urls-dry: ## Dry-run URL import (FILE=<path>)
+	npm run build -w $(IMPORTER_WS)
+	npm run import:urls -w $(IMPORTER_WS) -- --file "$(FILE)" --dry-run $(ARGS)
+
+# ── Smoke & E2E ────────────────────────────────────────────────────────────
+
+smoke: ## Run ingest smoke tests
+	npm run build
+	npm run smoke:ingest
+
+e2e: ## Run Chrome extension E2E tests (requires playwright)
+	npm run build
+	npm run e2e:extension
+
+fixtures: ## Run parser fixture tests
+	npm run fixtures:parser
+
+fixtures-update: ## Update parser fixture snapshots
+	npm run fixtures:parser:update
+
+# ── Cleanup ────────────────────────────────────────────────────────────────
+
+clean: ## Remove dist/ directories
+	rm -rf apps/*/dist packages/*/dist
+
+clean-store: ## Remove knowledge-store/ (⚠ destroys all local data)
+	rm -rf knowledge-store
+
+distclean: clean clean-store ## Full cleanup: dist/ + store + node_modules
+	rm -rf node_modules
+	@echo "Run 'make setup' to rebuild."
