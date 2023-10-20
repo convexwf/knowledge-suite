@@ -521,7 +521,7 @@ function appendInline(parent: HTMLElement, text: string): void {
   let lastIndex = 0;
   for (const match of text.matchAll(pattern)) {
     if (match.index > lastIndex) {
-      parent.append(document.createTextNode(text.slice(lastIndex, match.index)));
+      appendFormattedText(parent, text.slice(lastIndex, match.index));
     }
     if (match[2]) {
       const code = document.createElement("code");
@@ -531,8 +531,8 @@ function appendInline(parent: HTMLElement, text: string): void {
       if (isSafeUrl(match[4], "link")) {
         const link = document.createElement("a");
         link.href = match[4];
-        link.textContent = match[3];
         link.rel = "noreferrer";
+        appendFormattedText(link, match[3]);
         parent.append(link);
       } else {
         parent.append(document.createTextNode(match[3]));
@@ -541,8 +541,101 @@ function appendInline(parent: HTMLElement, text: string): void {
     lastIndex = match.index + match[0].length;
   }
   if (lastIndex < text.length) {
-    parent.append(document.createTextNode(text.slice(lastIndex)));
+    appendFormattedText(parent, text.slice(lastIndex));
   }
+}
+
+function appendFormattedText(parent: HTMLElement, text: string): void {
+  if (!text) return;
+  const segments = parseInlineFormatting(text);
+  if (!segments) {
+    parent.append(document.createTextNode(text));
+    return;
+  }
+  for (const segment of segments) {
+    if (typeof segment === "string") {
+      parent.append(document.createTextNode(segment));
+    } else {
+      appendFormattedText(segment.element, segment.content);
+      parent.append(segment.element);
+    }
+  }
+}
+
+type FormatSegment = string | { element: HTMLElement; content: string };
+
+function parseInlineFormatting(text: string): FormatSegment[] | null {
+  let changed = false;
+  let result: FormatSegment[] = [text];
+
+  const applyPattern = (
+    regex: RegExp,
+    createElement: () => HTMLElement,
+    innerProcess?: (el: HTMLElement, content: string) => void
+  ): void => {
+    const next: FormatSegment[] = [];
+    for (const segment of result) {
+      if (typeof segment !== "string") {
+        next.push(segment);
+        continue;
+      }
+      const str = segment;
+      let lastIndex = 0;
+      let matched = false;
+      for (const m of str.matchAll(regex)) {
+        changed = true;
+        matched = true;
+        if (m.index! > lastIndex) {
+          next.push(str.slice(lastIndex, m.index!));
+        }
+        const el = createElement();
+        const inner = m[1] ?? "";
+        if (innerProcess) {
+          innerProcess(el, inner);
+        } else {
+          appendFormattedText(el, inner);
+        }
+        next.push({ element: el, content: inner });
+        lastIndex = m.index! + m[0].length;
+      }
+      if (matched && lastIndex < str.length) {
+        next.push(str.slice(lastIndex));
+      } else if (!matched) {
+        next.push(segment);
+      }
+    }
+    result = next;
+  };
+
+  applyPattern(/\*\*\*(.+?)\*\*\*/g, () => {
+    const strong = document.createElement("strong");
+    const em = document.createElement("em");
+    strong.append(em);
+    return strong;
+  }, (_el, content) => {
+    const em = document.createElement("em");
+    appendFormattedText(em, content);
+    (_el as HTMLElement).replaceChildren(em);
+  });
+
+  applyPattern(/___(.+?)___/g, () => {
+    const strong = document.createElement("strong");
+    const em = document.createElement("em");
+    strong.append(em);
+    return strong;
+  }, (_el, content) => {
+    const em = document.createElement("em");
+    appendFormattedText(em, content);
+    (_el as HTMLElement).replaceChildren(em);
+  });
+
+  applyPattern(/\*\*(.+?)\*\*/g, () => document.createElement("strong"));
+  applyPattern(/__(.+?)__/g, () => document.createElement("strong"));
+  applyPattern(/\*(.+?)\*/g, () => document.createElement("em"));
+  applyPattern(/_(.+?)_/g, () => document.createElement("em"));
+  applyPattern(/~~(.+?)~~/g, () => document.createElement("del"));
+
+  return changed ? result : null;
 }
 
 function isTableStart(lines: string[], index: number): boolean {
