@@ -1,4 +1,4 @@
-.PHONY: help setup setup-ai build check test build-extension clean clean-store distclean \
+.PHONY: help setup setup-ai build build-server check test build-extension clean clean-store distclean \
         dev smoke e2e fixtures fixtures-update \
         docker-build docker-up docker-down docker-logs docker-up-ai docker-down-ai \
         import-calibre import-calibre-dry import-calibre-docker import-calibre-docker-dry \
@@ -13,7 +13,8 @@ SERVER_TOKEN   ?= dev-token
 AI_MODEL       ?= qwen2.5:7b
 AI_OLLAMA_URL  ?= http://localhost:11434
 
-IMPORTER_WS    := @uknowledge/knowledge-local-importer
+SERVER_WS      := @uknowledge/knowledge-ingest-server
+SCHEMA_WS      := @uknowledge/knowledge-schema
 DOCKER_IMAGE   ?= knowledge-ingest-server:local
 DOCKER_STORE   ?= $(CURDIR)/tmp/docker-import-store
 CALIBRE_ROOT   ?= tmp/epub
@@ -29,6 +30,7 @@ help: ## Show all targets
 	@echo ""
 	@echo "── Build & Check ──"
 	@echo "  build                  Build all packages"
+	@echo "  build-server           Build server + schema only (no extension)"
 	@echo "  check                  Typecheck all packages"
 	@echo "  test                   Run all tests"
 	@echo "  build-extension        Build Chrome extension only"
@@ -109,6 +111,10 @@ setup-ai: setup ## setup + verify Ollama model (experimental)
 build: ## Build all packages
 	npm run build
 
+build-server: ## Build server + schema only (skip extension)
+	npm run build -w $(SCHEMA_WS)
+	npm run build -w $(SERVER_WS)
+
 check: ## Typecheck all packages
 	npm run check
 
@@ -120,11 +126,11 @@ build-extension: ## Build Chrome extension only
 
 # ── Development ────────────────────────────────────────────────────────────
 
-dev: build ## Start ingest server (foreground, http://$(SERVER_HOST):$(SERVER_PORT))
+dev: build-server ## Start ingest server (foreground, http://$(SERVER_HOST):$(SERVER_PORT))
 	@echo "Starting server at http://$(SERVER_HOST):$(SERVER_PORT)..."
 	npm run dev:server
 
-dev-ai: build ## Start ingest server with AI enabled (foreground, experimental)
+dev-ai: build-server ## Start ingest server with AI enabled (foreground, experimental)
 	@echo "Starting server with AI at http://$(SERVER_HOST):$(SERVER_PORT)..."
 	KNOWLEDGE_AI_ENABLED=true \
 	KNOWLEDGE_AI_PROVIDER=ollama \
