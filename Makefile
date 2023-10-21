@@ -1,9 +1,8 @@
 .PHONY: help setup setup-ai build build-server check test build-extension clean clean-store distclean \
-        dev dev-ai rebuild rebuild-ai smoke e2e fixtures fixtures-update \
-        docker-build docker-up docker-down docker-logs docker-up-ai docker-down-ai \
+        dev dev-ai down logs rebuild rebuild-ai smoke e2e fixtures fixtures-update \
         import-calibre import-calibre-dry import-calibre-docker import-calibre-docker-dry \
         import-html import-html-dry import-urls import-urls-dry \
-        ai-pull-model ai-up ai-down
+        ai-pull-model
 
 # ── Variables ──────────────────────────────────────────────────────────────
 
@@ -35,18 +34,13 @@ help: ## Show all targets
 	@echo "  test                   Run all tests"
 	@echo "  build-extension        Build Chrome extension only"
 	@echo ""
-	@echo "── Development ──"
-	@echo "  dev                    Start ingest server (foreground)"
-	@echo "  dev-ai                 Start ingest server with AI enabled (foreground)"
-	@echo "  rebuild                Rebuild extension + server, then start server"
-	@echo "  rebuild-ai             rebuild + start server with AI enabled"
-	@echo ""
-	@echo "── Docker ──"
-	@echo "  docker-build           Build Docker image"
-	@echo "  docker-up              Start server in Docker (no AI)"
-	@echo "  docker-up-ai           Start server in Docker with AI (experimental)"
-	@echo "  docker-down            Stop Docker services"
-	@echo "  docker-logs            Tail Docker logs"
+	@echo "── Server ──"
+	@echo "  dev                    Start server (Docker, no AI)"
+	@echo "  dev-ai                 Start server (Docker, with AI)"
+	@echo "  down                   Stop server"
+	@echo "  logs                   Tail server logs"
+	@echo "  rebuild                Rebuild extension + Docker image, then start"
+	@echo "  rebuild-ai             rebuild + start with AI enabled"
 	@echo ""
 	@echo "── AI Summary (experimental) ──"
 	@echo "  ai-pull-model          Pull AI model via Ollama"
@@ -84,6 +78,8 @@ setup: ## Install deps and build all packages
 	@echo "────────────────────────────────────────────────────────────"
 	@echo "Next steps:"
 	@echo "  Start server:   make dev"
+	@echo "  Stop server:    make down"
+	@echo "  View logs:      make logs"
 	@echo "  Load extension: In Chrome, open chrome://extensions"
 	@echo "                  → Enable Developer mode"
 	@echo "                  → Load unpacked: apps/knowledge-web-clipper/dist"
@@ -105,7 +101,6 @@ setup-ai: setup ## setup + verify Ollama model (experimental)
 		echo ""; \
 		echo "✓ AI setup complete."; \
 		echo "  Start server with AI:  make dev-ai"; \
-		echo "  Or use Docker:          make docker-up-ai"; \
 	fi
 
 # ── Build & Check ──────────────────────────────────────────────────────────
@@ -126,55 +121,31 @@ test: ## Run all tests
 build-extension: ## Build Chrome extension only
 	npm run build:extension
 
-# ── Development ────────────────────────────────────────────────────────────
+# ── Server (Docker) ─────────────────────────────────────────────────────────
 
-dev: build-server ## Start ingest server (foreground, http://$(SERVER_HOST):$(SERVER_PORT))
+dev: ## Start server (Docker, no AI, http://$(SERVER_HOST):$(SERVER_PORT))
 	@echo "Starting server at http://$(SERVER_HOST):$(SERVER_PORT)..."
-	npm run dev:server
+	KNOWLEDGE_AI_ENABLED=false KNOWLEDGE_TOKEN=$(SERVER_TOKEN) docker compose up -d
 
-dev-ai: build-server ## Start ingest server with AI enabled (foreground, experimental)
+dev-ai: ## Start server (Docker, with AI, http://$(SERVER_HOST):$(SERVER_PORT))
 	@echo "Starting server with AI at http://$(SERVER_HOST):$(SERVER_PORT)..."
-	KNOWLEDGE_AI_ENABLED=true \
-	KNOWLEDGE_AI_PROVIDER=ollama \
-	KNOWLEDGE_AI_OLLAMA_BASE_URL=$(AI_OLLAMA_URL) \
-	KNOWLEDGE_AI_OLLAMA_MODEL=$(AI_MODEL) \
-	npm run dev:server
+	KNOWLEDGE_TOKEN=$(SERVER_TOKEN) docker compose up -d
 
-rebuild: build-extension build-server ## Rebuild extension + server, then start server
-	@echo "Extension and server rebuilt. Starting server at http://$(SERVER_HOST):$(SERVER_PORT)..."
-	npm run dev:server
-
-rebuild-ai: build-extension build-server ## rebuild + start server with AI enabled (experimental)
-	@echo "Extension and server rebuilt. Starting server with AI at http://$(SERVER_HOST):$(SERVER_PORT)..."
-	KNOWLEDGE_AI_ENABLED=true \
-	KNOWLEDGE_AI_PROVIDER=ollama \
-	KNOWLEDGE_AI_OLLAMA_BASE_URL=$(AI_OLLAMA_URL) \
-	KNOWLEDGE_AI_OLLAMA_MODEL=$(AI_MODEL) \
-	npm run dev:server
-
-# ── Docker ─────────────────────────────────────────────────────────────────
-
-docker-build: ## Build Docker image
-	docker compose build
-
-docker-up: docker-build ## Start server in Docker (no AI, http://$(SERVER_HOST):$(SERVER_PORT))
-	KNOWLEDGE_AI_ENABLED=false \
-	KNOWLEDGE_TOKEN=$(SERVER_TOKEN) \
-	docker compose up -d
-	@echo "Server running at http://$(SERVER_HOST):$(SERVER_PORT)"
-
-docker-up-ai: docker-build ## Start server in Docker with AI (experimental)
-	@echo "==> Checking Ollama model..."
-	@$(MAKE) ai-pull-model
-	KNOWLEDGE_TOKEN=$(SERVER_TOKEN) \
-	docker compose up -d
-	@echo "AI-enabled server running at http://$(SERVER_HOST):$(SERVER_PORT)"
-
-docker-down: ## Stop Docker services
+down: ## Stop server
 	docker compose down
 
-docker-logs: ## Tail Docker logs
+logs: ## Tail server logs
 	docker compose logs -f
+
+rebuild: build-extension ## Rebuild extension + Docker image, then start (no AI)
+	@echo "Rebuilding..."
+	KNOWLEDGE_AI_ENABLED=false docker compose up -d --build
+	@echo "Server at http://$(SERVER_HOST):$(SERVER_PORT)"
+
+rebuild-ai: build-extension ## rebuild + start with AI enabled
+	@echo "Rebuilding with AI..."
+	KNOWLEDGE_TOKEN=$(SERVER_TOKEN) docker compose up -d --build
+	@echo "Server at http://$(SERVER_HOST):$(SERVER_PORT)"
 
 # ── AI Summary (experimental) ──────────────────────────────────────────────
 

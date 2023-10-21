@@ -7,7 +7,8 @@ optional AI summaries — all running locally on your machine.
 
 ```bash
 make setup    # install dependencies + build
-make dev      # start the local server at http://127.0.0.1:18765
+make dev      # start the server (Docker, http://127.0.0.1:18765)
+make down     # stop the server
 ```
 
 In Chrome, open `chrome://extensions`, enable **Developer mode**,
@@ -16,7 +17,13 @@ then **Load unpacked** → select `apps/knowledge-web-clipper/dist`.
 That's it. Open any web page, click the extension icon to open the side panel,
 and start clipping.
 
-To rebuild the extension after updating the code:
+To rebuild after code changes:
+
+```bash
+make rebuild      # rebuild extension + Docker image + restart server
+```
+
+Or just rebuild the extension:
 
 ```bash
 make build-extension
@@ -112,21 +119,23 @@ Open the extension options page (`chrome://extensions` → **Details** →
 | `KNOWLEDGE_FETCH_TIMEOUT_MS` | `15000` | Server fetch timeout |
 | `KNOWLEDGE_MAX_HTML_BYTES` | `10485760` | Max HTML payload size |
 
-## Docker
+## Server Management
 
-Run the server in a container without installing Node.js:
+The server always runs in Docker:
 
 ```bash
-make docker-up        # start server (no AI)
-make docker-up-ai     # start server with AI (requires Ollama)
-make docker-down      # stop
-make docker-logs      # tail logs
+make dev             # start (no AI)
+make dev-ai          # start (with AI, requires Ollama)
+make down            # stop
+make logs            # tail logs
+make rebuild         # rebuild extension + image + restart
+make rebuild-ai      # same, with AI
 ```
 
 With a custom token:
 
 ```bash
-SERVER_TOKEN="your-token" make docker-up
+SERVER_TOKEN="your-token" make dev
 ```
 
 The server persists data in `./knowledge-store/`. To reset:
