@@ -1,9 +1,9 @@
 .PHONY: help setup setup-ai build build-server check test build-extension clean clean-store distclean \
-        dev smoke e2e fixtures fixtures-update \
+        dev dev-ai rebuild rebuild-ai smoke e2e fixtures fixtures-update \
         docker-build docker-up docker-down docker-logs docker-up-ai docker-down-ai \
         import-calibre import-calibre-dry import-calibre-docker import-calibre-docker-dry \
         import-html import-html-dry import-urls import-urls-dry \
-        ai-pull-model ai-up ai-down dev-ai
+        ai-pull-model ai-up ai-down
 
 # ── Variables ──────────────────────────────────────────────────────────────
 
@@ -38,6 +38,8 @@ help: ## Show all targets
 	@echo "── Development ──"
 	@echo "  dev                    Start ingest server (foreground)"
 	@echo "  dev-ai                 Start ingest server with AI enabled (foreground)"
+	@echo "  rebuild                Rebuild extension + server, then start server"
+	@echo "  rebuild-ai             rebuild + start server with AI enabled"
 	@echo ""
 	@echo "── Docker ──"
 	@echo "  docker-build           Build Docker image"
@@ -132,6 +134,18 @@ dev: build-server ## Start ingest server (foreground, http://$(SERVER_HOST):$(SE
 
 dev-ai: build-server ## Start ingest server with AI enabled (foreground, experimental)
 	@echo "Starting server with AI at http://$(SERVER_HOST):$(SERVER_PORT)..."
+	KNOWLEDGE_AI_ENABLED=true \
+	KNOWLEDGE_AI_PROVIDER=ollama \
+	KNOWLEDGE_AI_OLLAMA_BASE_URL=$(AI_OLLAMA_URL) \
+	KNOWLEDGE_AI_OLLAMA_MODEL=$(AI_MODEL) \
+	npm run dev:server
+
+rebuild: build-extension build-server ## Rebuild extension + server, then start server
+	@echo "Extension and server rebuilt. Starting server at http://$(SERVER_HOST):$(SERVER_PORT)..."
+	npm run dev:server
+
+rebuild-ai: build-extension build-server ## rebuild + start server with AI enabled (experimental)
+	@echo "Extension and server rebuilt. Starting server with AI at http://$(SERVER_HOST):$(SERVER_PORT)..."
 	KNOWLEDGE_AI_ENABLED=true \
 	KNOWLEDGE_AI_PROVIDER=ollama \
 	KNOWLEDGE_AI_OLLAMA_BASE_URL=$(AI_OLLAMA_URL) \
