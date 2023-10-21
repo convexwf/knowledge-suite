@@ -14,9 +14,16 @@ const itemList = mustGet<HTMLElement>("item-list");
 const refreshButton = mustGet<HTMLButtonElement>("refresh-items");
 const settingsButton = mustGet<HTMLButtonElement>("open-settings");
 const sourceFilter = mustGet<HTMLSelectElement>("source-filter");
+const selectAll = mustGet<HTMLInputElement>("select-all");
+const selectCount = mustGet<HTMLElement>("select-count");
+const batchBar = mustGet<HTMLElement>("batch-bar");
+const batchReparseBtn = mustGet<HTMLButtonElement>("batch-reparse");
+const batchRemoveBtn = mustGet<HTMLButtonElement>("batch-remove");
+const batchPurgeBtn = mustGet<HTMLButtonElement>("batch-purge");
 
 const settings = await getSettings();
 const client = createKnowledgeApiClient(settings);
+let currentItems: KnowledgeItem[] = [];
 
 settingsButton.addEventListener("click", () => {
   void chrome.tabs.create({ url: chrome.runtime.getURL("options.html") });
@@ -35,8 +42,49 @@ uploadForm.addEventListener("submit", (event) => {
   void importEpub();
 });
 
+selectAll.addEventListener("change", () => {
+  const checked = selectAll.checked;
+  for (const checkbox of Array.from(itemCheckboxes())) {
+    checkbox.checked = checked;
+  }
+  updateBatchBar();
+});
+
+batchReparseBtn.addEventListener("click", () => {
+  void batchReparse();
+});
+batchRemoveBtn.addEventListener("click", () => {
+  void batchDelete("remove");
+});
+batchPurgeBtn.addEventListener("click", () => {
+  void batchDelete("purge");
+});
+
 setStatus("Ready");
 await refreshItems();
+
+function itemCheckboxes(): NodeListOf<HTMLInputElement> {
+  return itemList.querySelectorAll<HTMLInputElement>(".item-checkbox");
+}
+
+function selectedItemIds(): string[] {
+  const ids: string[] = [];
+  for (const checkbox of Array.from(itemCheckboxes())) {
+    if (checkbox.checked && checkbox.dataset.itemId) {
+      ids.push(checkbox.dataset.itemId);
+    }
+  }
+  return ids;
+}
+
+function updateBatchBar(): void {
+  const count = selectedItemIds().length;
+  batchBar.hidden = count === 0;
+  selectCount.textContent = `${count} selected`;
+  if (count === 0) {
+    selectAll.checked = false;
+  }
+}
 
 async function importEpub(): Promise<void> {
   const selected = selectedImportFiles();
@@ -117,20 +165,29 @@ async function refreshItems(): Promise<void> {
 }
 
 function renderItems(items: KnowledgeItem[]): void {
+  currentItems = items;
   itemList.replaceChildren();
   if (items.length === 0) {
     itemList.append(emptyNode("No saved items match the current filter."));
+    updateBatchBar();
     return;
   }
 
   for (const item of items) {
     itemList.append(itemRow(item));
   }
+  updateBatchBar();
 }
 
 function itemRow(item: KnowledgeItem): HTMLElement {
   const row = document.createElement("article");
   row.className = "item-row";
+
+  const checkbox = document.createElement("input");
+  checkbox.type = "checkbox";
+  checkbox.className = "item-checkbox";
+  checkbox.dataset.itemId = item.itemId;
+  checkbox.addEventListener("change", updateBatchBar);
 
   const body = document.createElement("div");
   body.className = "item-body";
@@ -166,7 +223,7 @@ function itemRow(item: KnowledgeItem): HTMLElement {
   const reparseButton = button("Reparse", "", () => {
     void reparseItem(item.itemId);
   });
-  reparseButton.disabled = item.sourceType !== "epub";
+  reparseButton.disabled = item.sourceType === "pdf";
   const removeButton = button("Remove", "", () => {
     void deleteItem(item, "remove");
   });
@@ -177,7 +234,7 @@ function itemRow(item: KnowledgeItem): HTMLElement {
 
   const details = itemDetails(item);
   details.hidden = true;
-  row.append(body, actions, details);
+  row.append(checkbox, body, actions, details);
   return row;
 }
 
@@ -223,8 +280,8 @@ async function reparseItem(itemId: string): Promise<void> {
 
 async function deleteItem(item: KnowledgeItem, mode: "remove" | "purge"): Promise<void> {
   const message = mode === "purge"
-    ? `Purge ${displayTitle(item)} and delete the stored raw EPUB file?`
-    : `Remove parsed output for ${displayTitle(item)} but keep the raw EPUB file?`;
+    ? `Purge ${displayTitle(item)} and delete the stored raw file?`
+    : `Remove parsed output for ${displayTitle(item)} but keep the raw file?`;
   if (!globalThis.confirm(message)) {
     return;
   }
@@ -237,6 +294,42 @@ async function deleteItem(item: KnowledgeItem, mode: "remove" | "purge"): Promis
   } catch (error) {
     setStatus(errorMessage(error));
   }
+}
+
+async function batchReparse(): Promise<void> {
+  const ids = selectedItemIds();
+  if (ids.length === 0) return;
+  setStatus(`Reparsing ${ids.length} item(s)...`);
+  let ok = 0;
+  for (const id of ids) {
+    try {
+      await client.reparseItem(id);
+      ok += 1;
+    } catch (error) {
+      setStatus(`Reparse failed for ${id}: ${errorMessage(error)}`);
+    }
+  }
+  setStatus(`Reparsed ${ok}/${ids.length} item(s).`);
+  await refreshItems();
+}
+
+async function batchDelete(mode: "remove" | "purge"): Promise<void> {
+  const ids = selectedItemIds();
+  if (ids.length === 0) return;
+  const verb = mode === "purge" ? "Purge" : "Remove";
+  if (!globalThis.confirm(`${verb} ${ids.length} selected item(s)?`)) return;
+  setStatus(`${verb.toLowerCase()}ing ${ids.length} item(s)...`);
+  let ok = 0;
+  for (const id of ids) {
+    try {
+      await client.deleteItem(id, mode);
+      ok += 1;
+    } catch (error) {
+      setStatus(`${verb} failed for ${id}: ${errorMessage(error)}`);
+    }
+  }
+  setStatus(`${verb}d ${ok}/${ids.length} item(s).`);
+  await refreshItems();
 }
 
 function openReader(itemId: string): void {

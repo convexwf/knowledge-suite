@@ -61,6 +61,17 @@
               </select>
             </label>
           </div>
+          <div id="batch-bar" class="batch-bar" hidden>
+            <label class="batch-select-all">
+              <input type="checkbox" id="select-all" />
+              <span id="select-count">0 selected</span>
+            </label>
+            <div class="batch-actions">
+              <button id="batch-reparse" type="button">Reparse</button>
+              <button id="batch-remove" type="button">Remove</button>
+              <button id="batch-purge" type="button" class="danger-button">Purge</button>
+            </div>
+          </div>
           <div id="item-list" class="item-list" aria-live="polite"></div>
         </section>
       </section>

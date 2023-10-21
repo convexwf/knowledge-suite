@@ -515,57 +515,94 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
   app.post("/api/items/:itemId/reparse", async (request): Promise<EpubImportResponse> => {
     const params = request.params as { itemId: string };
     const capture = await store.loadRawContentForItem(params.itemId);
-    if (capture.rawdoc.source_type !== "epub") {
-      throw new Error("reparse currently supports epub items only");
-    }
     const oldDocId = capture.item.activeDocId;
-    const parsed = await parseEpub(capture.content, {
-      rawdocId: capture.rawdoc.rawdoc_id,
-      sourceUri: capture.rawdoc.source_uri,
-      calibreMetadata: calibreMetadataFromRawdoc(capture.rawdoc),
-      pandocRunner: config.epubPandocRunner
-    });
-    try {
-      // Delete old derived artifacts before preparing new ones,
-      // otherwise shared assets (same hash) get deleted after copy.
-      if (oldDocId) {
-        await store.deleteDerivedArtifacts(oldDocId);
-      }
-      const documentWithAssets = await store.prepareDocumentAssets(parsed.document);
-      const markdown = documentToMarkdown(documentWithAssets);
-      const rawdoc = {
-        ...parsed.rawdoc,
-        metadata: {
-          ...parsed.rawdoc.metadata,
-          reparsedFromItemId: capture.item.itemId
-        }
-      };
-      const paths = await store.saveImportItem({
-        itemId: capture.item.itemId,
-        identityHash: capture.item.identityHash,
-        rawContent: capture.content,
-        rawdoc,
-        document: documentWithAssets,
-        markdown,
-        contentExt: capture.contentExt,
-        epubMetadata: parsed.epubMetadata
+
+    if (capture.rawdoc.source_type === "epub") {
+      const parsed = await parseEpub(capture.content, {
+        rawdocId: capture.rawdoc.rawdoc_id,
+        sourceUri: capture.rawdoc.source_uri,
+        calibreMetadata: calibreMetadataFromRawdoc(capture.rawdoc),
+        pandocRunner: config.epubPandocRunner
       });
-      const knowledgeItem = await store.loadItem(capture.item.itemId);
-      const annotationWarnings = await migrateAnnotationsForReparse(
-        store, oldDocId, documentWithAssets
-      );
-      return {
-        knowledgeItem,
-        rawdoc,
-        document: documentWithAssets,
-        markdown,
-        saved: true,
-        paths,
-        ...(annotationWarnings ? { annotationWarnings } : {})
-      };
-    } finally {
-      await parsed.cleanup();
+      try {
+        if (oldDocId) {
+          await store.deleteDerivedArtifacts(oldDocId);
+        }
+        const documentWithAssets = await store.prepareDocumentAssets(parsed.document);
+        const markdown = documentToMarkdown(documentWithAssets);
+        const rawdoc = {
+          ...parsed.rawdoc,
+          metadata: {
+            ...parsed.rawdoc.metadata,
+            reparsedFromItemId: capture.item.itemId
+          }
+        };
+        const paths = await store.saveImportItem({
+          itemId: capture.item.itemId,
+          identityHash: capture.item.identityHash,
+          rawContent: capture.content,
+          rawdoc,
+          document: documentWithAssets,
+          markdown,
+          contentExt: capture.contentExt,
+          epubMetadata: parsed.epubMetadata
+        });
+        const knowledgeItem = await store.loadItem(capture.item.itemId);
+        const annotationWarnings = await migrateAnnotationsForReparse(
+          store, oldDocId, documentWithAssets
+        );
+        return {
+          knowledgeItem,
+          rawdoc,
+          document: documentWithAssets,
+          markdown,
+          saved: true,
+          paths,
+          ...(annotationWarnings ? { annotationWarnings } : {})
+        };
+      } finally {
+        await parsed.cleanup();
+      }
     }
+
+    const html = capture.content.toString("utf-8");
+    const resolved = resolvedInputFromCapture(capture.rawdoc, html);
+    const parsed = await parsePage(resolved, { rawdocId: capture.rawdoc.rawdoc_id });
+
+    if (oldDocId) {
+      await store.deleteDerivedArtifacts(oldDocId);
+    }
+    const documentWithAssets = await store.prepareDocumentAssets(parsed.document);
+    const markdown = documentToMarkdown(documentWithAssets);
+    const rawdoc = {
+      ...parsed.rawdoc,
+      metadata: {
+        ...parsed.rawdoc.metadata,
+        reparsedFromItemId: capture.item.itemId
+      }
+    };
+    const paths = await store.saveImportItem({
+      itemId: capture.item.itemId,
+      identityHash: capture.item.identityHash,
+      rawContent: capture.content,
+      rawdoc,
+      document: documentWithAssets,
+      markdown,
+      contentExt: capture.contentExt || "html"
+    });
+    const knowledgeItem = await store.loadItem(capture.item.itemId);
+    const annotationWarnings = await migrateAnnotationsForReparse(
+      store, oldDocId, documentWithAssets
+    );
+    return {
+      knowledgeItem,
+      rawdoc,
+      document: documentWithAssets,
+      markdown,
+      saved: true,
+      paths,
+      ...(annotationWarnings ? { annotationWarnings } : {})
+    };
   });
 
   app.delete("/api/items/:itemId", async (request) => {
