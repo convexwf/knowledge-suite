@@ -154,12 +154,22 @@ select {
 }
 
 .item-row {
+  align-items: start;
   border: 1px solid #d9e1ea;
   border-radius: 8px;
   display: grid;
   gap: 12px;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   padding: 14px;
+}
+
+.item-checkbox {
+  align-self: start;
+  height: 18px;
+  margin-top: 2px;
+  min-height: unset;
+  padding: 0;
+  width: 18px;
 }
 
 .item-body {
@@ -243,6 +253,41 @@ select {
   text-align: center;
 }
 
+.batch-bar {
+  align-items: center;
+  background: #f0f4ff;
+  border: 1px solid #c9d4e2;
+  border-radius: 6px;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  padding: 10px 14px;
+}
+
+.batch-bar[hidden] {
+  display: none;
+}
+
+.batch-select-all {
+  align-items: center;
+  color: #42526a;
+  display: flex;
+  font-size: 13px;
+  gap: 8px;
+}
+
+.batch-select-all input[type="checkbox"] {
+  height: 18px;
+  min-height: unset;
+  padding: 0;
+  width: 18px;
+}
+
+.batch-actions {
+  display: flex;
+  gap: 8px;
+}
+
 @media (max-width: 800px) {
   .items-shell {
     padding: 16px;
@@ -253,6 +298,11 @@ select {
   .item-row {
     align-items: stretch;
     grid-template-columns: 1fr;
+  }
+
+  .batch-bar {
+    flex-direction: column;
+    gap: 8px;
   }
 
   .page-header,
