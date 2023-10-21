@@ -288,6 +288,58 @@ select {
   gap: 8px;
 }
 
+.more-menu {
+  position: relative;
+}
+
+.more-menu summary {
+  background: #ffffff;
+  border: 1px solid #cbd5df;
+  border-radius: 6px;
+  color: #1f2933;
+  cursor: pointer;
+  display: inline-flex;
+  list-style: none;
+  min-height: 38px;
+  padding: 8px 10px;
+  user-select: none;
+}
+
+.more-menu summary::-webkit-details-marker {
+  display: none;
+}
+
+.more-menu[open] summary,
+.more-menu summary:hover {
+  border-color: #4f76c7;
+}
+
+.more-menu-panel {
+  background: #ffffff;
+  border: 1px solid #cbd5df;
+  border-radius: 8px;
+  box-shadow: 0 12px 28px rgba(31, 41, 51, 0.16);
+  display: grid;
+  gap: 4px;
+  min-width: 140px;
+  padding: 6px;
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  z-index: 10;
+}
+
+.more-menu-panel button {
+  border-color: transparent;
+  justify-content: flex-start;
+  text-align: left;
+  width: 100%;
+}
+
+.more-menu-panel button:hover {
+  background: #f1f5f9;
+}
+
 @media (max-width: 800px) {
   .items-shell {
     padding: 16px;

@@ -220,22 +220,57 @@ function itemRow(item: KnowledgeItem): HTMLElement {
     void openKnowledgePage(`annotations.html?docId=${encodeURIComponent(item.activeDocId!)}&itemId=${encodeURIComponent(item.itemId)}`);
   });
   annotateButton.disabled = !item.activeDocId;
-  const reparseButton = button("Reparse", "", () => {
-    void reparseItem(item.itemId);
-  });
-  reparseButton.disabled = item.sourceType === "pdf";
-  const removeButton = button("Remove", "", () => {
-    void deleteItem(item, "remove");
-  });
-  const purgeButton = button("Purge", "danger-button", () => {
-    void deleteItem(item, "purge");
-  });
-  actions.append(detailsButton, readButton, annotateButton, reparseButton, removeButton, purgeButton);
+  const more = itemMoreMenu(item);
+  actions.append(detailsButton, readButton, annotateButton, more);
 
   const details = itemDetails(item);
   details.hidden = true;
   row.append(checkbox, body, actions, details);
   return row;
+}
+
+function itemMoreMenu(item: KnowledgeItem): HTMLElement {
+  const menu = document.createElement("details");
+  menu.className = "more-menu";
+  const summary = document.createElement("summary");
+  summary.textContent = "More";
+  menu.append(summary);
+
+  const panel = document.createElement("div");
+  panel.className = "more-menu-panel";
+
+  const reparseBtn = document.createElement("button");
+  reparseBtn.type = "button";
+  reparseBtn.textContent = "Reparse";
+  reparseBtn.disabled = item.sourceType === "pdf";
+  reparseBtn.addEventListener("click", (e) => {
+    e.preventDefault();
+    menu.open = false;
+    void reparseItem(item.itemId);
+  });
+
+  const removeBtn = document.createElement("button");
+  removeBtn.type = "button";
+  removeBtn.textContent = "Remove";
+  removeBtn.addEventListener("click", (e) => {
+    e.preventDefault();
+    menu.open = false;
+    void deleteItem(item, "remove");
+  });
+
+  const purgeBtn = document.createElement("button");
+  purgeBtn.type = "button";
+  purgeBtn.textContent = "Purge";
+  purgeBtn.className = "danger-button";
+  purgeBtn.addEventListener("click", (e) => {
+    e.preventDefault();
+    menu.open = false;
+    void deleteItem(item, "purge");
+  });
+
+  panel.append(reparseBtn, removeBtn, purgeBtn);
+  menu.append(panel);
+  return menu;
 }
 
 function itemDetails(item: KnowledgeItem): HTMLElement {
