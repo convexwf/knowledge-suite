@@ -193,6 +193,53 @@ select {
   min-width: 0;
 }
 
+.info-button {
+  border-radius: 50%;
+  font-weight: 700;
+  min-height: 32px;
+  padding: 0;
+  width: 32px;
+}
+
+.item-details {
+  background: #f8fafc;
+  border: 1px solid #d9e1ea;
+  border-radius: 6px;
+  grid-column: 1 / -1;
+  overflow-x: auto;
+  padding: 10px;
+}
+
+.item-details[hidden] {
+  display: none;
+}
+
+.item-details table {
+  border-collapse: collapse;
+  font-size: 12px;
+  width: 100%;
+}
+
+.item-details th,
+.item-details td {
+  border-bottom: 1px solid #e3e9f0;
+  padding: 6px 8px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.item-details th {
+  color: #42526a;
+  font-weight: 600;
+  white-space: nowrap;
+  width: 112px;
+}
+
+.item-details td {
+  color: #172033;
+  overflow-wrap: anywhere;
+}
+
 .item-creator {
   overflow: hidden;
   text-overflow: ellipsis;

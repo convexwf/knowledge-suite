@@ -214,6 +214,13 @@ function itemRow(item: KnowledgeItem): HTMLElement {
 
   const actions = document.createElement("div");
   actions.className = "item-actions";
+  const detailsButton = button("i", "info-button", () => {
+    details.hidden = !details.hidden;
+    detailsButton.setAttribute("aria-expanded", String(!details.hidden));
+  });
+  detailsButton.title = "Item details";
+  detailsButton.setAttribute("aria-label", "Item details");
+  detailsButton.setAttribute("aria-expanded", "false");
   const readButton = button("Read", "primary-button", () => openReader(item.itemId));
   readButton.disabled = item.state !== "parsed" || !item.activeDocId;
   const annotateButton = button("Annotations", "", () => {
@@ -221,9 +228,44 @@ function itemRow(item: KnowledgeItem): HTMLElement {
   });
   annotateButton.disabled = !item.activeDocId;
   const more = itemMoreMenu(item);
-  actions.append(readButton, annotateButton, more);
+  actions.append(detailsButton, readButton, annotateButton, more);
 
-  row.append(checkbox, body, actions);
+  const details = itemDetails(item);
+  details.hidden = true;
+  row.append(checkbox, body, actions, details);
+  return row;
+}
+
+function itemDetails(item: KnowledgeItem): HTMLElement {
+  const wrapper = document.createElement("div");
+  wrapper.className = "item-details";
+  const table = document.createElement("table");
+  table.append(
+    detailsRow("Title", displayTitle(item)),
+    detailsRow("State", item.state),
+    detailsRow("Source", item.sourceType.toUpperCase()),
+    detailsRow("Language", item.language || "-"),
+    detailsRow("Tags", item.tags.join(", ") || "-"),
+    detailsRow("Item ID", item.itemId),
+    detailsRow("RawDoc ID", item.activeRawdocId),
+    detailsRow("Document ID", item.activeDocId || "-"),
+    detailsRow("Identity hash", item.identityHash),
+    detailsRow("Created", formatDate(item.createdAt)),
+    detailsRow("Updated", formatDate(item.updatedAt)),
+    detailsRow("Parsed", item.parsedAt ? formatDate(item.parsedAt) : "-")
+  );
+  wrapper.append(table);
+  return wrapper;
+}
+
+function detailsRow(label: string, value: string): HTMLTableRowElement {
+  const row = document.createElement("tr");
+  const key = document.createElement("th");
+  key.scope = "row";
+  key.textContent = label;
+  const cell = document.createElement("td");
+  cell.textContent = value;
+  row.append(key, cell);
   return row;
 }
 
