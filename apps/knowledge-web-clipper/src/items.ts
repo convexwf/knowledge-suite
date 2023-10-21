@@ -199,21 +199,21 @@ function itemRow(item: KnowledgeItem): HTMLElement {
   creator.textContent = item.creators.join(", ") || "Unknown creator";
   const sourceLine = document.createElement("div");
   sourceLine.className = "item-summary-line";
-  sourceLine.textContent = `${item.language || "Unknown language"} · ${item.sourceType.toUpperCase()}`;
+  sourceLine.textContent = [item.language || "Unknown language", item.sourceType.toUpperCase(), item.state].join(" · ");
   const dateLine = document.createElement("div");
   dateLine.className = "item-summary-line";
   dateLine.textContent = `Updated ${formatDate(item.updatedAt)}`;
   body.append(title, creator, sourceLine, dateLine);
 
+  if (item.tags.length > 0) {
+    const tagsLine = document.createElement("div");
+    tagsLine.className = "item-tags";
+    tagsLine.textContent = item.tags.join(", ");
+    body.append(tagsLine);
+  }
+
   const actions = document.createElement("div");
   actions.className = "item-actions";
-  const detailsButton = button("i", "info-button", () => {
-    details.hidden = !details.hidden;
-    detailsButton.setAttribute("aria-expanded", String(!details.hidden));
-  });
-  detailsButton.title = "Item details";
-  detailsButton.setAttribute("aria-label", "Item details");
-  detailsButton.setAttribute("aria-expanded", "false");
   const readButton = button("Read", "primary-button", () => openReader(item.itemId));
   readButton.disabled = item.state !== "parsed" || !item.activeDocId;
   const annotateButton = button("Annotations", "", () => {
@@ -221,11 +221,9 @@ function itemRow(item: KnowledgeItem): HTMLElement {
   });
   annotateButton.disabled = !item.activeDocId;
   const more = itemMoreMenu(item);
-  actions.append(detailsButton, readButton, annotateButton, more);
+  actions.append(readButton, annotateButton, more);
 
-  const details = itemDetails(item);
-  details.hidden = true;
-  row.append(checkbox, body, actions, details);
+  row.append(checkbox, body, actions);
   return row;
 }
 
@@ -271,35 +269,6 @@ function itemMoreMenu(item: KnowledgeItem): HTMLElement {
   panel.append(reparseBtn, removeBtn, purgeBtn);
   menu.append(panel);
   return menu;
-}
-
-function itemDetails(item: KnowledgeItem): HTMLElement {
-  const wrapper = document.createElement("div");
-  wrapper.className = "item-details";
-  const table = document.createElement("table");
-  table.append(
-    detailsRow("State", item.state),
-    detailsRow("Item ID", item.itemId),
-    detailsRow("RawDoc ID", item.activeRawdocId),
-    detailsRow("Document ID", item.activeDocId || "-"),
-    detailsRow("Identity hash", item.identityHash),
-    detailsRow("Tags", item.tags.join(", ") || "-"),
-    detailsRow("Created", formatDate(item.createdAt)),
-    detailsRow("Parsed", item.parsedAt ? formatDate(item.parsedAt) : "-")
-  );
-  wrapper.append(table);
-  return wrapper;
-}
-
-function detailsRow(label: string, value: string): HTMLTableRowElement {
-  const row = document.createElement("tr");
-  const key = document.createElement("th");
-  key.scope = "row";
-  key.textContent = label;
-  const cell = document.createElement("td");
-  cell.textContent = value;
-  row.append(key, cell);
-  return row;
 }
 
 async function reparseItem(itemId: string): Promise<void> {
