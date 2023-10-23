@@ -20,6 +20,12 @@ const batchBar = mustGet<HTMLElement>("batch-bar");
 const batchReparseBtn = mustGet<HTMLButtonElement>("batch-reparse");
 const batchRemoveBtn = mustGet<HTMLButtonElement>("batch-remove");
 const batchPurgeBtn = mustGet<HTMLButtonElement>("batch-purge");
+const overviewTotal = mustGet<HTMLElement>("overview-total");
+const overviewParsed = mustGet<HTMLElement>("overview-parsed");
+const overviewLatest = mustGet<HTMLElement>("overview-latest");
+const overviewTotalDetail = mustGet<HTMLElement>("overview-total-detail");
+const overviewParsedDetail = mustGet<HTMLElement>("overview-parsed-detail");
+const overviewLatestDetail = mustGet<HTMLElement>("overview-latest-detail");
 
 const settings = await getSettings();
 const client = createKnowledgeApiClient(settings);
@@ -166,6 +172,7 @@ async function refreshItems(): Promise<void> {
 
 function renderItems(items: KnowledgeItem[]): void {
   currentItems = items;
+  renderOverview(items);
   itemList.replaceChildren();
   if (items.length === 0) {
     itemList.append(emptyNode("No saved items match the current filter."));
@@ -189,8 +196,19 @@ function itemRow(item: KnowledgeItem): HTMLElement {
   checkbox.dataset.itemId = item.itemId;
   checkbox.addEventListener("change", updateBatchBar);
 
+  const avatar = document.createElement("div");
+  avatar.className = "item-avatar";
+  avatar.textContent = sourceShortLabel(item.sourceType);
+
   const body = document.createElement("div");
   body.className = "item-body";
+  const kickerRow = document.createElement("div");
+  kickerRow.className = "item-kicker-row";
+  kickerRow.append(
+    badge(sourceBadgeLabel(item.sourceType), "source"),
+    badge(item.state === "parsed" ? "Reader Ready" : "Captured", item.state),
+    item.activeDocId ? badge("Document", "doc") : badge("Raw Only", "raw")
+  );
   const title = document.createElement("h3");
   title.className = "item-title";
   title.textContent = displayTitle(item);
@@ -198,12 +216,16 @@ function itemRow(item: KnowledgeItem): HTMLElement {
   creator.className = "item-creator";
   creator.textContent = item.creators.join(", ") || "Unknown creator";
   const sourceLine = document.createElement("div");
-  sourceLine.className = "item-summary-line";
-  sourceLine.textContent = [item.language || "Unknown language", item.sourceType.toUpperCase(), item.state].join(" · ");
+  sourceLine.className = "item-summary-line item-statline";
+  sourceLine.textContent = [
+    item.language || "Unknown language",
+    item.creators.length > 0 ? `${item.creators.length} creator${item.creators.length > 1 ? "s" : ""}` : "Unknown creator",
+    item.parsedAt ? `Parsed ${formatDate(item.parsedAt)}` : "Waiting for parse"
+  ].join(" · ");
   const dateLine = document.createElement("div");
   dateLine.className = "item-summary-line";
   dateLine.textContent = `Updated ${formatDate(item.updatedAt)}`;
-  body.append(title, creator, sourceLine, dateLine);
+  body.append(kickerRow, title, creator, sourceLine, dateLine);
 
   if (item.tags.length > 0) {
     const tagsLine = document.createElement("div");
@@ -232,8 +254,29 @@ function itemRow(item: KnowledgeItem): HTMLElement {
 
   const details = itemDetails(item);
   details.hidden = true;
-  row.append(checkbox, body, actions, details);
+  row.append(checkbox, avatar, body, actions, details);
   return row;
+}
+
+function renderOverview(items: KnowledgeItem[]): void {
+  const parsed = items.filter((item) => item.state === "parsed").length;
+  const latest = items
+    .map((item) => ({ item, time: Date.parse(item.updatedAt) }))
+    .filter((entry) => !Number.isNaN(entry.time))
+    .sort((left, right) => right.time - left.time)[0]?.item;
+
+  overviewTotal.textContent = String(items.length);
+  overviewParsed.textContent = String(parsed);
+  overviewLatest.textContent = latest ? formatShortDate(latest.updatedAt) : "-";
+  overviewTotalDetail.textContent = items.length === 0
+    ? "Start by importing an EPUB or opening a saved web clip."
+    : `${items.filter((item) => item.sourceType === "url").length} web, ${items.filter((item) => item.sourceType === "epub").length} EPUB, ${items.filter((item) => item.sourceType === "pdf").length} PDF.`;
+  overviewParsedDetail.textContent = parsed === 0
+    ? "No reader-ready items yet."
+    : `${parsed} of ${items.length} item(s) can open directly in Reader mode.`;
+  overviewLatestDetail.textContent = latest
+    ? `${displayTitle(latest)} was updated most recently.`
+    : "No activity yet.";
 }
 
 function itemDetails(item: KnowledgeItem): HTMLElement {
@@ -390,6 +433,43 @@ function displayTitle(item: KnowledgeItem): string {
   return item.title || item.subtitle || item.itemId;
 }
 
+function badge(label: string, tone: string): HTMLElement {
+  const element = document.createElement("span");
+  element.className = `item-badge ${tone}`;
+  element.textContent = label;
+  return element;
+}
+
+function sourceBadgeLabel(sourceType: KnowledgeSourceType): string {
+  switch (sourceType) {
+    case "url":
+      return "Web Clip";
+    case "epub":
+      return "EPUB";
+    case "pdf":
+      return "PDF";
+    case "singlefile_html":
+      return "SingleFile";
+    default:
+      return sourceType;
+  }
+}
+
+function sourceShortLabel(sourceType: KnowledgeSourceType): string {
+  switch (sourceType) {
+    case "url":
+      return "WB";
+    case "epub":
+      return "EP";
+    case "pdf":
+      return "PDF";
+    case "singlefile_html":
+      return "SF";
+    default:
+      return String(sourceType);
+  }
+}
+
 function button(label: string, className: string, onClick: () => void): HTMLButtonElement {
   const element = document.createElement("button");
   element.type = "button";
@@ -415,6 +495,17 @@ function emptyNode(text: string): HTMLElement {
 function formatDate(value: string): string {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+}
+
+function formatShortDate(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+  return date.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric"
+  });
 }
 
 function setStatus(message: string): void {

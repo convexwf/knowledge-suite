@@ -721,3 +721,95 @@ button[data-active="true"] {
 .saved-item {
   border-color: var(--border-subtle);
 }
+
+.hero-strip {
+  background: rgba(255, 252, 247, 0.84);
+  border-bottom: 1px solid var(--border-subtle);
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  padding: 12px 14px 14px;
+}
+
+.hero-card {
+  background: rgba(255, 252, 247, 0.76);
+  border: 1px solid rgba(96, 88, 72, 0.12);
+  border-radius: var(--radius-md);
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+}
+
+.hero-kicker {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.hero-value {
+  color: var(--text-strong);
+  font-size: 16px;
+  line-height: 1.2;
+}
+
+.hero-copy {
+  font-size: 12px;
+}
+
+.statusbar {
+  align-items: stretch;
+  gap: 12px;
+}
+
+.status-copy {
+  background: rgba(35, 73, 63, 0.06);
+  border: 1px solid rgba(35, 73, 63, 0.1);
+  border-radius: var(--radius-md);
+  flex: 1;
+  padding: 10px 12px;
+}
+
+.primary-action {
+  min-width: 104px;
+}
+
+.saved-list,
+.batch-output {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+}
+
+.saved-item,
+.batch-summary,
+.batch-item {
+  background: rgba(255, 252, 247, 0.88);
+  border-radius: var(--radius-md);
+}
+
+.saved-item {
+  border-width: 1px;
+  border-style: solid;
+  box-shadow: 0 8px 22px rgba(70, 55, 32, 0.05);
+}
+
+.saved-title,
+.batch-title {
+  color: var(--text-strong);
+}
+
+.saved-url,
+.saved-meta,
+.saved-details,
+.batch-meta,
+.batch-url {
+  color: var(--text-muted);
+}
+
+@media (max-width: 640px) {
+  .hero-strip {
+    grid-template-columns: 1fr;
+  }
+}
