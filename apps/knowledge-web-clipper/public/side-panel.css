@@ -1,3 +1,7 @@
+@import url("./styles/tokens.css");
+@import url("./styles/base.css");
+@import url("./styles/components.css");
+
 :root {
   color-scheme: light dark;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -634,4 +638,86 @@ button:disabled {
 
 .saved-details {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+body {
+  min-height: 100vh;
+}
+
+.header,
+.controls,
+.statusbar,
+.diagnostics-toggle-row,
+.diagnostics-tabs,
+.candidate-control {
+  background: rgba(255, 252, 247, 0.82);
+  border-bottom-color: var(--border-subtle);
+}
+
+.header h1 {
+  font-size: 20px;
+}
+
+.header p,
+#status-detail {
+  color: var(--text-muted);
+}
+
+.diagnostics-toggle {
+  color: var(--text-muted);
+}
+
+.diagnostics-toggle:hover {
+  color: var(--accent-primary);
+}
+
+button[data-active="true"] {
+  background: var(--accent-primary);
+  border-color: var(--accent-primary);
+  color: #f8f4ee;
+}
+
+#purge-button {
+  color: var(--state-danger-fg);
+}
+
+#purge-button:hover {
+  background: var(--state-danger-bg);
+}
+
+.code-output,
+.parser-output,
+.preview-output {
+  background: rgba(255, 252, 247, 0.9);
+  color: var(--text-strong);
+  padding: 16px 14px;
+}
+
+.preview-output code,
+.preview-output pre {
+  background: rgba(35, 73, 63, 0.08);
+  border-radius: var(--radius-sm);
+}
+
+.preview-output .math-inline,
+.preview-output .math-display {
+  border-color: var(--border-subtle);
+}
+
+.preview-output blockquote {
+  border-left-color: rgba(159, 106, 47, 0.44);
+  color: var(--text-body);
+}
+
+.preview-output a {
+  color: var(--accent-link);
+}
+
+.preview-output th,
+.preview-output td,
+.parser-group,
+.batch-summary,
+.batch-item,
+.saved-item {
+  border-color: var(--border-subtle);
 }

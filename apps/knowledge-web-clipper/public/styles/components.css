@@ -1,0 +1,105 @@
+.primary-button,
+.primary-action {
+  background: var(--accent-primary);
+  border-color: var(--accent-primary);
+  color: #f8f4ee;
+  font-weight: 650;
+}
+
+.primary-button:hover,
+.primary-action:hover {
+  background: var(--accent-primary-strong);
+  border-color: var(--accent-primary-strong);
+}
+
+.danger-button {
+  background: var(--state-danger-bg);
+  border-color: rgba(160, 63, 49, 0.28);
+  color: var(--state-danger-fg);
+}
+
+.danger-button:hover {
+  background: rgba(160, 63, 49, 0.18);
+  border-color: rgba(160, 63, 49, 0.4);
+}
+
+.panel-description {
+  color: var(--text-muted);
+}
+
+.empty-state,
+.anno-detail-empty {
+  background: rgba(255, 252, 247, 0.76);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-lg);
+  color: var(--text-muted);
+  padding: 24px;
+  text-align: center;
+}
+
+.more-menu {
+  position: relative;
+}
+
+.more-menu summary {
+  align-items: center;
+  background: var(--bg-panel-strong);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-strong);
+  cursor: pointer;
+  display: inline-flex;
+  list-style: none;
+  min-height: 40px;
+  padding: 8px 11px;
+  user-select: none;
+}
+
+.more-menu summary::-webkit-details-marker {
+  display: none;
+}
+
+.more-menu[open] summary,
+.more-menu summary:hover {
+  border-color: var(--accent-primary);
+}
+
+.more-menu-panel {
+  background: #fffdfa;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-medium);
+  display: grid;
+  gap: 4px;
+  min-width: 180px;
+  padding: 6px;
+  position: absolute;
+  right: 0;
+  top: calc(100% + 10px);
+  z-index: 10;
+}
+
+.more-menu-panel button {
+  border-color: transparent;
+  justify-content: flex-start;
+  text-align: left;
+  width: 100%;
+}
+
+.more-menu-panel button:hover {
+  background: var(--bg-soft);
+  border-color: transparent;
+}
+
+#status-pill {
+  align-items: center;
+  background: var(--state-success-bg);
+  border-radius: 999px;
+  color: var(--state-success-fg);
+  display: inline-flex;
+  font-size: 12px;
+  font-weight: 600;
+  gap: 6px;
+  letter-spacing: 0.01em;
+  padding: 5px 10px;
+}

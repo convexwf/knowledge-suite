@@ -1,3 +1,7 @@
+@import url("./styles/tokens.css");
+@import url("./styles/base.css");
+@import url("./styles/components.css");
+
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 body {
@@ -248,4 +252,110 @@ body {
   .anno-nav {
     display: none;
   }
+}
+
+.anno-nav {
+  background: rgba(255, 252, 247, 0.9);
+  border-right-color: var(--border-subtle);
+  box-shadow: 14px 0 30px rgba(64, 50, 29, 0.04);
+}
+
+.anno-nav-header {
+  border-bottom-color: var(--border-subtle);
+}
+
+.anno-nav-header button {
+  min-height: 34px;
+}
+
+.anno-nav-item {
+  border-bottom-color: rgba(96, 88, 72, 0.08);
+}
+
+.anno-nav-item:hover {
+  background: rgba(35, 73, 63, 0.06);
+}
+
+.anno-nav-item.active {
+  background: rgba(35, 73, 63, 0.1);
+  border-left-color: var(--accent-primary);
+}
+
+.anno-nav-item-count,
+.anno-card-meta {
+  color: var(--text-faint);
+}
+
+.anno-detail {
+  padding: 24px;
+}
+
+.anno-detail-subtitle {
+  color: var(--text-muted);
+}
+
+.anno-detail-subtitle code {
+  background: rgba(35, 73, 63, 0.08);
+}
+
+.anno-filter-btn {
+  border-color: var(--border-subtle);
+  color: var(--text-muted);
+}
+
+.anno-filter-btn.active {
+  background: var(--accent-primary);
+  border-color: var(--accent-primary);
+  color: #f8f4ee;
+}
+
+.anno-delete-all {
+  background: var(--state-danger-bg);
+  border-color: rgba(160, 63, 49, 0.28);
+  border-radius: var(--radius-sm);
+  color: var(--state-danger-fg);
+}
+
+.anno-delete-all:hover {
+  background: rgba(160, 63, 49, 0.18);
+}
+
+.anno-card {
+  background: rgba(255, 252, 247, 0.92);
+  border-color: var(--border-subtle);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-soft);
+  padding: 14px;
+}
+
+.anno-card.orphaned {
+  border-color: rgba(159, 106, 47, 0.35);
+  background: rgba(255, 247, 232, 0.88);
+}
+
+.anno-card-type {
+  color: var(--accent-primary);
+}
+
+.anno-card-type .orphaned-badge {
+  color: var(--accent-warm);
+}
+
+.anno-card-body {
+  color: var(--text-body);
+}
+
+.anno-card-body .text-ref {
+  background: rgba(217, 188, 83, 0.3);
+}
+
+.anno-card-delete {
+  border-color: var(--border-subtle);
+  background: rgba(255, 252, 247, 0.9);
+  color: var(--text-faint);
+}
+
+.anno-card-delete:hover {
+  color: var(--state-danger-fg);
+  border-color: rgba(160, 63, 49, 0.35);
 }

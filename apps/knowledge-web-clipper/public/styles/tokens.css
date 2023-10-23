@@ -1,0 +1,31 @@
+:root {
+  color-scheme: light;
+  --font-ui: "Avenir Next", "Segoe UI Variable", "SF Pro Text", "Helvetica Neue", sans-serif;
+  --font-reading: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
+  --bg-app: #f3efe8;
+  --bg-app-accent: radial-gradient(circle at top left, rgba(176, 146, 88, 0.14), transparent 34%), linear-gradient(180deg, #f7f3ec 0%, #f1ede6 100%);
+  --bg-panel: rgba(255, 252, 247, 0.94);
+  --bg-panel-strong: #fffdf8;
+  --bg-elevated: #fffdfa;
+  --bg-soft: #f8f4ec;
+  --text-strong: #1d2730;
+  --text-body: #31404d;
+  --text-muted: #6a756f;
+  --text-faint: #8f948c;
+  --border-subtle: rgba(96, 88, 72, 0.16);
+  --border-strong: rgba(72, 62, 45, 0.22);
+  --accent-primary: #23493f;
+  --accent-primary-strong: #18372f;
+  --accent-link: #245f78;
+  --accent-warm: #9f6a2f;
+  --state-success-bg: rgba(35, 73, 63, 0.12);
+  --state-success-fg: #23493f;
+  --state-danger-bg: rgba(160, 63, 49, 0.12);
+  --state-danger-fg: #a03f31;
+  --shadow-soft: 0 10px 30px rgba(66, 53, 31, 0.08);
+  --shadow-medium: 0 18px 42px rgba(51, 40, 24, 0.12);
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 18px;
+  --radius-xl: 24px;
+}

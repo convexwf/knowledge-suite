@@ -1,3 +1,7 @@
+@import url("./styles/tokens.css");
+@import url("./styles/base.css");
+@import url("./styles/components.css");
+
 :root {
   color-scheme: light dark;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -874,4 +878,106 @@ h2 {
 .summary-inline-body {
   padding: 10px;
   color: #333;
+}
+
+.reader-shell {
+  padding: 28px 24px 36px;
+}
+
+.reader-header h1 {
+  font-size: 32px;
+  line-height: 1.12;
+}
+
+#reader-kicker,
+.reader-meta {
+  color: var(--text-muted);
+}
+
+.outline-panel {
+  background: rgba(255, 252, 247, 0.84);
+  border-color: var(--border-subtle);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-soft);
+}
+
+#outline-collapse-toggle {
+  border-color: var(--border-subtle);
+  color: var(--text-muted);
+}
+
+#outline-collapse-toggle:hover,
+.outline-toggle:hover {
+  border-color: var(--accent-primary);
+  color: var(--accent-primary);
+}
+
+.outline-link.depth-0 {
+  color: var(--text-strong);
+}
+
+.outline-link.depth-1 {
+  color: var(--text-body);
+}
+
+.outline-link.depth-2,
+.outline-toggle {
+  color: var(--text-faint);
+}
+
+.outline-link:hover {
+  background: rgba(35, 73, 63, 0.08);
+}
+
+.reader-content {
+  background: rgba(255, 252, 247, 0.92);
+  border-color: var(--border-subtle);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-soft);
+  padding: 32px;
+}
+
+.reader-content p,
+.reader-content li,
+.reader-content blockquote {
+  color: var(--text-body);
+  font-family: var(--font-reading);
+  font-size: 17px;
+  line-height: 1.82;
+}
+
+.reader-content blockquote {
+  border-left-color: rgba(159, 106, 47, 0.44);
+  color: #5e5242;
+  padding-left: 16px;
+}
+
+.reader-content pre,
+.reader-content code {
+  background: rgba(35, 73, 63, 0.08);
+}
+
+.reader-content code {
+  border-radius: var(--radius-sm);
+}
+
+.reader-content pre {
+  border-radius: var(--radius-md);
+}
+
+.reader-content figcaption {
+  color: var(--text-muted);
+}
+
+.reader-content th,
+.reader-content td {
+  border-color: var(--border-subtle);
+}
+
+.reader-content th {
+  background: rgba(35, 73, 63, 0.08);
+}
+
+.reader-content a {
+  color: var(--accent-link);
 }
