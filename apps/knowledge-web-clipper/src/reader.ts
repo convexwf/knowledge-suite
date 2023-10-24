@@ -29,6 +29,9 @@ const aiGenerateBtn = mustGet<HTMLButtonElement>("ai-generate");
 const aiCancelBtn = mustGet<HTMLButtonElement>("ai-cancel");
 const aiSelectAllBtn = mustGet<HTMLButtonElement>("ai-select-all");
 const aiDeselectAllBtn = mustGet<HTMLButtonElement>("ai-deselect-all");
+const readerSourceOutput = mustGet<HTMLElement>("reader-source");
+const readerStateOutput = mustGet<HTMLElement>("reader-state");
+const readerAnnotationCountOutput = mustGet<HTMLElement>("reader-annotation-count");
 
 const settings = await getSettings();
 const client = createKnowledgeApiClient(settings);
@@ -228,6 +231,14 @@ function renderMetadata(item: KnowledgeItem | undefined, document: KnowledgeDocu
   titleOutput.textContent = title;
   kickerOutput.textContent = item?.sourceType ? `${item.sourceType.toUpperCase()} reader` : "Document reader";
   metaOutput.replaceChildren();
+  readerSourceOutput.textContent = sourceSummary(item, document);
+  readerStateOutput.textContent = item?.state === "parsed"
+    ? "Reader Ready"
+    : item?.state === "captured"
+      ? "Captured"
+      : document
+        ? "Document Loaded"
+        : "Waiting";
   const metaItems = [
     item?.creators.length ? item.creators.join(", ") : document?.meta.authors?.join(", "),
     document?.meta.language || item?.language,
@@ -840,11 +851,13 @@ async function loadAndApplyAnnotations(): Promise<void> {
   try {
     const result = await client.annotations(currentDocId);
     currentAnnotations = result.annotations.filter((a) => !a.orphaned);
+    readerAnnotationCountOutput.textContent = String(currentAnnotations.length);
     applyHighlightOverlays(contentOutput, currentAnnotations);
     applySummaryIndicators();
     renderAnnotationSidebar();
   } catch {
     currentAnnotations = [];
+    readerAnnotationCountOutput.textContent = "0";
   }
 }
 
@@ -1311,11 +1324,16 @@ function renderAnnotationSidebar(): void {
   container.replaceChildren();
 
   const total = currentAnnotations.length;
-  const annotLabel = documentCreate("div", "Annotations");
+  const summary = document.createElement("div");
+  summary.className = "annotation-summary";
+  const annotLabel = documentCreate("div", "Document Notes");
   annotLabel.className = "annotation-count-label";
+  const annotMeta = documentCreate("div", total === 0 ? "No highlights, notes, or summaries yet." : `${total} annotation${total === 1 ? "" : "s"} in this document`);
+  annotMeta.className = "annotation-summary-meta";
+  summary.append(annotLabel, annotMeta);
 
   if (total === 0) {
-    container.append(annotLabel, documentCreate("span", "None"));
+    container.append(summary, documentCreate("span", "None"));
     return;
   }
 
@@ -1336,7 +1354,7 @@ function renderAnnotationSidebar(): void {
     });
     filterBar.append(btn);
   }
-  container.append(filterBar);
+  container.append(summary, filterBar);
 
   const list = document.createElement("div");
   list.className = "annotation-list";
@@ -1378,7 +1396,7 @@ function renderAnnotationSidebar(): void {
       if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
     });
 
-    item.innerHTML = `<span class="anno-icon"${color ? ` style="color:${color}"` : ""}>${typeIcon}</span><span class="anno-text">${escapeHtml(body || "(empty)")}</span>`;
+    item.innerHTML = `<span class="anno-icon"${color ? ` style="color:${color}"` : ""}>${typeIcon}</span><span class="anno-text"><strong>${anno.type}</strong>${body ? ` — ${escapeHtml(body)}` : " — (empty)"}</span>`;
     list.append(item);
   }
   container.append(list);
@@ -1393,6 +1411,21 @@ function toggleAnnotationType(container: HTMLElement, type: string, visible: boo
 
 function escapeHtml(value: string): string {
   return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+function sourceSummary(item: KnowledgeItem | undefined, document: KnowledgeDocument | undefined): string {
+  const sourceType = item?.sourceType ?? document?.meta.source?.type;
+  const sourceUrl = document?.meta.source?.url ?? undefined;
+  const typeLabel = sourceType ? sourceType.toUpperCase() : "DOC";
+  if (!sourceUrl) {
+    return typeLabel;
+  }
+  try {
+    const parsed = new URL(sourceUrl);
+    return `${typeLabel} · ${parsed.hostname.replace(/^www\./, "")}`;
+  } catch {
+    return typeLabel;
+  }
 }
 
 function showAnnotationToolbar(selection: Selection, sectionEl: HTMLElement): void {

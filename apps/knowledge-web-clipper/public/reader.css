@@ -981,3 +981,106 @@ h2 {
 .reader-content a {
   color: var(--accent-link);
 }
+
+.reader-facts {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 20px;
+}
+
+.reader-fact {
+  background: rgba(255, 252, 247, 0.9);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-soft);
+  display: grid;
+  gap: 6px;
+  min-height: 112px;
+  padding: 18px 20px;
+}
+
+.reader-fact-label {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.reader-fact-value {
+  color: var(--text-strong);
+  font-size: 22px;
+  letter-spacing: -0.03em;
+  line-height: 1.15;
+}
+
+.reader-meta span {
+  align-items: center;
+  background: rgba(35, 73, 63, 0.08);
+  border-radius: 999px;
+  color: var(--text-body);
+  display: inline-flex;
+  padding: 6px 10px;
+}
+
+.reader-actions {
+  gap: 8px;
+}
+
+.annotation-summary {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+
+.annotation-summary-meta {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.annotation-count-label {
+  color: var(--text-strong);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.annotation-item {
+  background: rgba(255, 252, 247, 0.86);
+  border: 1px solid rgba(96, 88, 72, 0.12);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+}
+
+.annotation-item .anno-text strong {
+  color: var(--text-strong);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  margin-right: 6px;
+  text-transform: uppercase;
+}
+
+.back-to-top {
+  background: var(--accent-primary);
+  border-color: var(--accent-primary);
+  border-radius: 999px;
+  box-shadow: var(--shadow-medium);
+  color: #f8f4ee;
+  padding-inline: 16px;
+}
+
+.ai-dialog-content {
+  background: rgba(255, 252, 247, 0.98);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-medium);
+}
+
+@media (max-width: 900px) {
+  .reader-facts {
+    grid-template-columns: 1fr;
+  }
+}
