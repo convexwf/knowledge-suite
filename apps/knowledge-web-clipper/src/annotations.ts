@@ -11,6 +11,8 @@ const initialDocId = query.get("docId") || undefined;
 const backBtn = mustGet<HTMLButtonElement>("back-to-items");
 const navList = mustGet<HTMLElement>("anno-nav-list");
 const detailEl = mustGet<HTMLElement>("anno-detail");
+const docCountEl = mustGet<HTMLElement>("anno-doc-count");
+const totalCountEl = mustGet<HTMLElement>("anno-total-count");
 
 let docs: AnnotationDocSummary[] = [];
 let currentDocId: string | null = null;
@@ -27,6 +29,7 @@ async function loadDocs(): Promise<void> {
   try {
     const result = await client.listAnnotationDocs();
     docs = result.docs;
+    renderNavStats();
     renderNav();
 
     if (initialDocId && docs.some((d) => d.doc_id === initialDocId)) {
@@ -45,8 +48,12 @@ function renderNav(): void {
     const item = document.createElement("div");
     item.className = "anno-nav-item" + (doc.doc_id === currentDocId ? " active" : "");
     item.dataset.docId = doc.doc_id;
+    const typeSummary = summarizeTypes(doc.types);
     item.innerHTML = `
-      <span class="anno-nav-item-title">${escapeHtml(doc.title ?? doc.doc_id.slice(0, 8) + "...")}</span>
+      <div class="anno-nav-item-copy">
+        <span class="anno-nav-item-title">${escapeHtml(doc.title ?? doc.doc_id.slice(0, 8) + "...")}</span>
+        <span class="anno-nav-item-subtitle">${escapeHtml(typeSummary || "No typed annotations yet")}</span>
+      </div>
       <span class="anno-nav-item-count">${doc.count}</span>
     `;
     item.addEventListener("click", () => selectDoc(doc.doc_id));
@@ -80,9 +87,15 @@ function renderDetail(): void {
       <div class="anno-detail-title">${escapeHtml(title)}</div>
       <div class="anno-detail-subtitle"><code>${currentDocId.slice(0, 8)}...</code> · ${currentAnnotations.length} annotations</div>
     </div>
+    <div class="anno-detail-overview">
+      ${detailStats(doc)}
+    </div>
     <div class="anno-toolbar">
       <div class="anno-filter" id="anno-filter"></div>
-      <button class="anno-delete-all" id="anno-delete-all"${currentAnnotations.length === 0 ? " hidden" : ""}>Delete All ${currentAnnotations.length}</button>
+      <div class="anno-toolbar-actions">
+        <button class="anno-open-reader" id="anno-open-reader">Open in Reader</button>
+        <button class="anno-delete-all" id="anno-delete-all"${currentAnnotations.length === 0 ? " hidden" : ""}>Delete All ${currentAnnotations.length}</button>
+      </div>
     </div>
     <div class="anno-list" id="anno-list"></div>
     <div class="anno-detail-empty" id="anno-empty"${currentAnnotations.length > 0 ? " hidden" : ""}>No annotations for this document.</div>
@@ -94,6 +107,13 @@ function renderDetail(): void {
 }
 
 function setupDetailHandlers(): void {
+  const openReaderBtn = detailEl.querySelector("#anno-open-reader") as HTMLButtonElement | null;
+  if (openReaderBtn && currentDocId) {
+    const targetDocId = currentDocId;
+    openReaderBtn.addEventListener("click", () => {
+      void openKnowledgePage(`reader.html?docId=${encodeURIComponent(targetDocId)}`);
+    });
+  }
   const deleteAllBtn = detailEl.querySelector("#anno-delete-all") as HTMLButtonElement | null;
   if (deleteAllBtn) {
     deleteAllBtn.addEventListener("click", async () => {
@@ -105,6 +125,7 @@ function setupDetailHandlers(): void {
         // Update doc summary
         const doc = docs.find((d) => d.doc_id === currentDocId);
         if (doc) { doc.count = 0; doc.types = {}; }
+        renderNavStats();
         renderNav();
         renderDetail();
       } catch (error) {
@@ -214,6 +235,7 @@ function renderCard(anno: Annotation): HTMLElement {
         doc.count = Math.max(0, doc.count - 1);
         doc.types[anno.type] = Math.max(0, (doc.types[anno.type] ?? 1) - 1);
       }
+      renderNavStats();
       renderNav();
       renderFilter();
       renderList();
@@ -229,6 +251,33 @@ function mustGet<T extends HTMLElement>(id: string): T {
   const el = document.getElementById(id);
   if (!el) throw new Error(`Missing element #${id}`);
   return el as T;
+}
+
+function renderNavStats(): void {
+  docCountEl.textContent = String(docs.length);
+  totalCountEl.textContent = String(docs.reduce((sum, doc) => sum + doc.count, 0));
+}
+
+function summarizeTypes(types: Record<string, number>): string {
+  return Object.entries(types)
+    .filter(([, count]) => count > 0)
+    .sort((left, right) => right[1] - left[1])
+    .slice(0, 2)
+    .map(([type, count]) => `${type} ${count}`)
+    .join(" · ");
+}
+
+function detailStats(doc: AnnotationDocSummary): string {
+  const entries = Object.entries(doc.types)
+    .filter(([, count]) => count > 0)
+    .sort((left, right) => right[1] - left[1]);
+  if (entries.length === 0) {
+    return `<div class="anno-detail-stat"><span class="anno-detail-stat-label">Types</span><strong class="anno-detail-stat-value">0 active</strong></div>`;
+  }
+  return entries
+    .slice(0, 3)
+    .map(([type, count]) => `<div class="anno-detail-stat"><span class="anno-detail-stat-label">${escapeHtml(type)}</span><strong class="anno-detail-stat-value">${count}</strong></div>`)
+    .join("");
 }
 
 function escapeHtml(value: string): string {

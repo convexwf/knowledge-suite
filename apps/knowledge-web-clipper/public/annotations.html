@@ -12,7 +12,18 @@
         <div class="anno-nav-header">
           <button id="back-to-items" type="button">← Back</button>
           <h2>Annotations</h2>
+          <p class="anno-nav-copy">Browse notes, highlights, and AI summaries across saved documents.</p>
         </div>
+        <section class="anno-nav-stats" aria-label="Annotation overview">
+          <article class="anno-nav-stat">
+            <span class="anno-nav-stat-label">Documents</span>
+            <strong id="anno-doc-count" class="anno-nav-stat-value">0</strong>
+          </article>
+          <article class="anno-nav-stat">
+            <span class="anno-nav-stat-label">Annotations</span>
+            <strong id="anno-total-count" class="anno-nav-stat-value">0</strong>
+          </article>
+        </section>
         <div id="anno-nav-list" class="anno-nav-list" role="listbox"></div>
       </nav>
       <main class="anno-detail" id="anno-detail">
