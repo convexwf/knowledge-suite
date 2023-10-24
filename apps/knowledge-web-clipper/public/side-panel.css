@@ -661,6 +661,8 @@ body {
 .header p,
 #status-detail {
   color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.45;
 }
 
 .diagnostics-toggle {
@@ -693,10 +695,34 @@ button[data-active="true"] {
   padding: 16px 14px;
 }
 
+.preview-output {
+  font-size: 15px;
+  line-height: 1.68;
+}
+
+.preview-output h1 {
+  font-size: 22px;
+}
+
+.preview-output h2 {
+  font-size: 19px;
+}
+
+.preview-output h3 {
+  font-size: 17px;
+}
+
+.preview-output h4,
+.preview-output h5,
+.preview-output h6 {
+  font-size: 15px;
+}
+
 .preview-output code,
 .preview-output pre {
   background: rgba(35, 73, 63, 0.08);
   border-radius: var(--radius-sm);
+  font-size: 13px;
 }
 
 .preview-output .math-inline,
@@ -806,6 +832,14 @@ button[data-active="true"] {
 .batch-meta,
 .batch-url {
   color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.saved-title,
+.batch-title {
+  font-size: 14px;
+  line-height: 1.45;
 }
 
 @media (max-width: 640px) {
