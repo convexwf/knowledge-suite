@@ -27,8 +27,6 @@ const statusPill = mustGet<HTMLElement>("status-pill");
 const statusDetail = mustGet<HTMLElement>("status-detail");
 const pageTitleEl = mustGet<HTMLElement>("page-title");
 const pageUrlEl = mustGet<HTMLElement>("page-url");
-const pageOriginEl = mustGet<HTMLElement>("page-origin");
-const pageStateEl = mustGet<HTMLElement>("page-state");
 const autoRefreshInput = mustGet<HTMLInputElement>("auto-refresh");
 const moreMenu = mustGet<HTMLDetailsElement>("more-menu");
 const settingsButton = mustGet<HTMLButtonElement>("settings-button");
@@ -796,7 +794,6 @@ function makeEmptyState(text: string): HTMLElement {
 function setStatus(text: string, detail?: string): void {
   statusPill.textContent = text;
   statusDetail.textContent = detail ?? defaultStatusDetail(text);
-  pageStateEl.textContent = text;
 }
 
 function renderError(error: unknown): void {
@@ -845,8 +842,6 @@ function updateActionButtons(): void {
 function updatePageHeader(): void {
   pageTitleEl.textContent = currentPageTitle();
   pageUrlEl.textContent = activeTab?.url ?? "No active page";
-  pageOriginEl.textContent = activeTab ? pageOrigin(activeTab.url) : "No active source";
-  pageStateEl.textContent = lastPreview ? statusLabel(lastPreview.status) : statusPill.textContent || "Idle";
 }
 
 function currentPageTitle(): string {
@@ -867,17 +862,6 @@ function currentPageTitle(): string {
   return cleanTitle(activeTab?.title);
 }
 
-function pageOrigin(url: string): string {
-  try {
-    const parsed = new URL(url);
-    if (parsed.protocol === "file:") {
-      return "Local file";
-    }
-    return parsed.hostname.replace(/^www\./, "");
-  } catch {
-    return url;
-  }
-}
 
 function cleanTitle(value: string | undefined): string {
   const title = value?.replace(/\s+/g, " ").trim();
