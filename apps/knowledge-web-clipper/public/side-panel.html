@@ -19,6 +19,8 @@
           <details id="more-menu" class="more-menu">
             <summary title="More actions">More</summary>
             <div class="more-menu-panel">
+              <button id="mode-browser" type="button">Use Current HTML</button>
+              <button id="mode-fetch" type="button">Use Server Fetch</button>
               <button id="copy-button" type="button">Copy Markdown</button>
               <button id="save-section-button" type="button">Discover Section</button>
               <button id="diagnostics-button" type="button">Diagnostics</button>
@@ -30,42 +32,18 @@
         </div>
       </header>
 
-      <section class="controls">
-        <div class="segmented">
-          <button id="mode-browser" data-active="true">Current HTML</button>
-          <button id="mode-fetch">Server Fetch</button>
+      <section class="toolbar">
+        <div class="tab-strip">
+          <button id="tab-preview" data-active="true">Preview</button>
+          <button id="tab-saved">Saved</button>
         </div>
-        <label class="inline-control">
-          <input id="auto-refresh" type="checkbox" />
-          Auto refresh
-        </label>
-      </section>
-
-      <section class="statusbar">
-        <div class="status-copy">
-          <span id="status-pill">Idle</span>
-          <span id="status-detail">Ready</span>
+        <div class="toolbar-actions">
+          <div class="toolbar-status">
+            <span id="status-pill">Idle</span>
+            <span id="status-detail">Ready</span>
+          </div>
+          <button id="save-button" class="primary-action">Save</button>
         </div>
-        <button id="save-button" class="primary-action">Save</button>
-      </section>
-
-      <section class="tabs">
-        <button id="tab-preview" data-active="true">Preview</button>
-        <button id="tab-saved">Saved</button>
-      </section>
-
-      <section id="diagnostics-toggle-row" class="diagnostics-toggle-row">
-        <button
-          id="diagnostics-toggle"
-          class="diagnostics-toggle"
-          type="button"
-          title="Show diagnostics"
-          aria-label="Show diagnostics"
-          aria-controls="diagnostics-tabs"
-          aria-expanded="false"
-        >
-          <span class="diagnostics-chevron" aria-hidden="true"></span>
-        </button>
       </section>
 
       <section id="diagnostics-tabs" class="diagnostics-tabs" hidden>

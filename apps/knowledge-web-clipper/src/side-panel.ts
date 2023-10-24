@@ -1,6 +1,7 @@
 import { createKnowledgeApiClient } from "./api-client.js";
 import { renderMarkdownPreview } from "./markdown-preview/render.js";
 import { getSettings, saveSettings } from "./settings.js";
+import { openKnowledgePage } from "./tabs.js";
 import {
   ActiveTabInfo,
   BatchCandidate,
@@ -27,7 +28,6 @@ const statusPill = mustGet<HTMLElement>("status-pill");
 const statusDetail = mustGet<HTMLElement>("status-detail");
 const pageTitleEl = mustGet<HTMLElement>("page-title");
 const pageUrlEl = mustGet<HTMLElement>("page-url");
-const autoRefreshInput = mustGet<HTMLInputElement>("auto-refresh");
 const moreMenu = mustGet<HTMLDetailsElement>("more-menu");
 const settingsButton = mustGet<HTMLButtonElement>("settings-button");
 const refreshButton = mustGet<HTMLButtonElement>("refresh-button");
@@ -39,8 +39,6 @@ const removeButton = mustGet<HTMLButtonElement>("remove-button");
 const purgeButton = mustGet<HTMLButtonElement>("purge-button");
 const modeBrowserButton = mustGet<HTMLButtonElement>("mode-browser");
 const modeFetchButton = mustGet<HTMLButtonElement>("mode-fetch");
-const diagnosticsToggleRow = mustGet<HTMLElement>("diagnostics-toggle-row");
-const diagnosticsToggleButton = mustGet<HTMLButtonElement>("diagnostics-toggle");
 const diagnosticsTabs = mustGet<HTMLElement>("diagnostics-tabs");
 const tabPreviewButton = mustGet<HTMLButtonElement>("tab-preview");
 const tabJsonButton = mustGet<HTMLButtonElement>("tab-json");
@@ -69,7 +67,6 @@ let diagnosticsExpanded = isDiagnosticsView(activeView);
 let autoRefreshTimer: number | undefined;
 let pendingAction: "batch" | "delete" | "preview" | "save" | undefined;
 
-autoRefreshInput.checked = settings.autoRefresh;
 applySettingsToUi();
 setMode(currentInputMode, false);
 setView(activeView, false);
@@ -104,9 +101,14 @@ purgeButton.addEventListener("click", () => {
   closeMoreMenu();
   void deleteCurrentClip("purge");
 });
-modeBrowserButton.addEventListener("click", () => setMode("browser_html"));
-modeFetchButton.addEventListener("click", () => setMode("server_fetch"));
-diagnosticsToggleButton.addEventListener("click", () => toggleDiagnostics());
+modeBrowserButton.addEventListener("click", () => {
+  closeMoreMenu();
+  setMode("browser_html");
+});
+modeFetchButton.addEventListener("click", () => {
+  closeMoreMenu();
+  setMode("server_fetch");
+});
 tabPreviewButton.addEventListener("click", () => setView("preview", true));
 tabJsonButton.addEventListener("click", () => setView("json", true));
 tabRawdocButton.addEventListener("click", () => setView("rawdoc", true));
@@ -117,7 +119,6 @@ candidateSelect.addEventListener("change", () => {
   activeCandidateId = candidateSelect.value;
   renderOutput();
 });
-autoRefreshInput.addEventListener("change", () => persistPanelSettings());
 chrome.storage.onChanged.addListener((changes, areaName) => {
   if (areaName === "local" && hasSettingsChange(changes)) {
     void reloadSettings();
@@ -544,6 +545,7 @@ function setView(view: PanelView, persist = false): void {
   }
   if (view === "preview" || view === "saved") {
     lastPrimaryView = view;
+    diagnosticsExpanded = false;
   }
   if (isDiagnosticsView(view)) {
     diagnosticsExpanded = true;
@@ -565,14 +567,6 @@ function setView(view: PanelView, persist = false): void {
   if (view === "saved") {
     void loadSavedClips();
   }
-}
-
-async function persistPanelSettings(): Promise<void> {
-  settings = {
-    ...settings,
-    autoRefresh: autoRefreshInput.checked
-  };
-  await saveSettings({ autoRefresh: settings.autoRefresh });
 }
 
 async function refreshServerStatus(): Promise<void> {
@@ -617,6 +611,9 @@ function renderSavedList(): void {
     const item = document.createElement("article");
     item.className = "saved-item";
 
+    const titleRow = document.createElement("div");
+    titleRow.className = "saved-title-row";
+
     const title = document.createElement("div");
     title.className = "saved-title";
     title.textContent = clip.title || clip.normalizedUrl;
@@ -635,7 +632,22 @@ function renderSavedList(): void {
     details.className = "saved-details";
     details.textContent = [clip.rawdocId, clip.docId].filter(Boolean).join(" | ");
 
-    item.append(title, url, meta);
+    titleRow.append(title);
+    if (clip.docId) {
+      const actions = document.createElement("div");
+      actions.className = "saved-item-actions";
+      const openReaderButton = document.createElement("button");
+      openReaderButton.className = "saved-open-reader";
+      openReaderButton.type = "button";
+      openReaderButton.textContent = "Open Reader";
+      openReaderButton.addEventListener("click", () => {
+        void openKnowledgePage(`reader.html?docId=${encodeURIComponent(clip.docId!)}`);
+      });
+      actions.append(openReaderButton);
+      titleRow.append(actions);
+    }
+
+    item.append(titleRow, url, meta);
     if (details.textContent) {
       item.append(details);
     }
@@ -759,7 +771,6 @@ async function reloadSettings(): Promise<void> {
 }
 
 function applySettingsToUi(): void {
-  autoRefreshInput.checked = settings.autoRefresh;
   diagnosticsButton.hidden = !settings.showParserDiagnostics;
   tabParserButton.hidden = !settings.showParserDiagnostics;
   if (!settings.showParserDiagnostics && activeView === "parser") {
@@ -836,7 +847,6 @@ function updateActionButtons(): void {
   purgeButton.disabled = busy || state === "empty";
   modeBrowserButton.disabled = busy;
   modeFetchButton.disabled = busy || (activeTab?.isFileUrl ?? false) || !settings.allowServerFetch;
-  autoRefreshInput.disabled = busy;
 }
 
 function updatePageHeader(): void {
@@ -872,28 +882,8 @@ function closeMoreMenu(): void {
   moreMenu.open = false;
 }
 
-function toggleDiagnostics(): void {
-  diagnosticsExpanded = !diagnosticsExpanded;
-  if (!diagnosticsExpanded && isDiagnosticsView(activeView)) {
-    setView(lastPrimaryView, true);
-    return;
-  }
-  updateDiagnosticsDisclosure();
-}
-
 function updateDiagnosticsDisclosure(): void {
   diagnosticsTabs.hidden = !diagnosticsExpanded;
-  diagnosticsToggleButton.title = diagnosticsExpanded ? "Hide diagnostics" : "Show diagnostics";
-  diagnosticsToggleButton.setAttribute(
-    "aria-label",
-    diagnosticsExpanded ? "Hide diagnostics" : "Show diagnostics"
-  );
-  diagnosticsToggleButton.setAttribute("aria-expanded", String(diagnosticsExpanded));
-  if (diagnosticsExpanded) {
-    diagnosticsTabs.after(diagnosticsToggleRow);
-  } else {
-    diagnosticsTabs.before(diagnosticsToggleRow);
-  }
 }
 
 function isDiagnosticsView(view: PanelView): boolean {
