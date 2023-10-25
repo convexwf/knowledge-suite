@@ -322,6 +322,17 @@ button:disabled {
   margin: 0 0 10px;
 }
 
+.preview-output p,
+.preview-output ul,
+.preview-output ol,
+.preview-output li,
+.preview-output blockquote,
+.preview-output blockquote p {
+  color: inherit;
+  font-size: inherit;
+  line-height: inherit;
+}
+
 .preview-output code,
 .preview-output pre {
   background: #eef3f8;
