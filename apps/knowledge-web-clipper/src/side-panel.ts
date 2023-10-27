@@ -25,6 +25,7 @@ const codeOutput = mustGet<HTMLPreElement>("code-output");
 const rawdocOutput = mustGet<HTMLPreElement>("rawdoc-output");
 const parserOutput = mustGet<HTMLDivElement>("parser-output");
 const statusPill = mustGet<HTMLElement>("status-pill");
+const statusToast = mustGet<HTMLElement>("status-toast");
 const statusDetail = mustGet<HTMLElement>("status-detail");
 const pageTitleEl = mustGet<HTMLElement>("page-title");
 const pageUrlEl = mustGet<HTMLElement>("page-url");
@@ -39,6 +40,7 @@ const removeButton = mustGet<HTMLButtonElement>("remove-button");
 const purgeButton = mustGet<HTMLButtonElement>("purge-button");
 const modeBrowserButton = mustGet<HTMLButtonElement>("mode-browser");
 const modeFetchButton = mustGet<HTMLButtonElement>("mode-fetch");
+const diagnosticsToggleButton = mustGet<HTMLButtonElement>("diagnostics-toggle");
 const diagnosticsTabs = mustGet<HTMLElement>("diagnostics-tabs");
 const tabPreviewButton = mustGet<HTMLButtonElement>("tab-preview");
 const tabJsonButton = mustGet<HTMLButtonElement>("tab-json");
@@ -66,6 +68,7 @@ let lastPrimaryView: "preview" | "saved" = activeView === "saved" ? "saved" : "p
 let diagnosticsExpanded = isDiagnosticsView(activeView);
 let autoRefreshTimer: number | undefined;
 let pendingAction: "batch" | "delete" | "preview" | "save" | undefined;
+let statusToastTimer: number | undefined;
 
 applySettingsToUi();
 setMode(currentInputMode, false);
@@ -109,6 +112,7 @@ modeFetchButton.addEventListener("click", () => {
   closeMoreMenu();
   setMode("server_fetch");
 });
+diagnosticsToggleButton.addEventListener("click", () => toggleDiagnostics());
 tabPreviewButton.addEventListener("click", () => setView("preview", true));
 tabJsonButton.addEventListener("click", () => setView("json", true));
 tabRawdocButton.addEventListener("click", () => setView("rawdoc", true));
@@ -804,7 +808,9 @@ function makeEmptyState(text: string): HTMLElement {
 
 function setStatus(text: string, detail?: string): void {
   statusPill.textContent = text;
-  statusDetail.textContent = detail ?? defaultStatusDetail(text);
+  const nextDetail = detail ?? defaultStatusDetail(text);
+  statusDetail.textContent = nextDetail;
+  showStatusToast(text, nextDetail);
 }
 
 function renderError(error: unknown): void {
@@ -882,12 +888,50 @@ function closeMoreMenu(): void {
   moreMenu.open = false;
 }
 
+function toggleDiagnostics(): void {
+  diagnosticsExpanded = !diagnosticsExpanded;
+  if (!diagnosticsExpanded && isDiagnosticsView(activeView)) {
+    setView(lastPrimaryView, true);
+    return;
+  }
+  updateDiagnosticsDisclosure();
+}
+
 function updateDiagnosticsDisclosure(): void {
   diagnosticsTabs.hidden = !diagnosticsExpanded;
+  diagnosticsToggleButton.title = diagnosticsExpanded ? "Hide diagnostics" : "Show diagnostics";
+  diagnosticsToggleButton.setAttribute(
+    "aria-label",
+    diagnosticsExpanded ? "Hide diagnostics" : "Show diagnostics"
+  );
+  diagnosticsToggleButton.setAttribute("aria-expanded", String(diagnosticsExpanded));
 }
 
 function isDiagnosticsView(view: PanelView): boolean {
   return view === "json" || view === "rawdoc" || view === "parser" || view === "batch";
+}
+
+function showStatusToast(label: string, detail: string): void {
+  window.clearTimeout(statusToastTimer);
+  statusToast.hidden = false;
+  statusToast.dataset.tone = statusTone(label);
+  if (detail === "Ready" && label === "Idle") {
+    statusToast.hidden = true;
+    return;
+  }
+  statusToastTimer = window.setTimeout(() => {
+    statusToast.hidden = true;
+  }, label === "Error" ? 5000 : 2600);
+}
+
+function statusTone(label: string): "danger" | "neutral" | "success" {
+  if (label === "Error") {
+    return "danger";
+  }
+  if (label === "Idle" || label === "Connected" || label === "Previewing" || label === "Saving") {
+    return "neutral";
+  }
+  return "success";
 }
 
 function summarizeSave(

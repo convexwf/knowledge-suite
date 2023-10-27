@@ -35,6 +35,7 @@ select {
 
 .header,
 .toolbar,
+.diagnostics-toggle-row,
 .diagnostics-tabs,
 .candidate-control {
   border-bottom: 1px solid #dde3ea;
@@ -218,6 +219,48 @@ button[data-active="true"] {
   min-width: 0;
 }
 
+.diagnostics-toggle-row {
+  align-items: center;
+  background: transparent;
+  border-bottom: 0;
+  display: flex;
+  height: 0;
+  justify-content: center;
+  overflow: visible;
+  padding: 0;
+  position: relative;
+  z-index: 2;
+}
+
+.diagnostics-toggle {
+  align-items: center;
+  background: rgba(255, 252, 247, 0.98);
+  border: 1px solid #d7dee7;
+  border-radius: 999px;
+  box-shadow: 0 5px 14px rgba(31, 41, 51, 0.08);
+  display: inline-flex;
+  height: 14px;
+  justify-content: center;
+  min-height: 14px;
+  padding: 0 5px;
+  position: absolute;
+  top: -7px;
+}
+
+.diagnostics-chevron {
+  border: solid currentColor;
+  border-width: 0 1.2px 1.2px 0;
+  display: block;
+  height: 5px;
+  transform: rotate(45deg);
+  transition: transform 120ms ease;
+  width: 5px;
+}
+
+.diagnostics-toggle[aria-expanded="true"] .diagnostics-chevron {
+  transform: rotate(-135deg);
+}
+
 #status-pill {
   background: #e7f1ee;
   border-radius: 999px;
@@ -234,6 +277,38 @@ button[data-active="true"] {
   line-height: 1.42;
   max-width: 300px;
   overflow-wrap: anywhere;
+}
+
+.status-toast {
+  align-items: center;
+  background: rgba(28, 39, 49, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  bottom: 16px;
+  box-shadow: 0 14px 32px rgba(17, 24, 39, 0.22);
+  color: #f8fafc;
+  display: inline-flex;
+  justify-self: center;
+  max-width: calc(100% - 32px);
+  padding: 10px 14px;
+  pointer-events: none;
+  position: fixed;
+  z-index: 40;
+}
+
+.status-toast[data-tone="success"] {
+  background: rgba(35, 73, 63, 0.96);
+}
+
+.status-toast[data-tone="danger"] {
+  background: rgba(160, 63, 49, 0.98);
+}
+
+.status-toast #status-detail {
+  color: inherit;
+  font-size: 13px;
+  line-height: 1.4;
+  max-width: 100%;
 }
 
 .primary-action {
@@ -622,6 +697,7 @@ body {
 
 .header,
 .toolbar,
+.diagnostics-toggle-row,
 .diagnostics-tabs,
 .candidate-control {
   background: rgba(255, 252, 247, 0.82);
@@ -637,6 +713,10 @@ body {
   color: #526174;
   font-size: 13px;
   line-height: 1.42;
+}
+
+.status-toast #status-detail {
+  color: inherit;
 }
 
 button[data-active="true"] {

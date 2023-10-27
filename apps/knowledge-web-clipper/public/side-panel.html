@@ -40,10 +40,23 @@
         <div class="toolbar-actions">
           <div class="toolbar-status">
             <span id="status-pill">Idle</span>
-            <span id="status-detail">Ready</span>
           </div>
           <button id="save-button" class="primary-action">Save</button>
         </div>
+      </section>
+
+      <section id="diagnostics-toggle-row" class="diagnostics-toggle-row">
+        <button
+          id="diagnostics-toggle"
+          class="diagnostics-toggle"
+          type="button"
+          title="Show diagnostics"
+          aria-label="Show diagnostics"
+          aria-controls="diagnostics-tabs"
+          aria-expanded="false"
+        >
+          <span class="diagnostics-chevron" aria-hidden="true"></span>
+        </button>
       </section>
 
       <section id="diagnostics-tabs" class="diagnostics-tabs" hidden>
@@ -66,6 +79,10 @@
       <div id="parser-output" class="parser-output" hidden></div>
       <div id="saved-list" class="saved-list" hidden></div>
       <div id="batch-output" class="batch-output" hidden></div>
+
+      <aside id="status-toast" class="status-toast" hidden aria-live="polite">
+        <span id="status-detail">Ready</span>
+      </aside>
     </main>
     <script src="vendor/katex/katex.min.js"></script>
     <script src="vendor/markdown-it/markdown-it.min.js"></script>

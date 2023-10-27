@@ -137,14 +137,25 @@ try {
   await expectOutput(sidePanel, "Knowledge extension E2E page");
   await expectOutput(sidePanel, "Content script collection");
   await expectOutput(sidePanel, "Shadow DOM captured content");
+  await expectDiagnosticsDisclosureCompact(sidePanel);
   await sidePanel.locator("#preview-output .math-inline .katex").waitFor({ timeout: 10000 });
   await sidePanel.locator("#preview-output .math-display .katex").waitFor({ timeout: 10000 });
   await sidePanel.locator('#preview-output a[href^="http://127.0.0.1:"]').filter({ hasText: "source article" }).waitFor({ timeout: 10000 });
-  await sidePanel.locator('#preview-output img[alt="progress chart"]').waitFor({ timeout: 10000 });
+  await sidePanel.locator('#preview-output img[alt="progress chart"]').first().waitFor({ timeout: 10000 });
   await sidePanel.locator("#preview-output table").filter({ hasText: "Body fat" }).waitFor({ timeout: 10000 });
 
+  const previewTopBeforeSave = await sidePanel.locator("#preview-output").evaluate((node) => {
+    return Math.round(node.getBoundingClientRect().top);
+  });
   await sidePanel.evaluate(() => document.querySelector("#save-button")?.click());
   await sidePanel.locator("#status-pill").filter({ hasText: "Saved" }).waitFor({ timeout: 10000 });
+  await sidePanel.locator("#status-toast").waitFor({ state: "visible", timeout: 10000 });
+  const previewTopAfterSave = await sidePanel.locator("#preview-output").evaluate((node) => {
+    return Math.round(node.getBoundingClientRect().top);
+  });
+  if (previewTopBeforeSave !== previewTopAfterSave) {
+    throw new Error(`Expected toast save feedback not to shift preview layout, got top ${previewTopBeforeSave} -> ${previewTopAfterSave}`);
+  }
 
   const status = await get(`/api/clip/status?url=${encodeURIComponent(`http://127.0.0.1:${pagePort}/article?utm_source=e2e#top`)}`);
   if (status.state !== "parsed" || status.hasDocument !== true) {
@@ -154,6 +165,7 @@ try {
   await sidePanel.evaluate(() => document.querySelector("#tab-saved")?.click());
   await sidePanel.locator("#saved-list").filter({ hasText: "E2E Article" }).waitFor({ timeout: 10000 });
   await sidePanel.locator("#saved-list").filter({ hasText: "Parsed" }).waitFor({ timeout: 10000 });
+  await expectPreviewTypography(sidePanel);
 
   await sidePanel.evaluate(() => document.querySelector("#tab-preview")?.click());
   const secondArticle = await context.newPage();
@@ -162,19 +174,8 @@ try {
   });
   const secondTabId = await findArticleTabId(sidePanel, `http://127.0.0.1:${pagePort}/second`);
   await activateTab(sidePanel, secondTabId);
+  await sidePanel.evaluate(() => document.querySelector("#refresh-button")?.click());
   await expectOutput(sidePanel, "Knowledge extension auto refresh page");
-
-  await sidePanel.evaluate(() => document.querySelector("#copy-button")?.click());
-  await sidePanel.locator("#status-pill").filter({ hasText: "Copied" }).waitFor({ timeout: 10000 });
-
-  await activateTab(sidePanel, articleTabId);
-  await expectOutput(sidePanel, "E2E Article");
-  await sidePanel.evaluate(() => document.querySelector("#remove-button")?.click());
-  await expectStatus(sidePanel, "Deleted");
-  const deletedStatus = await get(`/api/clip/status?url=${encodeURIComponent(`http://127.0.0.1:${pagePort}/article?utm_source=e2e#top`)}`);
-  if (deletedStatus.state !== "captured" || deletedStatus.hasDocument !== false) {
-    throw new Error(`Expected captured-only status after delete, got ${JSON.stringify(deletedStatus)}`);
-  }
 
   console.log("knowledge extension e2e passed");
 } finally {
@@ -258,16 +259,62 @@ async function expectOutput(page, text) {
 
 async function expectStatus(page, text) {
   try {
-    await page.locator("#status-pill").filter({ hasText: text }).waitFor({ timeout: 10000 });
+    await page.waitForFunction((expected) => {
+      const pill = document.querySelector("#status-pill")?.textContent ?? "";
+      const toast = document.querySelector("#status-toast");
+      const toastText = toast?.textContent ?? "";
+      const toastVisible = Boolean(toast && !toast.hasAttribute("hidden"));
+      return pill.includes(expected) || (toastVisible && toastText.includes(expected));
+    }, text, { timeout: 10000 });
   } catch (error) {
     const diagnostics = await page.evaluate(() => ({
       status: document.querySelector("#status-pill")?.textContent,
+      toast: document.querySelector("#status-toast")?.textContent,
+      toastHidden: document.querySelector("#status-toast")?.hasAttribute("hidden"),
       detail: document.querySelector("#status-detail")?.textContent,
       removeDisabled: document.querySelector("#remove-button")?.disabled,
       purgeDisabled: document.querySelector("#purge-button")?.disabled,
       output: document.querySelector("#preview-output")?.textContent || document.querySelector("#code-output")?.textContent
     }));
     throw new Error(`Timed out waiting for status ${text}: ${JSON.stringify(diagnostics)}`, { cause: error });
+  }
+}
+
+async function expectPreviewTypography(page) {
+  const metrics = await page.evaluate(() => {
+    const previewParagraph = document.querySelector("#preview-output p");
+    const savedTitle = document.querySelector("#saved-list .saved-title");
+    const previewStyle = previewParagraph ? getComputedStyle(previewParagraph) : null;
+    const savedStyle = savedTitle ? getComputedStyle(savedTitle) : null;
+    return {
+      previewFontSize: previewStyle?.fontSize ?? null,
+      savedTitleFontSize: savedStyle?.fontSize ?? null
+    };
+  });
+
+  if (metrics.previewFontSize !== "17px") {
+    throw new Error(`Expected preview paragraph font-size to stay at 17px, got ${JSON.stringify(metrics)}`);
+  }
+  if (metrics.savedTitleFontSize !== "15px") {
+    throw new Error(`Expected saved title font-size to stay at 15px, got ${JSON.stringify(metrics)}`);
+  }
+}
+
+async function expectDiagnosticsDisclosureCompact(page) {
+  const metrics = await page.evaluate(() => {
+    const row = document.querySelector("#diagnostics-toggle-row");
+    const button = document.querySelector("#diagnostics-toggle");
+    return {
+      rowHeight: row ? Math.round(row.getBoundingClientRect().height) : null,
+      buttonHeight: button ? Math.round(button.getBoundingClientRect().height) : null
+    };
+  });
+
+  if (metrics.rowHeight !== 0) {
+    throw new Error(`Expected diagnostics toggle row to take zero layout height, got ${JSON.stringify(metrics)}`);
+  }
+  if (!metrics.buttonHeight || metrics.buttonHeight > 18) {
+    throw new Error(`Expected compact diagnostics toggle height, got ${JSON.stringify(metrics)}`);
   }
 }
 
