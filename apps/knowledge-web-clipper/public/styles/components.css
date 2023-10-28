@@ -2,7 +2,7 @@
 .primary-action {
   background: var(--accent-primary);
   border-color: var(--accent-primary);
-  color: #f8f4ee;
+  color: #f8fafc;
   font-weight: 650;
 }
 
@@ -29,7 +29,7 @@
 
 .empty-state,
 .anno-detail-empty {
-  background: rgba(255, 252, 247, 0.76);
+  background: rgba(255, 255, 255, 0.78);
   border: 1px dashed var(--border-strong);
   border-radius: var(--radius-lg);
   color: var(--text-muted);
@@ -65,7 +65,7 @@
 }
 
 .more-menu-panel {
-  background: #fffdfa;
+  background: #ffffff;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-medium);

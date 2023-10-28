@@ -215,24 +215,13 @@ function itemRow(item: KnowledgeItem): HTMLElement {
   const creator = document.createElement("div");
   creator.className = "item-creator";
   creator.textContent = item.creators.join(", ") || "Unknown creator";
-  const sourceLine = document.createElement("div");
-  sourceLine.className = "item-summary-line item-statline";
-  sourceLine.textContent = [
+  const meta = document.createElement("div");
+  meta.className = "item-summary-line";
+  meta.textContent = [
     item.language || "Unknown language",
-    item.creators.length > 0 ? `${item.creators.length} creator${item.creators.length > 1 ? "s" : ""}` : "Unknown creator",
-    item.parsedAt ? `Parsed ${formatDate(item.parsedAt)}` : "Waiting for parse"
+    `Updated ${formatDate(item.updatedAt)}`
   ].join(" · ");
-  const dateLine = document.createElement("div");
-  dateLine.className = "item-summary-line";
-  dateLine.textContent = `Updated ${formatDate(item.updatedAt)}`;
-  body.append(kickerRow, title, creator, sourceLine, dateLine);
-
-  if (item.tags.length > 0) {
-    const tagsLine = document.createElement("div");
-    tagsLine.className = "item-tags";
-    tagsLine.textContent = item.tags.join(", ");
-    body.append(tagsLine);
-  }
+  body.append(kickerRow, title, creator, meta);
 
   const actions = document.createElement("div");
   actions.className = "item-actions";

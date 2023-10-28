@@ -615,6 +615,14 @@ function renderSavedList(): void {
     const item = document.createElement("article");
     item.className = "saved-item";
 
+    const main = document.createElement("button");
+    main.type = "button";
+    main.className = "saved-card-button";
+    main.title = `Open ${clip.normalizedUrl}`;
+    main.addEventListener("click", () => {
+      void openSavedClipUrl(clip.normalizedUrl);
+    });
+
     const titleRow = document.createElement("div");
     titleRow.className = "saved-title-row";
 
@@ -637,26 +645,50 @@ function renderSavedList(): void {
     details.textContent = [clip.rawdocId, clip.docId].filter(Boolean).join(" | ");
 
     titleRow.append(title);
+    main.append(titleRow, url, meta);
+    if (details.textContent) {
+      main.append(details);
+    }
+    item.append(main);
+
     if (clip.docId) {
-      const actions = document.createElement("div");
-      actions.className = "saved-item-actions";
       const openReaderButton = document.createElement("button");
       openReaderButton.className = "saved-open-reader";
       openReaderButton.type = "button";
-      openReaderButton.textContent = "Open Reader";
-      openReaderButton.addEventListener("click", () => {
+      openReaderButton.textContent = "Reader";
+      openReaderButton.title = "Open in Reader";
+      openReaderButton.addEventListener("click", (event) => {
+        event.stopPropagation();
         void openKnowledgePage(`reader.html?docId=${encodeURIComponent(clip.docId!)}`);
       });
-      actions.append(openReaderButton);
-      titleRow.append(actions);
-    }
-
-    item.append(titleRow, url, meta);
-    if (details.textContent) {
-      item.append(details);
+      item.append(openReaderButton);
     }
     return item;
   }));
+}
+
+async function openSavedClipUrl(url: string): Promise<void> {
+  const currentTab = activeTab?.tabId !== undefined && activeTab.url !== window.location.href
+    ? await chrome.tabs.get(activeTab.tabId).catch(() => undefined)
+    : undefined;
+
+  if (currentTab?.id !== undefined) {
+    await chrome.tabs.update(currentTab.id, { active: true, url });
+    return;
+  }
+
+  const tabs = await chrome.tabs.query({ currentWindow: true });
+  const fallbackTab = tabs.find((tab) => {
+    const tabUrl = tab.url ?? "";
+    return tab.id !== undefined && !tabUrl.startsWith(chrome.runtime.getURL(""));
+  });
+
+  if (fallbackTab?.id !== undefined) {
+    await chrome.tabs.update(fallbackTab.id, { active: true, url });
+    return;
+  }
+
+  await chrome.tabs.create({ url });
 }
 
 function renderBatchOutput(): void {

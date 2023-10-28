@@ -414,10 +414,10 @@ select {
 }
 
 .item-row {
-  background: rgba(255, 252, 247, 0.82);
+  background: rgba(255, 255, 255, 0.88);
   border-color: var(--border-subtle);
   border-radius: var(--radius-md);
-  box-shadow: 0 8px 22px rgba(70, 55, 32, 0.05);
+  box-shadow: 0 8px 22px rgba(15, 23, 42, 0.05);
 }
 
 .item-title,
@@ -438,8 +438,8 @@ select {
 }
 
 .batch-bar {
-  background: rgba(35, 73, 63, 0.08);
-  border-color: rgba(35, 73, 63, 0.14);
+  background: rgba(72, 105, 214, 0.08);
+  border-color: rgba(72, 105, 214, 0.14);
   border-radius: var(--radius-md);
 }
 
@@ -451,7 +451,7 @@ select {
 }
 
 .overview-card {
-  background: rgba(255, 252, 247, 0.9);
+  background: rgba(255, 255, 255, 0.92);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-soft);
@@ -487,8 +487,8 @@ select {
 .item-avatar {
   align-items: center;
   align-self: start;
-  background: linear-gradient(135deg, rgba(35, 73, 63, 0.16), rgba(159, 106, 47, 0.16));
-  border: 1px solid rgba(35, 73, 63, 0.12);
+  background: linear-gradient(135deg, rgba(72, 105, 214, 0.14), rgba(124, 141, 161, 0.14));
+  border: 1px solid rgba(72, 105, 214, 0.12);
   border-radius: 14px;
   color: var(--accent-primary);
   display: inline-flex;
@@ -521,18 +521,18 @@ select {
 
 .item-badge.source,
 .item-badge.doc {
-  background: rgba(35, 73, 63, 0.09);
+  background: rgba(72, 105, 214, 0.09);
   color: var(--accent-primary);
 }
 
 .item-badge.parsed {
-  background: rgba(35, 73, 63, 0.14);
+  background: rgba(72, 105, 214, 0.14);
   color: var(--accent-primary);
 }
 
 .item-badge.captured,
 .item-badge.raw {
-  background: rgba(159, 106, 47, 0.14);
+  background: rgba(197, 122, 31, 0.14);
   color: var(--accent-warm);
 }
 
