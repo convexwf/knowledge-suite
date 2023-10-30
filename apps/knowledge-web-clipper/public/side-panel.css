@@ -728,7 +728,7 @@ button:disabled {
 #status-detail {
   color: #526174;
   font-size: 13px;
-  line-height: 1.42;
+  line-height: 1.34;
 }
 
 .status-toast #status-detail {
@@ -849,14 +849,26 @@ button[data-active="true"] {
 .batch-url {
   color: #526174;
   font-size: 13px;
-  line-height: 1.52;
+  line-height: 1.42;
 }
 
 .saved-title,
 .batch-title {
   color: #1f2933;
   font-size: 15px;
-  line-height: 1.4;
+  line-height: 1.32;
+}
+
+.saved-details {
+  line-height: 1.34;
+}
+
+.status-toast #status-detail {
+  line-height: 1.34;
+}
+
+.preview-output {
+  line-height: 1.64;
 }
 
 .more-menu-panel button[data-active="true"] {
