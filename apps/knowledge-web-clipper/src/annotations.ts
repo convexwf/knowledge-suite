@@ -84,6 +84,7 @@ function renderDetail(): void {
 
   detailEl.innerHTML = `
     <div class="anno-detail-header">
+      <div class="anno-detail-kicker">Annotation Index</div>
       <div class="anno-detail-title">${escapeHtml(title)}</div>
       <div class="anno-detail-subtitle"><code>${currentDocId.slice(0, 8)}...</code> · ${currentAnnotations.length} annotations</div>
     </div>
@@ -271,13 +272,16 @@ function detailStats(doc: AnnotationDocSummary): string {
   const entries = Object.entries(doc.types)
     .filter(([, count]) => count > 0)
     .sort((left, right) => right[1] - left[1]);
-  if (entries.length === 0) {
-    return `<div class="anno-detail-stat"><span class="anno-detail-stat-label">Types</span><strong class="anno-detail-stat-value">0 active</strong></div>`;
-  }
-  return entries
-    .slice(0, 3)
-    .map(([type, count]) => `<div class="anno-detail-stat"><span class="anno-detail-stat-label">${escapeHtml(type)}</span><strong class="anno-detail-stat-value">${count}</strong></div>`)
-    .join("");
+  const orphaned = currentAnnotations.filter((annotation) => annotation.orphaned).length;
+  const topType = entries[0];
+  const topTypeLabel = topType ? escapeHtml(topType[0]) : "No active type";
+  const topTypeValue = topType ? String(topType[1]) : "0";
+
+  return [
+    `<div class="anno-detail-stat"><span class="anno-detail-stat-label">Total</span><strong class="anno-detail-stat-value">${currentAnnotations.length}</strong><span class="anno-detail-stat-note">All annotations in this document</span></div>`,
+    `<div class="anno-detail-stat"><span class="anno-detail-stat-label">Leading Type</span><strong class="anno-detail-stat-value">${topTypeLabel}</strong><span class="anno-detail-stat-note">${topTypeValue} item(s)</span></div>`,
+    `<div class="anno-detail-stat"><span class="anno-detail-stat-label">Orphaned</span><strong class="anno-detail-stat-value">${orphaned}</strong><span class="anno-detail-stat-note">${orphaned > 0 ? "Needs review" : "Nothing pending"}</span></div>`
+  ].join("");
 }
 
 function escapeHtml(value: string): string {
