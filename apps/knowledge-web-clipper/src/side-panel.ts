@@ -33,6 +33,8 @@ const moreMenu = mustGet<HTMLDetailsElement>("more-menu");
 const settingsButton = mustGet<HTMLButtonElement>("settings-button");
 const refreshButton = mustGet<HTMLButtonElement>("refresh-button");
 const saveButton = mustGet<HTMLButtonElement>("save-button");
+const saveDropdown = mustGet<HTMLButtonElement>("save-dropdown");
+const saveDropdownMenu = mustGet<HTMLElement>("save-dropdown-menu");
 const saveSectionButton = mustGet<HTMLButtonElement>("save-section-button");
 const diagnosticsButton = mustGet<HTMLButtonElement>("diagnostics-button");
 const copyButton = mustGet<HTMLButtonElement>("copy-button");
@@ -47,11 +49,9 @@ const tabJsonButton = mustGet<HTMLButtonElement>("tab-json");
 const tabRawdocButton = mustGet<HTMLButtonElement>("tab-rawdoc");
 const tabParserButton = mustGet<HTMLButtonElement>("tab-parser");
 const tabSavedButton = mustGet<HTMLButtonElement>("tab-saved");
-const tabBatchButton = mustGet<HTMLButtonElement>("tab-batch");
 const candidateControl = mustGet<HTMLElement>("candidate-control");
 const candidateSelect = mustGet<HTMLSelectElement>("candidate-select");
 const savedList = mustGet<HTMLDivElement>("saved-list");
-const batchOutput = mustGet<HTMLDivElement>("batch-output");
 
 let settings: ExtensionSettings = await getSettings();
 let activeTab: ActiveTabInfo | undefined;
@@ -69,6 +69,7 @@ let diagnosticsExpanded = isDiagnosticsView(activeView);
 let autoRefreshTimer: number | undefined;
 let pendingAction: "batch" | "delete" | "preview" | "save" | undefined;
 let statusToastTimer: number | undefined;
+let batchActive = false;
 
 applySettingsToUi();
 setMode(currentInputMode, false);
@@ -83,8 +84,21 @@ settingsButton.addEventListener("click", () => {
   chrome.runtime.openOptionsPage();
 });
 saveButton.addEventListener("click", () => save());
+saveDropdown.addEventListener("click", (event) => {
+  event.stopPropagation();
+  saveDropdownMenu.hidden = !saveDropdownMenu.hidden;
+});
+
+// Close save dropdown on outside click
+document.addEventListener("click", (event) => {
+  if (!saveDropdownMenu.hidden &&
+    !(event.target instanceof Element && event.target.closest(".save-button-group"))) {
+    saveDropdownMenu.hidden = true;
+  }
+});
+
 saveSectionButton.addEventListener("click", () => {
-  closeMoreMenu();
+  saveDropdownMenu.hidden = true;
   void discoverSection();
 });
 diagnosticsButton.addEventListener("click", () => {
@@ -118,7 +132,6 @@ tabJsonButton.addEventListener("click", () => setView("json", true));
 tabRawdocButton.addEventListener("click", () => setView("rawdoc", true));
 tabParserButton.addEventListener("click", () => setView("parser", true));
 tabSavedButton.addEventListener("click", () => setView("saved", true));
-tabBatchButton.addEventListener("click", () => setView("batch", true));
 candidateSelect.addEventListener("change", () => {
   activeCandidateId = candidateSelect.value;
   renderOutput();
@@ -246,25 +259,26 @@ async function discoverSection(): Promise<void> {
   }
 
   pendingAction = "batch";
+  batchActive = true;
   updateActionButtons();
+  hideAllViews();
   setStatus("Discovering", "Scanning this page for navigation links.");
   try {
     await refreshServerStatus();
     const discovered = await collectNavigationLinks();
     if (discovered.candidates.length === 0) {
       batchDiscover = undefined;
-      setView("batch", false);
-      renderBatchOutput();
+      renderInlineBatchMessage("No sidebar or navigation links were found.");
       setStatus("No links", "No sidebar or navigation links were found.");
       return;
     }
     batchDiscover = await createKnowledgeApiClient(settings).discoverBatch(discovered.pageUrl, discovered.candidates);
     batchJob = undefined;
-    setView("batch", true);
+    renderInlineBatchConfirmation();
     setStatus("Ready", `${batchDiscover.items.filter((item) => item.selectedByDefault).length} pages selected for this section.`);
   } catch (error) {
     setStatus("Error");
-    renderError(error);
+    renderInlineBatchMessage(error instanceof Error ? error.message : String(error));
   } finally {
     pendingAction = undefined;
     updateActionButtons();
@@ -299,7 +313,7 @@ async function startBatchJob(): Promise<void> {
         depth: item.depth
       }))
     });
-    renderBatchOutput();
+    renderInlineBatchProgress();
     setStatus("Running", `Saving ${batchJob.total} pages into a collection.`);
     pollBatchJob(batchJob.jobId);
   } catch (error) {
@@ -333,7 +347,7 @@ function pollBatchJob(jobId: string): void {
   batchPollTimer = window.setTimeout(async () => {
     try {
       batchJob = await createKnowledgeApiClient(settings).batchJob(jobId);
-      renderBatchOutput();
+      renderInlineBatchProgress();
       const done = batchJob.saved + batchJob.skipped + batchJob.failed + batchJob.cancelled;
       setStatus(
         batchJob.state === "succeeded" ? "Batch complete" : "Running",
@@ -481,20 +495,18 @@ function isMissingContentScriptError(error: unknown): boolean {
 }
 
 function renderOutput(): void {
+  if (batchActive) {
+    return;
+  }
   previewOutput.hidden = activeView !== "preview";
   codeOutput.hidden = activeView !== "json";
   rawdocOutput.hidden = activeView !== "rawdoc";
   parserOutput.hidden = activeView !== "parser";
   savedList.hidden = activeView !== "saved";
-  batchOutput.hidden = activeView !== "batch";
   updateDiagnosticsDisclosure();
   renderCandidateControl();
   if (activeView === "saved") {
     renderSavedList();
-    return;
-  }
-  if (activeView === "batch") {
-    renderBatchOutput();
     return;
   }
 
@@ -503,7 +515,6 @@ function renderOutput(): void {
     codeOutput.textContent = "";
     rawdocOutput.textContent = "";
     parserOutput.replaceChildren();
-    batchOutput.replaceChildren();
     return;
   }
   const candidate = activeCandidate(lastPreview);
@@ -560,7 +571,6 @@ function setView(view: PanelView, persist = false): void {
   tabRawdocButton.dataset.active = String(view === "rawdoc");
   tabParserButton.dataset.active = String(view === "parser");
   tabSavedButton.dataset.active = String(view === "saved");
-  tabBatchButton.dataset.active = String(view === "batch");
   updateDiagnosticsDisclosure();
   if (persist) {
     settings = { ...settings, defaultPanelTab: view };
@@ -691,59 +701,32 @@ async function openSavedClipUrl(url: string): Promise<void> {
   await chrome.tabs.create({ url });
 }
 
-function renderBatchOutput(): void {
-  if (batchJob) {
-    const summary = document.createElement("section");
-    summary.className = "batch-summary";
+function hideAllViews(): void {
+  previewOutput.hidden = false;
+  codeOutput.hidden = true;
+  rawdocOutput.hidden = true;
+  parserOutput.hidden = true;
+  savedList.hidden = true;
+  candidateControl.hidden = true;
+}
 
-    const title = document.createElement("div");
-    title.className = "batch-title";
-    title.textContent = collectionTitle();
+function renderInlineBatchMessage(message: string): void {
+  batchActive = true;
+  hideAllViews();
+  previewOutput.replaceChildren(makeEmptyState(message));
+}
 
-    const meta = document.createElement("div");
-    meta.className = "batch-meta";
-    const done = batchJob.saved + batchJob.skipped + batchJob.failed + batchJob.cancelled;
-    meta.textContent = [
-      `Job ${shortId(batchJob.jobId)}`,
-      batchJob.collectionId ? `Collection ${shortId(batchJob.collectionId)}` : undefined,
-      `${done} / ${batchJob.total}`,
-      `saved ${batchJob.saved}`,
-      `skipped ${batchJob.skipped}`,
-      `failed ${batchJob.failed}`
-    ].filter(Boolean).join(" | ");
-
-    summary.append(title, meta);
-    const list = document.createElement("div");
-    list.className = "batch-list";
-    for (const item of batchJob.items) {
-      const row = document.createElement("article");
-      row.className = "batch-item";
-
-      const spacer = document.createElement("span");
-      spacer.textContent = stateSymbol(item.state);
-
-      const body = document.createElement("div");
-      const itemTitle = document.createElement("div");
-      itemTitle.className = "batch-title";
-      itemTitle.textContent = item.titleHint || item.normalizedUrl || item.url;
-      const itemUrl = document.createElement("div");
-      itemUrl.className = "batch-url";
-      itemUrl.textContent = item.normalizedUrl || item.url;
-      const itemMeta = document.createElement("div");
-      itemMeta.className = "batch-meta";
-      itemMeta.textContent = [item.state, item.errorMessage].filter(Boolean).join(" | ");
-      body.append(itemTitle, itemUrl, itemMeta);
-      row.append(spacer, body);
-      list.append(row);
-    }
-    batchOutput.replaceChildren(summary, list);
-    return;
-  }
-
+function renderInlineBatchConfirmation(): void {
   if (!batchDiscover) {
-    batchOutput.replaceChildren(makeEmptyState("No section discovery yet."));
+    renderInlineBatchMessage("No section discovery yet.");
     return;
   }
+
+  batchActive = true;
+  hideAllViews();
+
+  const container = document.createElement("div");
+  container.className = "batch-inline";
 
   const summary = document.createElement("section");
   summary.className = "batch-summary";
@@ -761,6 +744,7 @@ function renderBatchOutput(): void {
   actions.className = "batch-actions";
   const start = document.createElement("button");
   start.textContent = "Start";
+  start.className = "primary-action";
   start.addEventListener("click", () => void startBatchJob());
   actions.append(start);
   summary.append(title, meta, actions);
@@ -788,7 +772,100 @@ function renderBatchOutput(): void {
     row.append(checkbox, body);
     list.append(row);
   }
-  batchOutput.replaceChildren(summary, list);
+
+  container.append(summary, list);
+  previewOutput.replaceChildren(container);
+}
+
+function renderInlineBatchProgress(): void {
+  if (!batchJob) {
+    renderInlineBatchMessage("No batch job in progress.");
+    return;
+  }
+
+  batchActive = batchJob.state === "queued" || batchJob.state === "running";
+  hideAllViews();
+
+  const container = document.createElement("div");
+  container.className = "batch-inline";
+
+  const summary = document.createElement("section");
+  summary.className = "batch-summary";
+
+  const title = document.createElement("div");
+  title.className = "batch-title";
+  title.textContent = collectionTitle();
+
+  const done = batchJob.saved + batchJob.skipped + batchJob.failed + batchJob.cancelled;
+  const progressLabel = document.createElement("div");
+  progressLabel.className = "batch-progress-label";
+  progressLabel.textContent = `${done} / ${batchJob.total}`;
+
+  const progressBar = document.createElement("progress");
+  progressBar.className = "batch-progress-bar";
+  progressBar.value = done;
+  progressBar.max = batchJob.total;
+
+  const meta = document.createElement("div");
+  meta.className = "batch-meta";
+  meta.textContent = [
+    batchJob.state === "succeeded" ? "Complete" : batchJob.state,
+    `saved ${batchJob.saved}`,
+    `skipped ${batchJob.skipped}`,
+    `failed ${batchJob.failed}`
+  ].filter(Boolean).join(" | ");
+
+  summary.append(title, progressLabel, progressBar, meta);
+
+  const list = document.createElement("div");
+  list.className = "batch-list";
+  for (const item of batchJob.items) {
+    const row = document.createElement("article");
+    row.className = "batch-item";
+
+    const spacer = document.createElement("span");
+    spacer.textContent = stateSymbol(item.state);
+
+    const body = document.createElement("div");
+    const itemTitle = document.createElement("div");
+    itemTitle.className = "batch-title";
+    itemTitle.textContent = item.titleHint || item.normalizedUrl || item.url;
+    const itemUrl = document.createElement("div");
+    itemUrl.className = "batch-url";
+    itemUrl.textContent = item.normalizedUrl || item.url;
+    const itemMeta = document.createElement("div");
+    itemMeta.className = "batch-meta";
+    itemMeta.textContent = [item.state, item.errorMessage].filter(Boolean).join(" | ");
+    body.append(itemTitle, itemUrl, itemMeta);
+    row.append(spacer, body);
+    list.append(row);
+  }
+
+  // Completion actions
+  if (batchJob.state === "succeeded" || batchJob.state === "failed") {
+    const actions = document.createElement("div");
+    actions.className = "batch-actions";
+    const openItemsBtn = document.createElement("button");
+    openItemsBtn.textContent = "Open in Items";
+    openItemsBtn.addEventListener("click", () => {
+      void openKnowledgePage("items.html");
+    });
+    const closeBtn = document.createElement("button");
+    closeBtn.textContent = "Back to Preview";
+    closeBtn.addEventListener("click", () => {
+      batchActive = false;
+      batchDiscover = undefined;
+      batchJob = undefined;
+      setView(lastPrimaryView, false);
+    });
+    actions.append(openItemsBtn, closeBtn);
+
+    container.append(summary, list, actions);
+  } else {
+    container.append(summary, list);
+  }
+
+  previewOutput.replaceChildren(container);
 }
 
 async function reloadSettings(): Promise<void> {
@@ -846,12 +923,12 @@ function setStatus(text: string, detail?: string): void {
 }
 
 function renderError(error: unknown): void {
+  batchActive = false;
   previewOutput.hidden = false;
   codeOutput.hidden = true;
   rawdocOutput.hidden = true;
   parserOutput.hidden = true;
   savedList.hidden = true;
-  batchOutput.hidden = true;
   candidateControl.hidden = true;
   activeView = "preview";
   tabPreviewButton.dataset.active = "true";
@@ -859,7 +936,6 @@ function renderError(error: unknown): void {
   tabRawdocButton.dataset.active = "false";
   tabParserButton.dataset.active = "false";
   tabSavedButton.dataset.active = "false";
-  tabBatchButton.dataset.active = "false";
   diagnosticsExpanded = false;
   updateDiagnosticsDisclosure();
   const message = error instanceof Error ? error.message : String(error);
@@ -877,6 +953,7 @@ function updateActionButtons(): void {
   const busy = Boolean(pendingAction);
   copyButton.disabled = busy || !lastPreview?.markdown;
   saveButton.disabled = busy || !activeTab;
+  saveDropdown.disabled = busy || !activeTab;
   saveSectionButton.disabled = busy || !activeTab || (activeTab?.isFileUrl ?? false);
   refreshButton.disabled = busy;
   settingsButton.disabled = false;
@@ -940,7 +1017,7 @@ function updateDiagnosticsDisclosure(): void {
 }
 
 function isDiagnosticsView(view: PanelView): boolean {
-  return view === "json" || view === "rawdoc" || view === "parser" || view === "batch";
+  return view === "json" || view === "rawdoc" || view === "parser";
 }
 
 function showStatusToast(label: string, detail: string): void {
@@ -1009,7 +1086,7 @@ function selectedBatchItems(): BatchDiscoverItem[] {
     return [];
   }
   const selectedUrls = new Set(
-    Array.from(batchOutput.querySelectorAll<HTMLInputElement>("input[type='checkbox'][data-url]"))
+    Array.from(previewOutput.querySelectorAll<HTMLInputElement>("input[type='checkbox'][data-url]"))
       .filter((input) => input.checked)
       .map((input) => input.dataset.url)
       .filter(Boolean) as string[]

@@ -22,7 +22,6 @@
               <button id="mode-browser" type="button">Use Current HTML</button>
               <button id="mode-fetch" type="button">Use Server Fetch</button>
               <button id="copy-button" type="button">Copy Markdown</button>
-              <button id="save-section-button" type="button">Discover Section</button>
               <button id="diagnostics-button" type="button">Diagnostics</button>
               <button id="remove-button" type="button">Remove Parsed Result</button>
               <button id="purge-button" type="button">Purge Capture</button>
@@ -41,7 +40,13 @@
           <div class="toolbar-status">
             <span id="status-pill">Idle</span>
           </div>
+          <div class="save-button-group">
           <button id="save-button" class="primary-action">Save</button>
+          <button id="save-dropdown" class="save-dropdown" title="More save options">▾</button>
+          <div id="save-dropdown-menu" class="save-dropdown-menu" hidden>
+            <button id="save-section-button" type="button">Save Section</button>
+          </div>
+        </div>
         </div>
       </section>
 
@@ -63,7 +68,6 @@
         <button id="tab-parser">Parser</button>
         <button id="tab-json">JSON</button>
         <button id="tab-rawdoc">RawDoc</button>
-        <button id="tab-batch">Batch</button>
       </section>
 
       <section id="candidate-control" class="candidate-control" hidden>
@@ -78,7 +82,6 @@
       <pre id="rawdoc-output" class="code-output" hidden></pre>
       <div id="parser-output" class="parser-output" hidden></div>
       <div id="saved-list" class="saved-list" hidden></div>
-      <div id="batch-output" class="batch-output" hidden></div>
 
       <aside id="status-toast" class="status-toast" hidden aria-live="polite">
         <span id="status-detail">Ready</span>
