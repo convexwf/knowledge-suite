@@ -414,6 +414,43 @@ button[data-active="true"] {
   flex: 1;
 }
 
+/* Collection name input */
+.batch-name-group {
+  margin: 10px 0;
+}
+
+.batch-name-group label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 4px;
+  color: #4b5a6a;
+}
+
+.batch-name-input {
+  width: 100%;
+  border: 1px solid #dde3ea;
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 13px;
+}
+
+.batch-name-input.error {
+  border-color: #9f2f24;
+  outline-color: #9f2f24;
+}
+
+.batch-name-status {
+  display: block;
+  font-size: 11px;
+  margin-top: 3px;
+  min-height: 16px;
+}
+
+.batch-name-status.error {
+  color: #9f2f24;
+}
+
 #purge-button {
   color: #9f2f24;
 }

@@ -70,6 +70,7 @@ let autoRefreshTimer: number | undefined;
 let pendingAction: "batch" | "delete" | "preview" | "save" | undefined;
 let statusToastTimer: number | undefined;
 let batchActive = false;
+let currentCollectionTitle: string | undefined;
 
 applySettingsToUi();
 setMode(currentInputMode, false);
@@ -301,7 +302,7 @@ async function startBatchJob(): Promise<void> {
     batchJob = await createKnowledgeApiClient(settings).createBatchJob({
       sourcePageUrl: activeTab.url,
       collection: {
-        title: collectionTitle(),
+        title: currentCollectionTitle ?? collectionTitle(),
         rootUrl: activeTab.url,
         strategy: "create"
       },
@@ -733,6 +734,48 @@ function renderInlineBatchConfirmation(): void {
   const title = document.createElement("div");
   title.className = "batch-title";
   title.textContent = collectionTitle();
+
+  // Collection name input
+  const nameGroup = document.createElement("div");
+  nameGroup.className = "batch-name-group";
+  const nameLabel = document.createElement("label");
+  nameLabel.textContent = "Collection name";
+  const nameInput = document.createElement("input");
+  nameInput.type = "text";
+  nameInput.className = "batch-name-input";
+  nameInput.value = collectionTitle();
+  const nameStatus = document.createElement("span");
+  nameStatus.className = "batch-name-status";
+  nameStatus.textContent = "";
+  nameGroup.append(nameLabel, nameInput, nameStatus);
+
+  // Real-time name duplicate check
+  let nameCheckTimer: number | undefined;
+  nameInput.addEventListener("input", () => {
+    window.clearTimeout(nameCheckTimer);
+    nameCheckTimer = window.setTimeout(async () => {
+      const value = nameInput.value.trim();
+      if (!value) {
+        nameStatus.textContent = "Name is required";
+        nameStatus.className = "batch-name-status error";
+        startButton.disabled = true;
+        return;
+      }
+      const result = await createKnowledgeApiClient(settings).checkCollectionName(value);
+      if (result.exists) {
+        nameStatus.textContent = "A collection with this name already exists";
+        nameStatus.className = "batch-name-status error";
+        nameInput.classList.add("error");
+        startButton.disabled = true;
+      } else {
+        nameStatus.textContent = "";
+        nameStatus.className = "batch-name-status";
+        nameInput.classList.remove("error");
+        startButton.disabled = false;
+      }
+    }, 300);
+  });
+
   const meta = document.createElement("div");
   meta.className = "batch-meta";
   meta.textContent = [
@@ -742,12 +785,16 @@ function renderInlineBatchConfirmation(): void {
   ].join(" | ");
   const actions = document.createElement("div");
   actions.className = "batch-actions";
-  const start = document.createElement("button");
-  start.textContent = "Start";
-  start.className = "primary-action";
-  start.addEventListener("click", () => void startBatchJob());
-  actions.append(start);
-  summary.append(title, meta, actions);
+  const startButton = document.createElement("button");
+  startButton.textContent = "Start";
+  startButton.className = "primary-action";
+  startButton.addEventListener("click", () => {
+    // Use the edited collection name
+    currentCollectionTitle = nameInput.value.trim() || collectionTitle();
+    void startBatchJob();
+  });
+  actions.append(startButton);
+  summary.append(title, nameGroup, meta, actions);
 
   const list = document.createElement("div");
   list.className = "batch-list";
@@ -794,7 +841,7 @@ function renderInlineBatchProgress(): void {
 
   const title = document.createElement("div");
   title.className = "batch-title";
-  title.textContent = collectionTitle();
+  title.textContent = currentCollectionTitle ?? collectionTitle();
 
   const done = batchJob.saved + batchJob.skipped + batchJob.failed + batchJob.cancelled;
   const progressLabel = document.createElement("div");

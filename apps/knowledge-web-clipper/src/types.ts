@@ -164,6 +164,7 @@ export interface KnowledgeItemDetailResult {
   item: KnowledgeItem;
   rawdoc?: RawDoc;
   document?: KnowledgeDocument;
+  collectionIds?: string[];
 }
 
 export interface KnowledgeItemDeleteResult {
@@ -222,6 +223,10 @@ export interface ClipDeleteResult extends ClipStatusResult {
   removedDocId?: string;
   removedRawdocId?: string;
   deletedFiles?: string[];
+}
+
+export interface CheckCollectionNameResult {
+  exists: boolean;
 }
 
 export interface StoreMaintenanceScan {

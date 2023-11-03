@@ -340,6 +340,14 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
     return store.loadCollection(params.collectionId);
   });
 
+  app.get("/api/collections/check-name", async (request) => {
+    const query = request.query as { title?: string };
+    if (!query.title?.trim()) {
+      return { exists: false };
+    }
+    return store.checkCollectionName(query.title);
+  });
+
   app.get("/api/search", async (request) => {
     const query = request.query as {
       q?: string;

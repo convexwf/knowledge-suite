@@ -647,6 +647,25 @@ export class KnowledgeStore {
     return (await this.loadCollection(collectionId)).items;
   }
 
+  async checkCollectionName(title: string): Promise<{ exists: boolean }> {
+    await this.ensure();
+    const row = this.database!.prepare(
+      "SELECT collection_id FROM collections WHERE title = ?"
+    ).get(title.trim()) as { collection_id: string } | undefined;
+    return { exists: Boolean(row) };
+  }
+
+  async getCollectionsForItem(itemId: string): Promise<string[]> {
+    await this.ensure();
+    const rows = this.database!.prepare(`
+      SELECT DISTINCT ci.collection_id
+      FROM collection_items ci
+      JOIN knowledge_items ki ON ki.active_doc_id = ci.doc_id
+      WHERE ki.item_id = ?
+    `).all(itemId) as Array<{ collection_id: string }>;
+    return rows.map((r) => r.collection_id);
+  }
+
   async createBatchJob(params: {
     collectionId: string;
     sourcePageUrl: string;
@@ -1572,11 +1591,12 @@ export class KnowledgeStore {
     return toKnowledgeItem(row);
   }
 
-  async loadItemDetail(itemId: string): Promise<{ item: KnowledgeItem; rawdoc?: RawDoc; document?: KnowledgeDocument }> {
+  async loadItemDetail(itemId: string): Promise<{ item: KnowledgeItem; rawdoc?: RawDoc; document?: KnowledgeDocument; collectionIds: string[] }> {
     const item = await this.loadItem(itemId);
     const rawdoc = await this.loadRawdoc(item.activeRawdocId).catch(() => undefined);
     const document = item.activeDocId ? await this.loadDocument(item.activeDocId).catch(() => undefined) : undefined;
-    return { item, rawdoc, document };
+    const collectionIds = await this.getCollectionsForItem(itemId);
+    return { item, rawdoc, document, collectionIds };
   }
 
   async loadDocument(docId: string): Promise<KnowledgeDocument> {
