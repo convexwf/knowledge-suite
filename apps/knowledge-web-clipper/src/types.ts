@@ -229,6 +229,32 @@ export interface CheckCollectionNameResult {
   exists: boolean;
 }
 
+export interface CollectionSummary {
+  collectionId: string;
+  title: string;
+  rootUrl?: string;
+  sourceType: string;
+  state: string;
+  itemCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CollectionDetail {
+  collection: CollectionSummary;
+  items: Array<{
+    collectionItemId: string;
+    normalizedUrl: string;
+    docId?: string;
+    rawdocId?: string;
+    title?: string;
+    pageTitle?: string;
+    orderIndex: number;
+    source?: string;
+    state: string;
+  }>;
+}
+
 export interface StoreMaintenanceScan {
   storeRoot: string;
   scannedAt: string;

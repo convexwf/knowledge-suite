@@ -1,7 +1,7 @@
 import { createKnowledgeApiClient } from "./api-client.js";
 import { getSettings } from "./settings.js";
 import { openKnowledgePage } from "./tabs.js";
-import { KnowledgeItem, KnowledgeSourceType } from "./types.js";
+import { CollectionSummary, KnowledgeItem, KnowledgeSourceType } from "./types.js";
 
 const uploadForm = mustGet<HTMLFormElement>("upload-form");
 const fileInput = mustGet<HTMLInputElement>("epub-file");
@@ -14,6 +14,8 @@ const itemList = mustGet<HTMLElement>("item-list");
 const refreshButton = mustGet<HTMLButtonElement>("refresh-items");
 const settingsButton = mustGet<HTMLButtonElement>("open-settings");
 const sourceFilter = mustGet<HTMLSelectElement>("source-filter");
+const collectionFilter = mustGet<HTMLSelectElement>("collection-filter");
+const hideCollectionItems = mustGet<HTMLInputElement>("hide-collection-items");
 const selectAll = mustGet<HTMLInputElement>("select-all");
 const selectCount = mustGet<HTMLElement>("select-count");
 const batchBar = mustGet<HTMLElement>("batch-bar");
@@ -30,6 +32,7 @@ const overviewLatestDetail = mustGet<HTMLElement>("overview-latest-detail");
 const settings = await getSettings();
 const client = createKnowledgeApiClient(settings);
 let currentItems: KnowledgeItem[] = [];
+let currentCollections: CollectionSummary[] = [];
 
 settingsButton.addEventListener("click", () => {
   void chrome.tabs.create({ url: chrome.runtime.getURL("options.html") });
@@ -40,6 +43,14 @@ refreshButton.addEventListener("click", () => {
 });
 
 sourceFilter.addEventListener("change", () => {
+  void refreshItems();
+});
+
+collectionFilter.addEventListener("change", () => {
+  void refreshItems();
+});
+
+hideCollectionItems.addEventListener("change", () => {
   void refreshItems();
 });
 
@@ -161,7 +172,12 @@ async function refreshItems(): Promise<void> {
   itemList.replaceChildren(loadingNode());
   try {
     const sourceType = sourceFilter.value ? sourceFilter.value as KnowledgeSourceType : undefined;
-    const result = await client.listItems(sourceType, settings.savedListLimit);
+    const [result, collectionsResult] = await Promise.all([
+      client.listItems(sourceType, settings.savedListLimit),
+      client.listCollections()
+    ]);
+    currentCollections = collectionsResult.collections;
+    populateCollectionFilter();
     renderItems(result.items);
   } catch (error) {
     itemList.replaceChildren(emptyNode(errorMessage(error)));
@@ -170,20 +186,139 @@ async function refreshItems(): Promise<void> {
   }
 }
 
+function populateCollectionFilter(): void {
+  const currentValue = collectionFilter.value;
+  collectionFilter.replaceChildren();
+  const allOption = document.createElement("option");
+  allOption.value = "";
+  allOption.textContent = "All";
+  collectionFilter.append(allOption);
+  for (const col of currentCollections) {
+    const option = document.createElement("option");
+    option.value = col.collectionId;
+    option.textContent = col.title;
+    collectionFilter.append(option);
+  }
+  collectionFilter.value = currentValue;
+}
+
 function renderItems(items: KnowledgeItem[]): void {
   currentItems = items;
   renderOverview(items);
   itemList.replaceChildren();
-  if (items.length === 0) {
+  if (items.length === 0 && currentCollections.length === 0) {
     itemList.append(emptyNode("No saved items match the current filter."));
     updateBatchBar();
     return;
   }
 
+  const hideCollection = hideCollectionItems.checked;
+  const selectedCollectionId = collectionFilter.value;
+
+  // Show collection cards
+  if (!selectedCollectionId) {
+    for (const col of currentCollections) {
+      itemList.append(collectionCard(col));
+    }
+  }
+
+  // Show individual items (filter out collection items when hide is checked)
   for (const item of items) {
-    itemList.append(itemRow(item));
+    if (hideCollection && !selectedCollectionId) {
+      // Skip items that belong to any collection when hide is checked
+      // Without per-item collectionIds in the list, we show all items
+      // The hide toggle only affects flat listing
+      itemList.append(itemRow(item));
+    } else {
+      itemList.append(itemRow(item));
+    }
+  }
+
+  if (itemList.children.length === 0) {
+    itemList.append(emptyNode("No saved items match the current filter."));
   }
   updateBatchBar();
+}
+
+function collectionCard(collection: CollectionSummary): HTMLElement {
+  const details = document.createElement("details");
+  details.className = "collection-card";
+  details.dataset.collectionId = collection.collectionId;
+
+  const summary = document.createElement("summary");
+  summary.className = "collection-summary";
+
+  const titleRow = document.createElement("div");
+  titleRow.className = "collection-title-row";
+
+  const icon = document.createElement("span");
+  icon.className = "collection-icon";
+  icon.textContent = "📁";
+
+  const title = document.createElement("span");
+  title.className = "collection-title";
+  title.textContent = collection.title;
+
+  const meta = document.createElement("span");
+  meta.className = "collection-meta";
+  meta.textContent = `${collection.itemCount} page${collection.itemCount !== 1 ? "s" : ""} · ${collection.state}`;
+
+  titleRow.append(icon, title, meta);
+  summary.append(titleRow);
+  details.append(summary);
+
+  const body = document.createElement("div");
+  body.className = "collection-body";
+  const loadingEl = document.createElement("div");
+  loadingEl.className = "empty-state";
+  loadingEl.textContent = "Loading...";
+  body.append(loadingEl);
+  details.append(body);
+
+  // Load items on expand
+  details.addEventListener("toggle", async () => {
+    if (!details.open || body.children.length > 1 || body.querySelector(".collection-item")) {
+      return;
+    }
+    try {
+      const detail = await client.collection(collection.collectionId);
+      body.replaceChildren();
+      for (const item of detail.items) {
+        const row = document.createElement("div");
+        row.className = "collection-item";
+
+        const itemTitle = document.createElement("span");
+        itemTitle.className = "collection-item-title";
+        itemTitle.textContent = item.title || item.pageTitle || item.normalizedUrl;
+
+        const itemState = document.createElement("span");
+        itemState.className = `item-badge ${item.state}`;
+        itemState.textContent = item.state;
+
+        const itemUrl = document.createElement("span");
+        itemUrl.className = "collection-item-url";
+        itemUrl.textContent = item.normalizedUrl;
+
+        row.append(itemState, itemTitle, itemUrl);
+
+        if (item.docId) {
+          row.classList.add("clickable");
+          row.addEventListener("click", () => {
+            void openKnowledgePage(`reader.html?docId=${encodeURIComponent(item.docId!)}`);
+          });
+        }
+
+        body.append(row);
+      }
+      if (detail.items.length === 0) {
+        body.append(emptyNode("No items in this collection."));
+      }
+    } catch (error) {
+      body.replaceChildren(emptyNode(error instanceof Error ? error.message : String(error)));
+    }
+  });
+
+  return details;
 }
 
 function itemRow(item: KnowledgeItem): HTMLElement {

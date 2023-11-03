@@ -28,6 +28,8 @@ import {
   BatchDiscoverResult,
   BatchJobResult,
   CheckCollectionNameResult,
+  CollectionSummary,
+  CollectionDetail,
   StoreClearParsedResult,
   StoreClearResult,
   StoreMaintenanceScan,
@@ -84,6 +86,8 @@ export interface KnowledgeApiClient {
   }): Promise<BatchJobResult>;
   batchJob(jobId: string): Promise<BatchJobResult>;
   checkCollectionName(title: string): Promise<CheckCollectionNameResult>;
+  listCollections(limit?: number): Promise<{ collections: CollectionSummary[] }>;
+  collection(collectionId: string): Promise<CollectionDetail>;
   annotations(docId: string): Promise<AnnotationListResult>;
   saveAnnotation(docId: string, annotation: Annotation): Promise<AnnotationSaveResult>;
   deleteAnnotation(docId: string, annotationId: string): Promise<AnnotationDeleteResult>;
@@ -283,6 +287,22 @@ export function createKnowledgeApiClient(settings: ExtensionSettings): Knowledge
       settings.token,
       "GET",
       `/api/collections/check-name?title=${encodeURIComponent(title)}`,
+      undefined,
+      options
+    ),
+    listCollections: (limit) => request<{ collections: CollectionSummary[] }>(
+      baseUrl,
+      settings.token,
+      "GET",
+      limit ? `/api/collections?limit=${encodeURIComponent(String(limit))}` : "/api/collections",
+      undefined,
+      options
+    ),
+    collection: (collectionId) => request<CollectionDetail>(
+      baseUrl,
+      settings.token,
+      "GET",
+      `/api/collections/${encodeURIComponent(collectionId)}`,
       undefined,
       options
     ),
