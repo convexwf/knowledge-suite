@@ -1151,7 +1151,7 @@ function selectedBatchItems(): BatchDiscoverItem[] {
     return [];
   }
   const selectedUrls = new Set(
-    Array.from(previewOutput.querySelectorAll<HTMLInputElement>("input[type='checkbox'][data-url]"))
+    Array.from(batchModalBody.querySelectorAll<HTMLInputElement>("input[type='checkbox'][data-url]"))
       .filter((input) => input.checked)
       .map((input) => input.dataset.url)
       .filter(Boolean) as string[]
