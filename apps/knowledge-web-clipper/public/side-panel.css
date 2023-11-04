@@ -451,6 +451,68 @@ button[data-active="true"] {
   color: #9f2f24;
 }
 
+/* Batch modal */
+.batch-modal {
+  bottom: 0;
+  left: 0;
+  position: fixed;
+  right: 0;
+  top: 0;
+  z-index: 200;
+}
+
+.batch-modal-overlay {
+  background: rgba(15, 23, 31, 0.35);
+  height: 100%;
+  width: 100%;
+}
+
+.batch-modal-content {
+  background: #ffffff;
+  border-radius: 12px 12px 0 0;
+  bottom: 0;
+  box-shadow: 0 -6px 24px rgba(31, 41, 51, 0.15);
+  display: flex;
+  flex-direction: column;
+  left: 0;
+  max-height: 80vh;
+  position: absolute;
+  right: 0;
+}
+
+.batch-modal-header {
+  align-items: center;
+  border-bottom: 1px solid #edf0f4;
+  display: flex;
+  justify-content: space-between;
+  padding: 14px 16px;
+}
+
+.batch-modal-title {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.batch-modal-close {
+  background: transparent;
+  border: none;
+  color: #6b7a8a;
+  cursor: pointer;
+  font-size: 20px;
+  line-height: 1;
+  padding: 0 4px;
+}
+
+.batch-modal-close:hover {
+  color: #1f2933;
+}
+
+.batch-modal-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 16px 16px;
+}
+
 #purge-button {
   color: #9f2f24;
 }

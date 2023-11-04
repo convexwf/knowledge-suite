@@ -86,6 +86,17 @@
       <aside id="status-toast" class="status-toast" hidden aria-live="polite">
         <span id="status-detail">Ready</span>
       </aside>
+
+      <div id="batch-modal" class="batch-modal" hidden>
+        <div class="batch-modal-overlay"></div>
+        <div class="batch-modal-content" role="dialog" aria-label="Save Section">
+          <div class="batch-modal-header">
+            <span class="batch-modal-title">Save Section</span>
+            <button id="batch-modal-close" class="batch-modal-close" title="Close">&times;</button>
+          </div>
+          <div id="batch-modal-body" class="batch-modal-body"></div>
+        </div>
+      </div>
     </main>
     <script src="vendor/katex/katex.min.js"></script>
     <script src="vendor/markdown-it/markdown-it.min.js"></script>

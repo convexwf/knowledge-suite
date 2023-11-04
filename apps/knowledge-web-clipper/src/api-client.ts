@@ -85,6 +85,7 @@ export interface KnowledgeApiClient {
     };
   }): Promise<BatchJobResult>;
   batchJob(jobId: string): Promise<BatchJobResult>;
+  cancelBatchJob(jobId: string): Promise<{ cancelled: boolean }>;
   checkCollectionName(title: string): Promise<CheckCollectionNameResult>;
   listCollections(limit?: number): Promise<{ collections: CollectionSummary[] }>;
   collection(collectionId: string): Promise<CollectionDetail>;
@@ -280,6 +281,14 @@ export function createKnowledgeApiClient(settings: ExtensionSettings): Knowledge
       "GET",
       `/api/batch/jobs/${encodeURIComponent(jobId)}`,
       undefined,
+      options
+    ),
+    cancelBatchJob: (jobId) => request<{ cancelled: boolean }>(
+      baseUrl,
+      settings.token,
+      "POST",
+      `/api/batch/jobs/${encodeURIComponent(jobId)}/cancel`,
+      {},
       options
     ),
     checkCollectionName: (title) => request<CheckCollectionNameResult>(

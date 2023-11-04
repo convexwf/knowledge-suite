@@ -52,6 +52,9 @@ const tabSavedButton = mustGet<HTMLButtonElement>("tab-saved");
 const candidateControl = mustGet<HTMLElement>("candidate-control");
 const candidateSelect = mustGet<HTMLSelectElement>("candidate-select");
 const savedList = mustGet<HTMLDivElement>("saved-list");
+const batchModal = mustGet<HTMLElement>("batch-modal");
+const batchModalBody = mustGet<HTMLElement>("batch-modal-body");
+const batchModalClose = mustGet<HTMLButtonElement>("batch-modal-close");
 
 let settings: ExtensionSettings = await getSettings();
 let activeTab: ActiveTabInfo | undefined;
@@ -69,8 +72,8 @@ let diagnosticsExpanded = isDiagnosticsView(activeView);
 let autoRefreshTimer: number | undefined;
 let pendingAction: "batch" | "delete" | "preview" | "save" | undefined;
 let statusToastTimer: number | undefined;
-let batchActive = false;
 let currentCollectionTitle: string | undefined;
+let batchJobId: string | undefined;
 
 applySettingsToUi();
 setMode(currentInputMode, false);
@@ -102,6 +105,10 @@ saveSectionButton.addEventListener("click", () => {
   saveDropdownMenu.hidden = true;
   void discoverSection();
 });
+
+// Batch modal close
+batchModalClose.addEventListener("click", () => hideBatchModal());
+batchModal.querySelector(".batch-modal-overlay")?.addEventListener("click", () => hideBatchModal());
 diagnosticsButton.addEventListener("click", () => {
   closeMoreMenu();
   diagnosticsExpanded = true;
@@ -260,26 +267,26 @@ async function discoverSection(): Promise<void> {
   }
 
   pendingAction = "batch";
-  batchActive = true;
   updateActionButtons();
-  hideAllViews();
+  showBatchModal("Scanning this page for navigation links...");
   setStatus("Discovering", "Scanning this page for navigation links.");
   try {
     await refreshServerStatus();
     const discovered = await collectNavigationLinks();
     if (discovered.candidates.length === 0) {
       batchDiscover = undefined;
-      renderInlineBatchMessage("No sidebar or navigation links were found.");
+      renderBatchConfirmation();
       setStatus("No links", "No sidebar or navigation links were found.");
       return;
     }
     batchDiscover = await createKnowledgeApiClient(settings).discoverBatch(discovered.pageUrl, discovered.candidates);
     batchJob = undefined;
-    renderInlineBatchConfirmation();
+    batchJobId = undefined;
+    renderBatchConfirmation();
     setStatus("Ready", `${batchDiscover.items.filter((item) => item.selectedByDefault).length} pages selected for this section.`);
   } catch (error) {
     setStatus("Error");
-    renderInlineBatchMessage(error instanceof Error ? error.message : String(error));
+    renderBatchMessage(error instanceof Error ? error.message : String(error));
   } finally {
     pendingAction = undefined;
     updateActionButtons();
@@ -314,7 +321,8 @@ async function startBatchJob(): Promise<void> {
         depth: item.depth
       }))
     });
-    renderInlineBatchProgress();
+    batchJobId = batchJob.jobId;
+    renderBatchProgress();
     setStatus("Running", `Saving ${batchJob.total} pages into a collection.`);
     pollBatchJob(batchJob.jobId);
   } catch (error) {
@@ -348,7 +356,7 @@ function pollBatchJob(jobId: string): void {
   batchPollTimer = window.setTimeout(async () => {
     try {
       batchJob = await createKnowledgeApiClient(settings).batchJob(jobId);
-      renderInlineBatchProgress();
+      renderBatchProgress();
       const done = batchJob.saved + batchJob.skipped + batchJob.failed + batchJob.cancelled;
       setStatus(
         batchJob.state === "succeeded" ? "Batch complete" : "Running",
@@ -496,9 +504,6 @@ function isMissingContentScriptError(error: unknown): boolean {
 }
 
 function renderOutput(): void {
-  if (batchActive) {
-    return;
-  }
   previewOutput.hidden = activeView !== "preview";
   codeOutput.hidden = activeView !== "json";
   rawdocOutput.hidden = activeView !== "rawdoc";
@@ -702,29 +707,49 @@ async function openSavedClipUrl(url: string): Promise<void> {
   await chrome.tabs.create({ url });
 }
 
-function hideAllViews(): void {
-  previewOutput.hidden = false;
-  codeOutput.hidden = true;
-  rawdocOutput.hidden = true;
-  parserOutput.hidden = true;
-  savedList.hidden = true;
-  candidateControl.hidden = true;
+function showBatchModal(message?: string): void {
+  batchModal.hidden = false;
+  if (message) {
+    batchModalBody.replaceChildren(makeEmptyState(message));
+  }
 }
 
-function renderInlineBatchMessage(message: string): void {
-  batchActive = true;
-  hideAllViews();
-  previewOutput.replaceChildren(makeEmptyState(message));
+async function hideBatchModal(): Promise<void> {
+  batchModal.hidden = true;
+  batchModalBody.replaceChildren();
+  window.clearTimeout(batchPollTimer);
+
+  // Cancel running job if active
+  if (batchJobId && batchJob && (batchJob.state === "queued" || batchJob.state === "running")) {
+    try {
+      await createKnowledgeApiClient(settings).cancelBatchJob(batchJobId);
+    } catch {
+      // Best-effort cancellation
+    }
+  }
+
+  batchDiscover = undefined;
+  batchJob = undefined;
+  batchJobId = undefined;
+  currentCollectionTitle = undefined;
+
+  if (activeView === "preview" || activeView === "saved") {
+    renderOutput();
+  }
+  updateActionButtons();
 }
 
-function renderInlineBatchConfirmation(): void {
+function renderBatchMessage(message: string): void {
+  batchModalBody.replaceChildren(makeEmptyState(message));
+}
+
+function renderBatchConfirmation(): void {
   if (!batchDiscover) {
-    renderInlineBatchMessage("No section discovery yet.");
+    renderBatchMessage("No section discovery yet.");
     return;
   }
 
-  batchActive = true;
-  hideAllViews();
+  showBatchModal();
 
   const container = document.createElement("div");
   container.className = "batch-inline";
@@ -821,17 +846,16 @@ function renderInlineBatchConfirmation(): void {
   }
 
   container.append(summary, list);
-  previewOutput.replaceChildren(container);
+  batchModalBody.replaceChildren(container);
 }
 
-function renderInlineBatchProgress(): void {
+function renderBatchProgress(): void {
   if (!batchJob) {
-    renderInlineBatchMessage("No batch job in progress.");
+    renderBatchMessage("No batch job in progress.");
     return;
   }
 
-  batchActive = batchJob.state === "queued" || batchJob.state === "running";
-  hideAllViews();
+  showBatchModal();
 
   const container = document.createElement("div");
   container.className = "batch-inline";
@@ -898,13 +922,8 @@ function renderInlineBatchProgress(): void {
       void openKnowledgePage("items.html");
     });
     const closeBtn = document.createElement("button");
-    closeBtn.textContent = "Back to Preview";
-    closeBtn.addEventListener("click", () => {
-      batchActive = false;
-      batchDiscover = undefined;
-      batchJob = undefined;
-      setView(lastPrimaryView, false);
-    });
+    closeBtn.textContent = "Close";
+    closeBtn.addEventListener("click", () => void hideBatchModal());
     actions.append(openItemsBtn, closeBtn);
 
     container.append(summary, list, actions);
@@ -912,7 +931,7 @@ function renderInlineBatchProgress(): void {
     container.append(summary, list);
   }
 
-  previewOutput.replaceChildren(container);
+  batchModalBody.replaceChildren(container);
 }
 
 async function reloadSettings(): Promise<void> {
@@ -970,7 +989,6 @@ function setStatus(text: string, detail?: string): void {
 }
 
 function renderError(error: unknown): void {
-  batchActive = false;
   previewOutput.hidden = false;
   codeOutput.hidden = true;
   rawdocOutput.hidden = true;
