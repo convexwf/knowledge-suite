@@ -1214,16 +1214,30 @@ function showAnnotationPopup(annotationId: string, anchor: HTMLElement): void {
   popup.dataset.annotationId = annotationId;
   const noteText = anno.type === "highlight" ? anno.note : anno.type === "note" || anno.type === "summary" ? anno.note : "";
   const colorLabel = anno.type === "highlight" ? anno.color ?? null : null;
+  const typeLabel = capitalizeLabel(anno.type);
+  const textRef = anno.type === "highlight" ? anno.text_ref : (anno as Annotation & { text_ref?: string }).text_ref;
+  const sectionLabel = formatSectionLabel(anno.section_id);
+  const updatedAt = formatShortTimestamp(anno.updated_at);
+  const mainBody = noteText || textRef || "(empty)";
 
-  let content = "";
-  if (noteText) content += escapeHtml(noteText);
-  if (!content) content = "(empty)";
-
-  const typeLabel = anno.type.charAt(0).toUpperCase() + anno.type.slice(1);
-  popup.innerHTML = `<div class="annotation-popup-header">
-    <span class="annotation-popup-type">${typeLabel}${colorLabel ? ` <span style="display:inline-block;width:12px;height:12px;background:${colorLabel};border-radius:2px;"></span>` : ""}</span>
-    <button class="annotation-popup-close">&times;</button>
-  </div><div class="annotation-popup-body">${content}</div><button class="annotation-popup-delete" data-id="${anno.annotation_id}">Delete</button>`;
+  popup.innerHTML = `
+    <div class="annotation-popup-header">
+      <div class="annotation-popup-title-stack">
+        <span class="annotation-popup-type"${colorLabel ? ` style="--anno-accent:${colorLabel}"` : ""}>
+          ${colorLabel ? `<span class="annotation-popup-swatch" style="background:${colorLabel}"></span>` : ""}
+          ${escapeHtml(typeLabel)}
+        </span>
+        <span class="annotation-popup-section">${escapeHtml(sectionLabel)} · ${escapeHtml(updatedAt)}</span>
+      </div>
+      <button class="annotation-popup-close" aria-label="Close annotation">&times;</button>
+    </div>
+    ${textRef ? `<div class="annotation-popup-ref">${escapeHtml(textRef)}</div>` : ""}
+    <div class="annotation-popup-body">${escapeHtml(mainBody)}</div>
+    <div class="annotation-popup-actions">
+      ${anno.orphaned ? '<span class="annotation-popup-badge">Orphaned</span>' : ""}
+      <button class="annotation-popup-delete" data-id="${anno.annotation_id}">Delete</button>
+    </div>
+  `;
 
   const closePopup = () => popup.remove();
   popup.querySelector(".annotation-popup-close")?.addEventListener("click", closePopup);
@@ -1340,12 +1354,23 @@ function renderAnnotationSidebar(): void {
   summary.className = "annotation-summary";
   const annotLabel = documentCreate("div", "Document Notes");
   annotLabel.className = "annotation-count-label";
-  const annotMeta = documentCreate("div", total === 0 ? "No highlights, notes, or summaries yet." : `${total} annotation${total === 1 ? "" : "s"} in this document`);
+  const summaryCount = countByType(currentAnnotations);
+  const summaryLine = total === 0
+    ? "No highlights, notes, or summaries yet."
+    : `${total} annotation${total === 1 ? "" : "s"} in this document`;
+  const detailLine = total === 0
+    ? "Start by selecting text in the reader."
+    : `${summaryCount.highlight} highlight${summaryCount.highlight === 1 ? "" : "s"} · ${summaryCount.note} note${summaryCount.note === 1 ? "" : "s"} · ${summaryCount.summary} summar${summaryCount.summary === 1 ? "y" : "ies"}`;
+  const annotMeta = documentCreate("div", summaryLine);
   annotMeta.className = "annotation-summary-meta";
-  summary.append(annotLabel, annotMeta);
+  const annotDetail = documentCreate("div", detailLine);
+  annotDetail.className = "annotation-summary-detail";
+  summary.append(annotLabel, annotMeta, annotDetail);
 
   if (total === 0) {
-    container.append(summary, documentCreate("span", "None"));
+    const empty = documentCreate("div", "Select text to create your first highlight or note.");
+    empty.className = "annotation-empty-state";
+    container.append(summary, empty);
     return;
   }
 
@@ -1356,7 +1381,7 @@ function renderAnnotationSidebar(): void {
     const count = currentAnnotations.filter((a) => a.type === type).length;
     if (count === 0) continue;
     const btn = document.createElement("button");
-    btn.textContent = `${type[0].toUpperCase()}${type.slice(1)}`;
+    btn.textContent = `${type[0].toUpperCase()}${type.slice(1)} ${count}`;
     btn.className = "annotation-filter-btn active";
     btn.title = `${count} ${type}(s)`;
     btn.addEventListener("click", () => {
@@ -1371,23 +1396,37 @@ function renderAnnotationSidebar(): void {
   const list = document.createElement("div");
   list.className = "annotation-list";
 
+  const currentSectionId = currentVisibleSectionId();
+  const orderedAnnotations = [...currentAnnotations].sort((left, right) => {
+    const leftCurrent = left.section_id === currentSectionId ? 0 : 1;
+    const rightCurrent = right.section_id === currentSectionId ? 0 : 1;
+    if (leftCurrent !== rightCurrent) return leftCurrent - rightCurrent;
+    return Date.parse(right.updated_at) - Date.parse(left.updated_at);
+  });
+
   const sectionLevels = new Map<string, number>();
+  const sectionLabels = new Map<string, string>();
   if (currentDocument) {
     for (const s of currentDocument.sections) {
       if (s.type === "heading") {
         const sid = s.section_id as string | undefined;
         const lv = s.level as number | undefined;
+        const headingText = typeof s.text === "string" ? s.text.trim() : "";
         if (sid && typeof lv === "number") {
           sectionLevels.set(sid, lv);
+        }
+        if (sid && headingText) {
+          sectionLabels.set(sid, headingText);
         }
       }
     }
   }
 
-  for (const anno of currentAnnotations) {
+  for (const anno of orderedAnnotations) {
     const item = document.createElement("div");
     item.className = "annotation-item";
     item.dataset.type = anno.type;
+    item.dataset.sectionId = anno.section_id;
 
     if (anno.type === "summary") {
       const level = sectionLevels.get(anno.section_id);
@@ -1400,7 +1439,10 @@ function renderAnnotationSidebar(): void {
 
     const textRef = anno.type === "highlight" ? anno.text_ref : (anno as Annotation & { text_ref?: string }).text_ref;
     const note = anno.type === "highlight" ? anno.note : anno.type === "note" || anno.type === "summary" ? anno.note : "";
-    const body = [textRef, note].filter(Boolean).join(" — ");
+    const body = note || textRef || "(empty)";
+    const ref = textRef && note ? textRef : "";
+    const sectionLabel = sectionLabels.get(anno.section_id) ?? formatSectionLabel(anno.section_id);
+    const timeLabel = formatShortTimestamp(anno.updated_at);
 
     item.title = body || "Click to scroll";
     item.addEventListener("click", () => {
@@ -1408,7 +1450,21 @@ function renderAnnotationSidebar(): void {
       if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
     });
 
-    item.innerHTML = `<span class="anno-icon"${color ? ` style="color:${color}"` : ""}>${typeIcon}</span><span class="anno-text"><strong>${anno.type}</strong>${body ? ` — ${escapeHtml(body)}` : " — (empty)"}</span>`;
+    item.innerHTML = `
+      <div class="anno-item-top">
+        <span class="anno-item-type"${color ? ` style="--anno-accent:${color}"` : ""}>
+          <span class="anno-icon"${color ? ` style="color:${color}"` : ""}>${typeIcon}</span>
+          <strong>${escapeHtml(capitalizeLabel(anno.type))}</strong>
+        </span>
+        <span class="anno-item-section">${escapeHtml(sectionLabel)}</span>
+      </div>
+      ${ref ? `<div class="anno-item-ref">${escapeHtml(ref)}</div>` : ""}
+      <div class="anno-item-body">${escapeHtml(body)}</div>
+      <div class="anno-item-meta">
+        <span>${escapeHtml(timeLabel)}</span>
+        ${anno.orphaned ? '<span>Orphaned</span>' : ""}
+      </div>
+    `;
     list.append(item);
   }
   container.append(list);
@@ -1423,6 +1479,60 @@ function toggleAnnotationType(container: HTMLElement, type: string, visible: boo
 
 function escapeHtml(value: string): string {
   return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+function countByType(annotations: Annotation[]): { highlight: number; note: number; summary: number } {
+  return annotations.reduce(
+    (acc, annotation) => {
+      if (annotation.type === "highlight") acc.highlight += 1;
+      if (annotation.type === "note") acc.note += 1;
+      if (annotation.type === "summary") acc.summary += 1;
+      return acc;
+    },
+    { highlight: 0, note: 0, summary: 0 }
+  );
+}
+
+function capitalizeLabel(value: string): string {
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function formatSectionLabel(sectionId: string): string {
+  return sectionId.replace(/^sec-/, "Section ");
+}
+
+function formatShortTimestamp(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+}
+
+function currentVisibleSectionId(): string | null {
+  const sections = Array.from(contentOutput.querySelectorAll<HTMLElement>("[data-section-id]"));
+  let bestSection: string | null = null;
+  let bestDistance = Number.POSITIVE_INFINITY;
+
+  for (const section of sections) {
+    const rect = section.getBoundingClientRect();
+    if (rect.bottom <= 0) {
+      continue;
+    }
+    const distance = Math.abs(rect.top - 140);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestSection = section.dataset.sectionId ?? null;
+    }
+    if (rect.top >= 0 && rect.top < 220) {
+      return section.dataset.sectionId ?? bestSection;
+    }
+  }
+
+  return bestSection;
 }
 
 function sourceSummary(item: KnowledgeItem | undefined, document: KnowledgeDocument | undefined): string {

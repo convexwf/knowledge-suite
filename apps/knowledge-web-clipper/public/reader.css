@@ -467,29 +467,31 @@ h2 {
 .annotation-filter {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: 6px;
 }
 
 .annotation-filter-btn {
-  background: #f0f3f7;
-  border: 1px solid #d9e1ea;
-  border-radius: 3px;
-  color: #5a6d84;
+  background: rgba(72, 105, 214, 0.06);
+  border: 1px solid rgba(72, 105, 214, 0.12);
+  border-radius: 999px;
+  color: #4f6280;
   cursor: pointer;
   font-size: 11px;
+  font-weight: 600;
   line-height: 1;
-  padding: 3px 6px;
+  min-height: 28px;
+  padding: 5px 9px;
 }
 
 .annotation-filter-btn:hover {
-  border-color: #4869d6;
-  color: #315bdc;
+  border-color: rgba(72, 105, 214, 0.26);
+  color: #3554b3;
 }
 
 .annotation-filter-btn.active {
-  background: #e8edff;
-  border-color: #4869d6;
-  color: #315bdc;
+  background: rgba(72, 105, 214, 0.12);
+  border-color: rgba(72, 105, 214, 0.24);
+  color: #3554b3;
 }
 
 .annotation-filter-btn:not(.active) {
@@ -505,39 +507,93 @@ h2 {
 .annotation-list {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 10px;
 }
 
 .annotation-item {
-  align-items: center;
-  border-left: 2px solid #d9e1ea;
+  background: rgba(255, 255, 255, 0.98);
+  border: 1px solid #d9e1ea;
+  border-radius: 14px;
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.05);
   color: #5a6d84;
   cursor: pointer;
-  display: flex;
-  font-size: 12px;
-  gap: 5px;
+  display: grid;
+  gap: 8px;
   line-height: 1.4;
   overflow: hidden;
-  padding: 3px 6px;
+  padding: 12px 13px;
 }
 
 .annotation-item:hover {
-  background: #f5f7fa;
-  border-left-color: #4869d6;
+  background: #fbfcff;
+  border-color: rgba(72, 105, 214, 0.2);
+  box-shadow: 0 12px 22px rgba(72, 105, 214, 0.08);
   color: #172033;
 }
 
 .anno-icon {
-  flex-shrink: 0;
   font-size: 11px;
-  width: 12px;
   text-align: center;
 }
 
-.anno-text {
+.anno-item-top {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.anno-item-type {
+  align-items: center;
+  color: var(--anno-accent, #3554b3);
+  display: inline-flex;
+  font-size: 11px;
+  font-weight: 700;
+  gap: 6px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.anno-item-section {
+  color: #7c8da1;
+  font-size: 11px;
+  line-height: 1.3;
+  margin-left: 10px;
   overflow: hidden;
+  text-align: right;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.anno-item-ref {
+  background: #f7f9fc;
+  border-left: 3px solid rgba(72, 105, 214, 0.18);
+  border-radius: 10px;
+  color: #4f6278;
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 8px 10px;
+}
+
+.anno-item-body {
+  color: #243244;
+  font-size: 13px;
+  line-height: 1.58;
+}
+
+.annotation-item[data-type="summary"] .anno-item-body {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.55;
+}
+
+.anno-item-meta {
+  color: #7c8da1;
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 11px;
+  gap: 6px 10px;
+  line-height: 1.35;
 }
 
 /* ---- Annotation Highlight ---- */
@@ -556,59 +612,114 @@ h2 {
 /* ---- Annotation Popup ---- */
 
 .annotation-popup {
-  background: #ffffff;
-  border: 1px solid #d9e1ea;
-  border-radius: 6px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  background: rgba(255, 255, 255, 0.98);
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 16px;
+  box-shadow: 0 18px 32px rgba(15, 23, 42, 0.16);
   font-size: 13px;
-  max-width: 280px;
+  max-width: 340px;
   position: absolute;
   z-index: 100;
 }
 
 .annotation-popup-header {
-  align-items: center;
-  border-bottom: 1px solid #f0f0f0;
+  align-items: start;
   display: flex;
   justify-content: space-between;
-  padding: 8px 10px;
+  gap: 12px;
+  padding: 14px 14px 10px;
+}
+
+.annotation-popup-title-stack {
+  display: grid;
+  gap: 5px;
 }
 
 .annotation-popup-type {
-  color: #4869d6;
+  align-items: center;
+  color: var(--anno-accent, #3554b3);
+  display: inline-flex;
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 700;
+  gap: 6px;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
+}
+
+.annotation-popup-swatch {
+  border-radius: 999px;
+  display: inline-flex;
+  height: 10px;
+  width: 10px;
+}
+
+.annotation-popup-section {
+  color: #7c8da1;
+  font-size: 11px;
+  line-height: 1.35;
 }
 
 .annotation-popup-close {
   background: transparent;
   border: none;
-  color: #999;
+  color: #8da0b3;
   cursor: pointer;
   font-size: 16px;
   line-height: 1;
+  min-height: 0;
   padding: 0 2px;
 }
 
 .annotation-popup-close:hover {
-  color: #333;
+  color: #243244;
+}
+
+.annotation-popup-ref {
+  background: #f7f9fc;
+  border-left: 3px solid rgba(72, 105, 214, 0.18);
+  color: #4f6278;
+  font-size: 12px;
+  line-height: 1.5;
+  margin: 0 14px;
+  padding: 9px 10px;
 }
 
 .annotation-popup-body {
-  line-height: 1.5;
-  padding: 8px 10px 4px;
+  color: #243244;
+  line-height: 1.58;
+  padding: 12px 14px;
+}
+
+.annotation-popup-actions {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0 14px 14px;
+}
+
+.annotation-popup-badge {
+  background: rgba(197, 122, 31, 0.12);
+  border-radius: 999px;
+  color: #b26a14;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  line-height: 1;
+  padding: 6px 8px;
+  text-transform: uppercase;
 }
 
 .annotation-popup-delete {
   background: transparent;
-  border: 1px solid #e0e0e0;
-  border-radius: 3px;
+  border: 1px solid rgba(160, 63, 49, 0.24);
+  border-radius: 999px;
   color: #c0392b;
   cursor: pointer;
   font-size: 11px;
-  margin: 0 10px 8px;
-  padding: 2px 8px;
+  margin-left: auto;
+  min-height: 28px;
+  padding: 4px 10px;
 }
 
 .annotation-popup-delete:hover {
@@ -1051,14 +1162,20 @@ h2 {
 
 .annotation-summary {
   display: grid;
-  gap: 4px;
-  margin-bottom: 12px;
+  gap: 6px;
+  margin-bottom: 14px;
 }
 
 .annotation-summary-meta {
   color: #5f6f82;
   font-size: 12px;
   line-height: 1.45;
+}
+
+.annotation-summary-detail {
+  color: #7c8da1;
+  font-size: 11px;
+  line-height: 1.4;
 }
 
 .annotation-count-label {
@@ -1069,19 +1186,14 @@ h2 {
   text-transform: uppercase;
 }
 
-.annotation-item {
-  background: #ffffff;
-  border: 1px solid #d9e1ea;
-  border-radius: var(--radius-md);
-  padding: 10px 12px;
-}
-
-.annotation-item .anno-text strong {
-  color: var(--text-strong);
-  font-size: 11px;
-  letter-spacing: 0.06em;
-  margin-right: 6px;
-  text-transform: uppercase;
+.annotation-empty-state {
+  background: rgba(255, 255, 255, 0.86);
+  border: 1px dashed rgba(148, 163, 184, 0.36);
+  border-radius: 14px;
+  color: #7c8da1;
+  font-size: 12px;
+  line-height: 1.45;
+  padding: 14px;
 }
 
 .back-to-top {
