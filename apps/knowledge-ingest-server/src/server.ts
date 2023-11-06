@@ -339,6 +339,14 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
     };
   });
 
+  app.get("/api/collections/by-doc", async (request) => {
+    const query = request.query as { docId?: string };
+    if (!query.docId) {
+      return { collections: [] };
+    }
+    return { collections: await store.getCollectionsByDocId(query.docId) };
+  });
+
   app.get("/api/collections/:collectionId/navigation", async (request) => {
     const params = request.params as { collectionId: string };
     const query = request.query as { docId?: string };

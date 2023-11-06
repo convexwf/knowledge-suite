@@ -833,6 +833,17 @@ export class KnowledgeStore {
     return Number(result.changes);
   }
 
+  async getCollectionsByDocId(docId: string): Promise<Array<{ collectionId: string; title: string }>> {
+    await this.ensure();
+    const rows = this.database!.prepare(`
+      SELECT DISTINCT c.collection_id, c.title
+      FROM collection_items ci
+      JOIN collections c ON c.collection_id = ci.collection_id
+      WHERE ci.doc_id = ?
+    `).all(docId) as Array<{ collection_id: string; title: string }>;
+    return rows.map((r) => ({ collectionId: r.collection_id, title: r.title }));
+  }
+
   async updateBatchItem(params: {
     itemId: string;
     state: BatchItemState;

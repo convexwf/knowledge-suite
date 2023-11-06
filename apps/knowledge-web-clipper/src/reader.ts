@@ -1654,13 +1654,29 @@ function buildExportMarkdown(markdown: string, annotations: Annotation[]): strin
 }
 
 async function loadCollectionContext(): Promise<void> {
-  if (!currentItem || !currentItem.itemId) {
-    readerCollectionOutput.textContent = "-";
-    return;
-  }
   try {
-    const detail = await client.item(currentItem.itemId);
-    const collectionIds = detail.collectionIds ?? [];
+    let collectionIds: string[] = [];
+
+    if (currentItem?.itemId) {
+      // Item-based lookup: get collectionIds from item detail
+      const detail = await client.item(currentItem.itemId);
+      collectionIds = detail.collectionIds ?? [];
+    } else if (currentDocId) {
+      // Doc-based lookup: query collections directly
+      const result = await client.collectionsByDoc(currentDocId);
+      collectionIds = result.collections.map((c) => c.collectionId);
+      if (collectionIds.length > 0) {
+        readerCollectionOutput.textContent = result.collections.map((c) => c.title).join(", ");
+      } else {
+        readerCollectionOutput.textContent = "None";
+      }
+    } else {
+      readerCollectionOutput.textContent = "-";
+      prevInCollectionBtn.disabled = true;
+      nextInCollectionBtn.disabled = true;
+      return;
+    }
+
     if (collectionIds.length === 0) {
       readerCollectionOutput.textContent = "None";
       prevInCollectionBtn.disabled = true;
@@ -1668,10 +1684,12 @@ async function loadCollectionContext(): Promise<void> {
       return;
     }
 
-    // Show collection names
-    const collectionsResult = await client.listCollections();
-    const matching = collectionsResult.collections.filter((c) => collectionIds.includes(c.collectionId));
-    readerCollectionOutput.textContent = matching.map((c) => c.title).join(", ") || "Unknown";
+    // Show collection names (if not already set via doc-based lookup)
+    if (currentItem?.itemId) {
+      const collectionsResult = await client.listCollections();
+      const matching = collectionsResult.collections.filter((c) => collectionIds.includes(c.collectionId));
+      readerCollectionOutput.textContent = matching.map((c) => c.title).join(", ") || "Unknown";
+    }
 
     // Fetch navigation for the first collection
     if (currentDocId && collectionIds[0]) {
@@ -1680,7 +1698,11 @@ async function loadCollectionContext(): Promise<void> {
       nextInCollectionBtn.disabled = !collectionNavData.next;
     }
   } catch {
-    readerCollectionOutput.textContent = "-";
+    if (!readerCollectionOutput.textContent || readerCollectionOutput.textContent === "-") {
+      readerCollectionOutput.textContent = "-";
+    }
+    prevInCollectionBtn.disabled = true;
+    nextInCollectionBtn.disabled = true;
   }
 }
 
