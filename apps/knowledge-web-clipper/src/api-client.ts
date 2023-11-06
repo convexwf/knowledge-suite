@@ -86,9 +86,14 @@ export interface KnowledgeApiClient {
   }): Promise<BatchJobResult>;
   batchJob(jobId: string): Promise<BatchJobResult>;
   cancelBatchJob(jobId: string): Promise<{ cancelled: boolean }>;
+  retryBatchJob(jobId: string): Promise<BatchJobResult & { retryCount?: number }>;
   checkCollectionName(title: string): Promise<CheckCollectionNameResult>;
   listCollections(limit?: number): Promise<{ collections: CollectionSummary[] }>;
   collection(collectionId: string): Promise<CollectionDetail>;
+  collectionNavigation(collectionId: string, docId: string): Promise<{
+    previous: { docId: string; title?: string; normalizedUrl: string } | null;
+    next: { docId: string; title?: string; normalizedUrl: string } | null;
+  }>;
   annotations(docId: string): Promise<AnnotationListResult>;
   saveAnnotation(docId: string, annotation: Annotation): Promise<AnnotationSaveResult>;
   deleteAnnotation(docId: string, annotationId: string): Promise<AnnotationDeleteResult>;
@@ -291,6 +296,14 @@ export function createKnowledgeApiClient(settings: ExtensionSettings): Knowledge
       {},
       options
     ),
+    retryBatchJob: (jobId) => request<BatchJobResult & { retryCount?: number }>(
+      baseUrl,
+      settings.token,
+      "POST",
+      `/api/batch/jobs/${encodeURIComponent(jobId)}/retry`,
+      {},
+      options
+    ),
     checkCollectionName: (title) => request<CheckCollectionNameResult>(
       baseUrl,
       settings.token,
@@ -312,6 +325,17 @@ export function createKnowledgeApiClient(settings: ExtensionSettings): Knowledge
       settings.token,
       "GET",
       `/api/collections/${encodeURIComponent(collectionId)}`,
+      undefined,
+      options
+    ),
+    collectionNavigation: (collectionId, docId) => request<{
+      previous: { docId: string; title?: string; normalizedUrl: string } | null;
+      next: { docId: string; title?: string; normalizedUrl: string } | null;
+    }>(
+      baseUrl,
+      settings.token,
+      "GET",
+      `/api/collections/${encodeURIComponent(collectionId)}/navigation?docId=${encodeURIComponent(docId)}`,
       undefined,
       options
     ),

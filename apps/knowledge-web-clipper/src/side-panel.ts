@@ -921,6 +921,30 @@ function renderBatchProgress(): void {
     openItemsBtn.addEventListener("click", () => {
       void openKnowledgePage("items.html");
     });
+
+    // Retry failed items button
+    if (batchJob.failed > 0 && batchJob.jobId) {
+      const retryBtn = document.createElement("button");
+      retryBtn.textContent = `Retry ${batchJob.failed} Failed`;
+      retryBtn.className = "primary-action";
+      retryBtn.addEventListener("click", async () => {
+        retryBtn.disabled = true;
+        retryBtn.textContent = "Retrying...";
+        try {
+          const result = await createKnowledgeApiClient(settings).retryBatchJob(batchJob!.jobId);
+          batchJob = result as BatchJobResult;
+          renderBatchProgress();
+          if (batchJob.jobId) {
+            pollBatchJob(batchJob.jobId);
+          }
+        } catch {
+          retryBtn.disabled = false;
+          retryBtn.textContent = `Retry ${batchJob!.failed} Failed`;
+        }
+      });
+      actions.append(retryBtn);
+    }
+
     const closeBtn = document.createElement("button");
     closeBtn.textContent = "Close";
     closeBtn.addEventListener("click", () => void hideBatchModal());

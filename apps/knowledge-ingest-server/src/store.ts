@@ -780,6 +780,59 @@ export class KnowledgeStore {
     `).run(state, state, now, state, now, jobId);
   }
 
+  async recoverStaleJobs(): Promise<number> {
+    await this.ensure();
+    const now = new Date().toISOString();
+    const result = this.database!.prepare(`
+      UPDATE batch_jobs
+      SET state = 'failed', finished_at = ?
+      WHERE state IN ('queued', 'running')
+    `).run(now);
+    return Number(result.changes);
+  }
+
+  async getCollectionNavigation(collectionId: string, docId: string): Promise<{
+    previous: { docId: string; title?: string; normalizedUrl: string } | null;
+    next: { docId: string; title?: string; normalizedUrl: string } | null;
+  }> {
+    await this.ensure();
+    const current = this.database!.prepare(`
+      SELECT order_index FROM collection_items
+      WHERE collection_id = ? AND doc_id = ?
+    `).get(collectionId, docId) as { order_index: number } | undefined;
+    if (!current) {
+      return { previous: null, next: null };
+    }
+
+    const previous = this.database!.prepare(`
+      SELECT doc_id, title, normalized_url FROM collection_items
+      WHERE collection_id = ? AND order_index < ? AND doc_id IS NOT NULL
+      ORDER BY order_index DESC LIMIT 1
+    `).get(collectionId, current.order_index) as { doc_id: string; title: string | null; normalized_url: string } | undefined;
+
+    const next = this.database!.prepare(`
+      SELECT doc_id, title, normalized_url FROM collection_items
+      WHERE collection_id = ? AND order_index > ? AND doc_id IS NOT NULL
+      ORDER BY order_index ASC LIMIT 1
+    `).get(collectionId, current.order_index) as { doc_id: string; title: string | null; normalized_url: string } | undefined;
+
+    return {
+      previous: previous ? { docId: previous.doc_id, title: previous.title ?? undefined, normalizedUrl: previous.normalized_url } : null,
+      next: next ? { docId: next.doc_id, title: next.title ?? undefined, normalizedUrl: next.normalized_url } : null
+    };
+  }
+
+  async resetFailedBatchItems(jobId: string): Promise<number> {
+    await this.ensure();
+    const now = new Date().toISOString();
+    const result = this.database!.prepare(`
+      UPDATE batch_items
+      SET state = 'pending', error_code = NULL, error_message = NULL, attempt_count = 0, updated_at = ?
+      WHERE job_id = ? AND state = 'failed'
+    `).run(now, jobId);
+    return Number(result.changes);
+  }
+
   async updateBatchItem(params: {
     itemId: string;
     state: BatchItemState;

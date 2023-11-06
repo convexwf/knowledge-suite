@@ -31,7 +31,10 @@ const aiSelectAllBtn = mustGet<HTMLButtonElement>("ai-select-all");
 const aiDeselectAllBtn = mustGet<HTMLButtonElement>("ai-deselect-all");
 const readerSourceOutput = mustGet<HTMLElement>("reader-source");
 const readerStateOutput = mustGet<HTMLElement>("reader-state");
+const readerCollectionOutput = mustGet<HTMLElement>("reader-collection");
 const readerAnnotationCountOutput = mustGet<HTMLElement>("reader-annotation-count");
+const prevInCollectionBtn = mustGet<HTMLButtonElement>("prev-in-collection");
+const nextInCollectionBtn = mustGet<HTMLButtonElement>("next-in-collection");
 
 const settings = await getSettings();
 const client = createKnowledgeApiClient(settings);
@@ -43,6 +46,10 @@ let currentDocument: KnowledgeDocument | undefined;
 let currentItem: KnowledgeItem | undefined;
 let currentAnnotations: Annotation[] = [];
 let currentDocId = "";
+let collectionNavData: {
+  previous: { docId: string; title?: string; normalizedUrl: string } | null;
+  next: { docId: string; title?: string; normalizedUrl: string } | null;
+} = { previous: null, next: null };
 const objectUrls = new Set<string>();
 let aiAbortController: AbortController | null = null;
 let aiTaskId: string | null = null;
@@ -91,6 +98,9 @@ annotationPanelToggle.addEventListener("click", () => {
   annotationPanel.classList.toggle("collapsed", !collapsed);
   readerLayout.classList.toggle("annot-visible", collapsed);
 });
+
+prevInCollectionBtn.addEventListener("click", () => navigateInCollection("prev"));
+nextInCollectionBtn.addEventListener("click", () => navigateInCollection("next"));
 
 copyButton.addEventListener("click", async () => {
   if (!currentMarkdown) {
@@ -190,6 +200,7 @@ async function loadReader(): Promise<void> {
     currentDocId = currentDocument.doc_id;
     aiSummarizeBtn.disabled = false;
     await loadAndApplyAnnotations();
+    await loadCollectionContext();
   } catch (error) {
     showMessage(error instanceof Error ? error.message : String(error));
     copyButton.disabled = true;
@@ -219,6 +230,7 @@ async function reparseCurrentItem(value: string): Promise<void> {
     if (warnings?.orphanedCount) {
       showAnnotationOrphanWarning(warnings);
     }
+    await loadCollectionContext();
   } catch (error) {
     showMessage(error instanceof Error ? error.message : String(error));
   } finally {
@@ -1529,4 +1541,41 @@ function buildExportMarkdown(markdown: string, annotations: Annotation[]): strin
     parts.push("");
   }
   return parts.join("\n");
+}
+
+async function loadCollectionContext(): Promise<void> {
+  if (!currentItem || !currentItem.itemId) {
+    readerCollectionOutput.textContent = "-";
+    return;
+  }
+  try {
+    const detail = await client.item(currentItem.itemId);
+    const collectionIds = detail.collectionIds ?? [];
+    if (collectionIds.length === 0) {
+      readerCollectionOutput.textContent = "None";
+      prevInCollectionBtn.disabled = true;
+      nextInCollectionBtn.disabled = true;
+      return;
+    }
+
+    // Show collection names
+    const collectionsResult = await client.listCollections();
+    const matching = collectionsResult.collections.filter((c) => collectionIds.includes(c.collectionId));
+    readerCollectionOutput.textContent = matching.map((c) => c.title).join(", ") || "Unknown";
+
+    // Fetch navigation for the first collection
+    if (currentDocId && collectionIds[0]) {
+      collectionNavData = await client.collectionNavigation(collectionIds[0], currentDocId);
+      prevInCollectionBtn.disabled = !collectionNavData.previous;
+      nextInCollectionBtn.disabled = !collectionNavData.next;
+    }
+  } catch {
+    readerCollectionOutput.textContent = "-";
+  }
+}
+
+async function navigateInCollection(direction: "prev" | "next"): Promise<void> {
+  const target = direction === "prev" ? collectionNavData.previous : collectionNavData.next;
+  if (!target) return;
+  await openKnowledgePage(`reader.html?docId=${encodeURIComponent(target.docId)}`);
 }

@@ -39,6 +39,10 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
   });
   const store = new KnowledgeStore(config.storeRoot);
   await store.ensure();
+  const recovered = await store.recoverStaleJobs();
+  if (recovered > 0) {
+    app.log.info(`Recovered ${recovered} stale batch job(s) from previous session.`);
+  }
 
   app.addContentTypeParser([
     "application/epub+zip",
@@ -333,6 +337,15 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
     return {
       collections: await store.listCollections(query.limit ? Number(query.limit) : undefined)
     };
+  });
+
+  app.get("/api/collections/:collectionId/navigation", async (request) => {
+    const params = request.params as { collectionId: string };
+    const query = request.query as { docId?: string };
+    if (!query.docId) {
+      return { previous: null, next: null };
+    }
+    return store.getCollectionNavigation(params.collectionId, query.docId);
   });
 
   app.get("/api/collections/:collectionId", async (request) => {
@@ -739,6 +752,18 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
     const params = request.params as { jobId: string };
     await store.updateBatchJobState(params.jobId, "cancelled");
     return store.loadBatchJob(params.jobId);
+  });
+
+  app.post("/api/batch/jobs/:jobId/retry", async (request) => {
+    const params = request.params as { jobId: string };
+    const resetCount = await store.resetFailedBatchItems(params.jobId);
+    if (resetCount === 0) {
+      return store.loadBatchJob(params.jobId);
+    }
+    await store.updateBatchJobState(params.jobId, "queued");
+    const job = await store.loadBatchJob(params.jobId);
+    void runBatchJob(params.jobId, { skipExisting: true, maxConcurrency: 3 });
+    return { ...job, retryCount: resetCount };
   });
 
   return app;
