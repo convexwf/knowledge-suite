@@ -792,33 +792,37 @@ export class KnowledgeStore {
   }
 
   async getCollectionNavigation(collectionId: string, docId: string): Promise<{
-    previous: { docId: string; title?: string; normalizedUrl: string } | null;
-    next: { docId: string; title?: string; normalizedUrl: string } | null;
+    previous: { docId: string; itemId?: string; title?: string; normalizedUrl: string } | null;
+    next: { docId: string; itemId?: string; title?: string; normalizedUrl: string } | null;
   }> {
     await this.ensure();
     const current = this.database!.prepare(`
-      SELECT order_index FROM collection_items
-      WHERE collection_id = ? AND doc_id = ?
+      SELECT ci.order_index FROM collection_items ci
+      WHERE ci.collection_id = ? AND ci.doc_id = ?
     `).get(collectionId, docId) as { order_index: number } | undefined;
     if (!current) {
       return { previous: null, next: null };
     }
 
     const previous = this.database!.prepare(`
-      SELECT doc_id, title, normalized_url FROM collection_items
-      WHERE collection_id = ? AND order_index < ? AND doc_id IS NOT NULL
-      ORDER BY order_index DESC LIMIT 1
-    `).get(collectionId, current.order_index) as { doc_id: string; title: string | null; normalized_url: string } | undefined;
+      SELECT ci.doc_id, ki.item_id, ci.title, ci.normalized_url
+      FROM collection_items ci
+      LEFT JOIN knowledge_items ki ON ki.active_doc_id = ci.doc_id
+      WHERE ci.collection_id = ? AND ci.order_index < ? AND ci.doc_id IS NOT NULL
+      ORDER BY ci.order_index DESC LIMIT 1
+    `).get(collectionId, current.order_index) as { doc_id: string; item_id: string | null; title: string | null; normalized_url: string } | undefined;
 
     const next = this.database!.prepare(`
-      SELECT doc_id, title, normalized_url FROM collection_items
-      WHERE collection_id = ? AND order_index > ? AND doc_id IS NOT NULL
-      ORDER BY order_index ASC LIMIT 1
-    `).get(collectionId, current.order_index) as { doc_id: string; title: string | null; normalized_url: string } | undefined;
+      SELECT ci.doc_id, ki.item_id, ci.title, ci.normalized_url
+      FROM collection_items ci
+      LEFT JOIN knowledge_items ki ON ki.active_doc_id = ci.doc_id
+      WHERE ci.collection_id = ? AND ci.order_index > ? AND ci.doc_id IS NOT NULL
+      ORDER BY ci.order_index ASC LIMIT 1
+    `).get(collectionId, current.order_index) as { doc_id: string; item_id: string | null; title: string | null; normalized_url: string } | undefined;
 
     return {
-      previous: previous ? { docId: previous.doc_id, title: previous.title ?? undefined, normalizedUrl: previous.normalized_url } : null,
-      next: next ? { docId: next.doc_id, title: next.title ?? undefined, normalizedUrl: next.normalized_url } : null
+      previous: previous ? { docId: previous.doc_id, itemId: previous.item_id ?? undefined, title: previous.title ?? undefined, normalizedUrl: previous.normalized_url } : null,
+      next: next ? { docId: next.doc_id, itemId: next.item_id ?? undefined, title: next.title ?? undefined, normalizedUrl: next.normalized_url } : null
     };
   }
 

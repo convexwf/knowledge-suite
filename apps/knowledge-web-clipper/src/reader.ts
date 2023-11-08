@@ -47,8 +47,8 @@ let currentItem: KnowledgeItem | undefined;
 let currentAnnotations: Annotation[] = [];
 let currentDocId = "";
 let collectionNavData: {
-  previous: { docId: string; title?: string; normalizedUrl: string } | null;
-  next: { docId: string; title?: string; normalizedUrl: string } | null;
+  previous: { docId: string; itemId?: string; title?: string; normalizedUrl: string } | null;
+  next: { docId: string; itemId?: string; title?: string; normalizedUrl: string } | null;
 } = { previous: null, next: null };
 const objectUrls = new Set<string>();
 let aiAbortController: AbortController | null = null;
@@ -1709,5 +1709,10 @@ async function loadCollectionContext(): Promise<void> {
 async function navigateInCollection(direction: "prev" | "next"): Promise<void> {
   const target = direction === "prev" ? collectionNavData.previous : collectionNavData.next;
   if (!target) return;
-  await openKnowledgePage(`reader.html?docId=${encodeURIComponent(target.docId)}`);
+  // Use itemId when available (preserves full reader context), fallback to docId
+  if (target.itemId) {
+    await openKnowledgePage(`reader.html?itemId=${encodeURIComponent(target.itemId)}`);
+  } else {
+    await openKnowledgePage(`reader.html?docId=${encodeURIComponent(target.docId)}`);
+  }
 }

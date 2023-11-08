@@ -91,8 +91,8 @@ export interface KnowledgeApiClient {
   listCollections(limit?: number): Promise<{ collections: CollectionSummary[] }>;
   collection(collectionId: string): Promise<CollectionDetail>;
   collectionNavigation(collectionId: string, docId: string): Promise<{
-    previous: { docId: string; title?: string; normalizedUrl: string } | null;
-    next: { docId: string; title?: string; normalizedUrl: string } | null;
+    previous: { docId: string; itemId?: string; title?: string; normalizedUrl: string } | null;
+    next: { docId: string; itemId?: string; title?: string; normalizedUrl: string } | null;
   }>;
   collectionsByDoc(docId: string): Promise<{ collections: Array<{ collectionId: string; title: string }> }>;
   annotations(docId: string): Promise<AnnotationListResult>;
