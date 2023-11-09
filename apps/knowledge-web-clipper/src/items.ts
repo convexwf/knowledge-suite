@@ -1,14 +1,8 @@
 import { createKnowledgeApiClient } from "./api-client.js";
-import {
-  buildReaderListEntries,
-  normalizeSourceFilter,
-  normalizeStructureFilter,
-  SourceFilter,
-  StructureFilter
-} from "./items-model.js";
+import { buildReaderListEntries, normalizeSourceFilter, ReaderListCollection, SourceFilter } from "./items-model.js";
 import { getSettings } from "./settings.js";
 import { openKnowledgePage } from "./tabs.js";
-import { CollectionSummary, KnowledgeItem, KnowledgeSourceType } from "./types.js";
+import { CollectionDetail, CollectionSummary, KnowledgeItem, KnowledgeSourceType } from "./types.js";
 
 const uploadForm = mustGet<HTMLFormElement>("upload-form");
 const fileInput = mustGet<HTMLInputElement>("epub-file");
@@ -20,7 +14,6 @@ const statusOutput = mustGet<HTMLElement>("status-output");
 const itemList = mustGet<HTMLElement>("item-list");
 const refreshButton = mustGet<HTMLButtonElement>("refresh-items");
 const settingsButton = mustGet<HTMLButtonElement>("open-settings");
-const structureFilterBar = mustGet<HTMLElement>("structure-filter");
 const sourceFilterBar = mustGet<HTMLElement>("source-filter");
 const selectAll = mustGet<HTMLInputElement>("select-all");
 const selectCount = mustGet<HTMLElement>("select-count");
@@ -41,11 +34,9 @@ const query = new URLSearchParams(globalThis.location.search);
 
 let currentItems: KnowledgeItem[] = [];
 let currentCollections: CollectionSummary[] = [];
-let activeStructureFilter: StructureFilter = normalizeStructureFilter(
-  query.get("structure") ?? (query.get("collectionId") ? "collections" : "all")
-);
-let activeSourceFilter: SourceFilter = normalizeSourceFilter(query.get("source"));
+let activeSourceFilter: SourceFilter = normalizeSourceFilter(query.get("source") ?? (query.get("collectionId") ? "collection" : "all"));
 const focusCollectionId = query.get("collectionId") || "";
+const collectionDetailCache = new Map<string, Promise<CollectionDetail>>();
 
 settingsButton.addEventListener("click", () => {
   void chrome.tabs.create({ url: chrome.runtime.getURL("options.html") });
@@ -81,25 +72,27 @@ batchPurgeBtn.addEventListener("click", () => {
 });
 
 setStatus("Ready");
-renderFilterBars();
+renderFilterBar();
 await refreshItems();
 
 function itemCheckboxes(): NodeListOf<HTMLInputElement> {
   return itemList.querySelectorAll<HTMLInputElement>(".item-checkbox");
 }
 
-function selectedItemIds(): string[] {
-  const ids: string[] = [];
+function selectedSelections(): Array<{ itemId?: string; collectionId?: string }> {
+  const selections: Array<{ itemId?: string; collectionId?: string }> = [];
   for (const checkbox of Array.from(itemCheckboxes())) {
-    if (checkbox.checked && checkbox.dataset.itemId) {
-      ids.push(checkbox.dataset.itemId);
-    }
+    if (!checkbox.checked) continue;
+    selections.push({
+      itemId: checkbox.dataset.itemId,
+      collectionId: checkbox.dataset.collectionId
+    });
   }
-  return ids;
+  return selections;
 }
 
 function updateBatchBar(): void {
-  const count = selectedItemIds().length;
+  const count = selectedSelections().length;
   batchBar.hidden = count === 0;
   selectCount.textContent = `${count} selected`;
   if (count === 0) {
@@ -174,8 +167,9 @@ function webkitRelativePath(file: File | undefined): string | undefined {
 async function refreshItems(): Promise<void> {
   refreshButton.disabled = true;
   itemList.replaceChildren(loadingNode());
+  collectionDetailCache.clear();
   try {
-    const sourceType = activeSourceFilter !== "all"
+    const sourceType = activeSourceFilter !== "all" && activeSourceFilter !== "collection"
       ? activeSourceFilter as KnowledgeSourceType
       : undefined;
     const [result, collectionsResult] = await Promise.all([
@@ -210,7 +204,6 @@ function renderItems(items: KnowledgeItem[]): void {
   const entries = buildReaderListEntries({
     items,
     collections: currentCollections,
-    structureFilter: activeStructureFilter,
     sourceFilter: activeSourceFilter
   });
 
@@ -221,198 +214,137 @@ function renderItems(items: KnowledgeItem[]): void {
   }
 
   for (const entry of entries) {
-    if (entry.kind === "collection") {
-      itemList.append(collectionCard(entry));
-    } else {
-      itemList.append(itemRow(entry));
-    }
+    itemList.append(entry.kind === "collection" ? collectionRow(entry) : itemRow(entry));
   }
   updateBatchBar();
 }
 
-function renderFilterBars(): void {
-  renderChipGroup({
-    host: structureFilterBar,
-    name: "Structure",
-    value: activeStructureFilter,
-    options: [
-      { value: "all", label: "All" },
-      { value: "collections", label: "Collections" },
-      { value: "standalone", label: "Standalone" }
-    ],
-    onChange: (value) => {
-      activeStructureFilter = normalizeStructureFilter(value);
-      renderFilterBars();
-      renderItems(currentItems);
-    }
-  });
-
-  renderChipGroup({
-    host: sourceFilterBar,
-    name: "Source",
-    value: activeSourceFilter,
-    options: [
-      { value: "all", label: "All" },
-      { value: "url", label: "Web" },
-      { value: "epub", label: "EPUB" },
-      { value: "pdf", label: "PDF" }
-    ],
-    onChange: (value) => {
-      activeSourceFilter = normalizeSourceFilter(value);
-      renderFilterBars();
-      void refreshItems();
-    }
-  });
-}
-
-function renderChipGroup(params: {
-  host: HTMLElement;
-  name: string;
-  value: string;
-  options: Array<{ value: string; label: string }>;
-  onChange: (value: string) => void;
-}): void {
+function renderFilterBar(): void {
   const label = document.createElement("span");
   label.className = "filter-chip-label";
-  label.textContent = params.name;
+  label.textContent = "Source";
 
   const rail = document.createElement("div");
   rail.className = "filter-chip-rail";
 
-  for (const option of params.options) {
+  for (const option of [
+    { value: "all", label: "All" },
+    { value: "url", label: "Web" },
+    { value: "epub", label: "EPUB" },
+    { value: "pdf", label: "PDF" },
+    { value: "collection", label: "Collection" }
+  ]) {
     const chip = document.createElement("button");
     chip.type = "button";
     chip.className = "filter-chip";
-    chip.dataset.active = String(option.value === params.value);
-    chip.setAttribute("aria-pressed", String(option.value === params.value));
+    chip.dataset.active = String(option.value === activeSourceFilter);
+    chip.setAttribute("aria-pressed", String(option.value === activeSourceFilter));
     chip.textContent = option.label;
-    chip.addEventListener("click", () => params.onChange(option.value));
+    chip.addEventListener("click", () => {
+      activeSourceFilter = normalizeSourceFilter(option.value);
+      renderFilterBar();
+      void refreshItems();
+    });
     rail.append(chip);
   }
 
-  params.host.replaceChildren(label, rail);
+  sourceFilterBar.replaceChildren(label, rail);
 }
 
-function collectionCard(collection: CollectionSummary): HTMLElement {
-  const details = document.createElement("details");
-  details.className = "collection-card";
-  details.dataset.collectionId = collection.collectionId;
+function collectionRow(collection: ReaderListCollection): HTMLElement {
+  const row = document.createElement("article");
+  row.className = "item-row collection-row";
   if (focusCollectionId === collection.collectionId) {
-    details.classList.add("focused");
+    row.classList.add("focused");
   }
 
-  const summary = document.createElement("summary");
-  summary.className = "collection-summary";
+  const checkbox = document.createElement("input");
+  checkbox.type = "checkbox";
+  checkbox.className = "item-checkbox";
+  checkbox.dataset.collectionId = collection.collectionId;
+  checkbox.addEventListener("change", updateBatchBar);
 
-  const titleRow = document.createElement("div");
-  titleRow.className = "collection-title-row";
-
-  const titleCluster = document.createElement("div");
-  titleCluster.className = "collection-title-cluster";
-
-  const eyebrow = document.createElement("span");
-  eyebrow.className = "collection-eyebrow";
-  eyebrow.textContent = "Collection";
-
-  const title = document.createElement("span");
-  title.className = "collection-title";
-  title.textContent = collection.title;
-
-  const meta = document.createElement("span");
-  meta.className = "collection-meta";
-  meta.textContent = `${collection.itemCount} page${collection.itemCount !== 1 ? "s" : ""} · Updated ${formatDate(collection.updatedAt)}`;
-
-  titleCluster.append(eyebrow, title, meta);
-
-  const metaRail = document.createElement("div");
-  metaRail.className = "collection-meta-rail";
-  metaRail.append(
-    badge(sourceBadgeLabel(collection.sourceType as KnowledgeSourceType), "source"),
-    badge(collection.state === "active" ? "Ready" : collection.state, collection.state === "active" ? "parsed" : "captured")
-  );
-
-  const caret = document.createElement("span");
-  caret.className = "collection-caret";
-  caret.setAttribute("aria-hidden", "true");
-  caret.textContent = "▾";
-
-  titleRow.append(titleCluster, metaRail, caret);
-  summary.append(titleRow);
-  details.append(summary);
+  const avatar = document.createElement("div");
+  avatar.className = "item-avatar collection-avatar";
+  avatar.textContent = "COL";
 
   const body = document.createElement("div");
-  body.className = "collection-body";
-  const loadingEl = document.createElement("div");
-  loadingEl.className = "empty-state";
-  loadingEl.textContent = "Loading...";
-  body.append(loadingEl);
-  details.append(body);
+  body.className = "item-body";
+  const kickerRow = document.createElement("div");
+  kickerRow.className = "item-kicker-row";
+  kickerRow.append(
+    badge("Collection", "collection"),
+    badge(`${collection.itemCount} page${collection.itemCount === 1 ? "" : "s"}`, "doc"),
+    badge(collection.state === "active" ? "Reader Ready" : collection.state, collection.state === "active" ? "parsed" : "captured")
+  );
+  const title = document.createElement("h3");
+  title.className = "item-title";
+  title.textContent = collection.title;
+  const creator = document.createElement("div");
+  creator.className = "item-creator";
+  creator.textContent = collection.rootUrl || "Collection of saved web clips";
+  const meta = document.createElement("div");
+  meta.className = "item-summary-line";
+  meta.textContent = `Collection · Updated ${formatDate(collection.updatedAt)}`;
+  body.append(kickerRow, title, creator, meta);
 
-  details.addEventListener("toggle", async () => {
-    caret.textContent = details.open ? "▴" : "▾";
-    if (!details.open || body.dataset.loaded === "true") {
-      return;
-    }
-    try {
-      const detail = await client.collection(collection.collectionId);
-      body.replaceChildren();
-      body.dataset.loaded = "true";
-      for (const item of detail.items) {
-        const row = document.createElement("article");
-        row.className = "collection-item";
+  const actions = document.createElement("div");
+  actions.className = "item-actions";
+  const members = document.createElement("div");
+  members.className = "item-details collection-members";
+  members.hidden = true;
 
-        const indexBadge = document.createElement("span");
-        indexBadge.className = "collection-item-index";
-        indexBadge.textContent = `[${item.orderIndex + 1}]`;
-
-        const content = document.createElement("div");
-        content.className = "collection-item-content";
-
-        const itemTitle = document.createElement("h3");
-        itemTitle.className = "collection-item-title";
-        itemTitle.textContent = item.title || item.pageTitle || item.normalizedUrl;
-
-        const creator = document.createElement("div");
-        creator.className = "collection-item-creator";
-        creator.textContent = item.creators?.join(", ") || "Unknown creator";
-
-        const itemMeta = document.createElement("div");
-        itemMeta.className = "collection-item-meta";
-        itemMeta.textContent = `${item.language || "Unknown language"} · Updated ${formatDate(item.updatedAt)}`;
-
-        content.append(itemTitle, creator, itemMeta);
-        row.append(indexBadge, content);
-
-        if (item.docId) {
-          row.classList.add("clickable");
-          row.addEventListener("click", () => {
-            if (item.itemId) {
-              void openKnowledgePage(`reader.html?itemId=${encodeURIComponent(item.itemId)}`);
-            } else {
-              void openKnowledgePage(`reader.html?docId=${encodeURIComponent(item.docId!)}`);
-            }
-          });
-        }
-
-        body.append(row);
-      }
-      if (body.children.length === 0) {
-        body.append(emptyNode("No items in this collection."));
-      }
-    } catch (error) {
-      body.replaceChildren(emptyNode(error instanceof Error ? error.message : String(error)));
+  const itemsButton = button("Items", "", () => {
+    members.hidden = !members.hidden;
+    itemsButton.setAttribute("aria-expanded", String(!members.hidden));
+    if (!members.hidden) {
+      void loadCollectionMembers(collection.collectionId, members);
     }
   });
+  itemsButton.setAttribute("aria-expanded", "false");
+
+  const readButton = button("Read", "primary-button", () => {
+    void openCollectionFirstItem(collection.collectionId);
+  });
+
+  const more = collectionMoreMenu(collection);
+  actions.append(itemsButton, readButton, more);
+  row.append(checkbox, avatar, body, actions, members);
 
   if (focusCollectionId === collection.collectionId) {
-    details.open = true;
+    members.hidden = false;
+    itemsButton.setAttribute("aria-expanded", "true");
+    void loadCollectionMembers(collection.collectionId, members);
   }
-  return details;
+  return row;
 }
 
-function itemRow(item: KnowledgeItem): HTMLElement {
+async function loadCollectionMembers(collectionId: string, host: HTMLElement): Promise<void> {
+  if (host.dataset.loaded === "true") return;
+  host.replaceChildren(emptyNode("Loading collection items..."));
+  try {
+    const detail = await loadCollectionDetail(collectionId);
+    const list = document.createElement("div");
+    list.className = "collection-members-list";
+    for (const member of detail.items) {
+      if (!member.itemId) continue;
+      const item = currentItems.find((entry) => entry.itemId === member.itemId);
+      if (!item) continue;
+      list.append(itemRow(item, { nested: true, indexLabel: `[${member.orderIndex + 1}]` }));
+    }
+    host.replaceChildren(list.children.length ? list : emptyNode("No reader items in this collection."));
+    host.dataset.loaded = "true";
+  } catch (error) {
+    host.replaceChildren(emptyNode(errorMessage(error)));
+  }
+}
+
+function itemRow(item: KnowledgeItem, options?: { nested?: boolean; indexLabel?: string }): HTMLElement {
   const row = document.createElement("article");
   row.className = "item-row";
+  if (options?.nested) {
+    row.classList.add("nested-item-row");
+  }
 
   const checkbox = document.createElement("input");
   checkbox.type = "checkbox";
@@ -422,7 +354,7 @@ function itemRow(item: KnowledgeItem): HTMLElement {
 
   const avatar = document.createElement("div");
   avatar.className = "item-avatar";
-  avatar.textContent = sourceShortLabel(item.sourceType);
+  avatar.textContent = options?.indexLabel || sourceShortLabel(item.sourceType);
 
   const body = document.createElement("div");
   body.className = "item-body";
@@ -535,38 +467,75 @@ function itemMoreMenu(item: KnowledgeItem): HTMLElement {
   const panel = document.createElement("div");
   panel.className = "more-menu-panel";
 
-  const reparseBtn = document.createElement("button");
-  reparseBtn.type = "button";
-  reparseBtn.textContent = "Reparse";
-  reparseBtn.disabled = item.sourceType === "pdf";
-  reparseBtn.addEventListener("click", (event) => {
-    event.preventDefault();
-    menu.open = false;
-    void reparseItem(item.itemId);
-  });
-
-  const removeBtn = document.createElement("button");
-  removeBtn.type = "button";
-  removeBtn.textContent = "Remove";
-  removeBtn.addEventListener("click", (event) => {
-    event.preventDefault();
-    menu.open = false;
-    void deleteItem(item, "remove");
-  });
-
-  const purgeBtn = document.createElement("button");
-  purgeBtn.type = "button";
-  purgeBtn.textContent = "Purge";
-  purgeBtn.className = "danger-button";
-  purgeBtn.addEventListener("click", (event) => {
-    event.preventDefault();
-    menu.open = false;
-    void deleteItem(item, "purge");
-  });
-
-  panel.append(reparseBtn, removeBtn, purgeBtn);
+  panel.append(
+    actionButton("Reparse", item.sourceType === "pdf", async () => reparseItem(item.itemId), menu),
+    actionButton("Remove", false, async () => deleteItem(item, "remove"), menu),
+    actionButton("Purge", false, async () => deleteItem(item, "purge"), menu, "danger-button")
+  );
   menu.append(panel);
   return menu;
+}
+
+function collectionMoreMenu(collection: ReaderListCollection): HTMLElement {
+  const menu = document.createElement("details");
+  menu.className = "more-menu";
+  const summary = document.createElement("summary");
+  summary.textContent = "More";
+  menu.append(summary);
+
+  const panel = document.createElement("div");
+  panel.className = "more-menu-panel";
+  panel.append(
+    actionButton("Reparse", false, async () => operateOnCollection(collection.collectionId, "reparse"), menu),
+    actionButton("Remove", false, async () => operateOnCollection(collection.collectionId, "remove"), menu),
+    actionButton("Purge", false, async () => operateOnCollection(collection.collectionId, "purge"), menu, "danger-button")
+  );
+  menu.append(panel);
+  return menu;
+}
+
+function actionButton(
+  label: string,
+  disabled: boolean,
+  onClick: () => Promise<void>,
+  menu: HTMLDetailsElement,
+  className = ""
+): HTMLButtonElement {
+  const element = document.createElement("button");
+  element.type = "button";
+  element.textContent = label;
+  element.disabled = disabled;
+  if (className) element.className = className;
+  element.addEventListener("click", (event) => {
+    event.preventDefault();
+    menu.open = false;
+    void onClick();
+  });
+  return element;
+}
+
+async function openCollectionFirstItem(collectionId: string): Promise<void> {
+  const detail = await loadCollectionDetail(collectionId);
+  const first = detail.items.find((item) => item.itemId || item.docId);
+  if (!first) return;
+  if (first.itemId) {
+    openReader(first.itemId);
+  } else if (first.docId) {
+    void openKnowledgePage(`reader.html?docId=${encodeURIComponent(first.docId)}`);
+  }
+}
+
+async function operateOnCollection(collectionId: string, mode: "reparse" | "remove" | "purge"): Promise<void> {
+  const itemIds = await resolveCollectionItemIds(collectionId);
+  if (itemIds.length === 0) {
+    setStatus("This collection has no reader items yet.");
+    return;
+  }
+  if (mode === "reparse") {
+    await performBatchReparse(itemIds, `Reparsing collection (${itemIds.length} item(s))...`);
+    return;
+  }
+  await performBatchDelete(itemIds, mode, `${mode === "purge" ? "Purge" : "Remove"} this collection's ${itemIds.length} item(s)?`);
 }
 
 async function reparseItem(itemId: string): Promise<void> {
@@ -584,24 +553,23 @@ async function deleteItem(item: KnowledgeItem, mode: "remove" | "purge"): Promis
   const message = mode === "purge"
     ? `Purge ${displayTitle(item)} and delete the stored raw file?`
     : `Remove parsed output for ${displayTitle(item)} but keep the raw file?`;
-  if (!globalThis.confirm(message)) {
-    return;
-  }
-
-  setStatus(`${mode === "purge" ? "Purging" : "Removing"} item...`);
-  try {
-    await client.deleteItem(item.itemId, mode);
-    setStatus(`${mode === "purge" ? "Purged" : "Removed"} ${displayTitle(item)}.`);
-    await refreshItems();
-  } catch (error) {
-    setStatus(errorMessage(error));
-  }
+  await performBatchDelete([item.itemId], mode, message, displayTitle(item));
 }
 
 async function batchReparse(): Promise<void> {
-  const ids = selectedItemIds();
+  const ids = await resolveSelectedItemIds();
   if (ids.length === 0) return;
-  setStatus(`Reparsing ${ids.length} item(s)...`);
+  await performBatchReparse(ids, `Reparsing ${ids.length} selected item(s)...`);
+}
+
+async function batchDelete(mode: "remove" | "purge"): Promise<void> {
+  const ids = await resolveSelectedItemIds();
+  if (ids.length === 0) return;
+  await performBatchDelete(ids, mode, `${mode === "purge" ? "Purge" : "Remove"} ${ids.length} selected item(s)?`);
+}
+
+async function performBatchReparse(ids: string[], startMessage: string): Promise<void> {
+  setStatus(startMessage);
   let ok = 0;
   for (const id of ids) {
     try {
@@ -615,12 +583,15 @@ async function batchReparse(): Promise<void> {
   await refreshItems();
 }
 
-async function batchDelete(mode: "remove" | "purge"): Promise<void> {
-  const ids = selectedItemIds();
-  if (ids.length === 0) return;
+async function performBatchDelete(
+  ids: string[],
+  mode: "remove" | "purge",
+  confirmMessage: string,
+  singularLabel?: string
+): Promise<void> {
+  if (!globalThis.confirm(confirmMessage)) return;
   const verb = mode === "purge" ? "Purge" : "Remove";
-  if (!globalThis.confirm(`${verb} ${ids.length} selected item(s)?`)) return;
-  setStatus(`${verb.toLowerCase()}ing ${ids.length} item(s)...`);
+  setStatus(`${verb.toLowerCase()}ing ${singularLabel ?? `${ids.length} item(s)`}...`);
   let ok = 0;
   for (const id of ids) {
     try {
@@ -632,6 +603,35 @@ async function batchDelete(mode: "remove" | "purge"): Promise<void> {
   }
   setStatus(`${verb}d ${ok}/${ids.length} item(s).`);
   await refreshItems();
+}
+
+async function resolveSelectedItemIds(): Promise<string[]> {
+  const ids = new Set<string>();
+  for (const selection of selectedSelections()) {
+    if (selection.itemId) {
+      ids.add(selection.itemId);
+    }
+    if (selection.collectionId) {
+      for (const itemId of await resolveCollectionItemIds(selection.collectionId)) {
+        ids.add(itemId);
+      }
+    }
+  }
+  return [...ids];
+}
+
+async function resolveCollectionItemIds(collectionId: string): Promise<string[]> {
+  const detail = await loadCollectionDetail(collectionId);
+  return detail.items.map((item) => item.itemId).filter((value): value is string => Boolean(value));
+}
+
+function loadCollectionDetail(collectionId: string): Promise<CollectionDetail> {
+  let detail = collectionDetailCache.get(collectionId);
+  if (!detail) {
+    detail = client.collection(collectionId);
+    collectionDetailCache.set(collectionId, detail);
+  }
+  return detail;
 }
 
 function openReader(itemId: string): void {

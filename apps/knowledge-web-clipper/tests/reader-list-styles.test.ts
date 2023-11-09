@@ -9,12 +9,12 @@ const readerHtml = readFileSync(new URL("../public/reader.html", import.meta.url
 
 describe("reader list and reader style regressions", () => {
   it("uses chip filter groups instead of the old collection checkbox controls", () => {
-    expect(itemsHtml).toContain('id="structure-filter"');
     expect(itemsHtml).toContain('id="source-filter"');
     expect(itemsHtml).not.toContain('id="collection-filter"');
     expect(itemsHtml).not.toContain('id="hide-collection-items"');
     expect(itemsCss).toContain(".filter-chip");
-    expect(itemsCss).toContain(".collection-item-index");
+    expect(itemsCss).toContain(".collection-row");
+    expect(itemsCss).toContain(".collection-members-list");
   });
 
   it("keeps collection navigation as floating hidden-by-default controls", () => {

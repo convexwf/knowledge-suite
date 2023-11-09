@@ -841,3 +841,47 @@ select {
     justify-content: flex-start;
   }
 }
+
+.collection-row {
+  background: rgba(255, 255, 255, 0.94);
+}
+
+.collection-row.focused {
+  border-color: rgba(72, 105, 214, 0.26);
+  box-shadow: 0 14px 28px rgba(72, 105, 214, 0.08);
+}
+
+.collection-avatar {
+  background: linear-gradient(135deg, rgba(34, 50, 74, 0.16), rgba(72, 105, 214, 0.12));
+  border-color: rgba(34, 50, 74, 0.14);
+  color: #22324a;
+  width: 46px;
+}
+
+.item-badge.collection {
+  background: rgba(34, 50, 74, 0.1);
+  color: #22324a;
+}
+
+.collection-members {
+  background: rgba(243, 246, 250, 0.92);
+  border-color: rgba(217, 225, 234, 0.92);
+  padding: 12px;
+}
+
+.collection-members-list {
+  display: grid;
+  gap: 10px;
+}
+
+.nested-item-row {
+  background: #ffffff;
+  border-color: rgba(217, 225, 234, 0.9);
+  box-shadow: none;
+}
+
+.nested-item-row .item-avatar {
+  width: 52px;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+}

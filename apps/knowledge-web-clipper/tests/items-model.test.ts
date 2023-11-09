@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { buildReaderListEntries, normalizeSourceFilter, normalizeStructureFilter } from "../src/items-model.js";
+import { buildReaderListEntries, normalizeSourceFilter } from "../src/items-model.js";
 import { CollectionSummary, KnowledgeItem } from "../src/types.js";
 
 const sampleCollections: CollectionSummary[] = [
@@ -52,7 +52,6 @@ describe("items model", () => {
     const entries = buildReaderListEntries({
       items: sampleItems,
       collections: sampleCollections,
-      structureFilter: "all",
       sourceFilter: "all"
     });
 
@@ -61,18 +60,16 @@ describe("items model", () => {
     expect(entries.find((entry) => entry.kind === "collection")?.collectionId).toBe("col-1");
   });
 
-  it("filters standalone and collection views independently", () => {
+  it("shows collections only when source filter is collection", () => {
     const collectionOnly = buildReaderListEntries({
       items: sampleItems,
       collections: sampleCollections,
-      structureFilter: "collections",
-      sourceFilter: "all"
+      sourceFilter: "collection"
     });
     const standaloneOnly = buildReaderListEntries({
       items: sampleItems,
       collections: sampleCollections,
-      structureFilter: "standalone",
-      sourceFilter: "all"
+      sourceFilter: "epub"
     });
 
     expect(collectionOnly.map((entry) => entry.kind)).toEqual(["collection"]);
@@ -83,24 +80,21 @@ describe("items model", () => {
     const webEntries = buildReaderListEntries({
       items: sampleItems,
       collections: sampleCollections,
-      structureFilter: "all",
       sourceFilter: "url"
     });
     const epubEntries = buildReaderListEntries({
       items: sampleItems,
       collections: sampleCollections,
-      structureFilter: "all",
       sourceFilter: "epub"
     });
 
-    expect(webEntries.map((entry) => entry.kind)).toEqual(["collection"]);
+    expect(webEntries.map((entry) => entry.kind)).toEqual([]);
     expect(epubEntries.map((entry) => entry.kind)).toEqual(["standalone"]);
   });
 
   it("normalizes query-driven filters safely", () => {
-    expect(normalizeStructureFilter("collections")).toBe("collections");
-    expect(normalizeStructureFilter("weird")).toBe("all");
     expect(normalizeSourceFilter("pdf")).toBe("pdf");
+    expect(normalizeSourceFilter("collection")).toBe("collection");
     expect(normalizeSourceFilter("strange")).toBe("all");
   });
 });
