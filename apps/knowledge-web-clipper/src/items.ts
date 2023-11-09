@@ -1,4 +1,11 @@
 import { createKnowledgeApiClient } from "./api-client.js";
+import {
+  buildReaderListEntries,
+  normalizeSourceFilter,
+  normalizeStructureFilter,
+  SourceFilter,
+  StructureFilter
+} from "./items-model.js";
 import { getSettings } from "./settings.js";
 import { openKnowledgePage } from "./tabs.js";
 import { CollectionSummary, KnowledgeItem, KnowledgeSourceType } from "./types.js";
@@ -13,9 +20,8 @@ const statusOutput = mustGet<HTMLElement>("status-output");
 const itemList = mustGet<HTMLElement>("item-list");
 const refreshButton = mustGet<HTMLButtonElement>("refresh-items");
 const settingsButton = mustGet<HTMLButtonElement>("open-settings");
-const sourceFilter = mustGet<HTMLSelectElement>("source-filter");
-const collectionFilter = mustGet<HTMLSelectElement>("collection-filter");
-const hideCollectionItems = mustGet<HTMLInputElement>("hide-collection-items");
+const structureFilterBar = mustGet<HTMLElement>("structure-filter");
+const sourceFilterBar = mustGet<HTMLElement>("source-filter");
 const selectAll = mustGet<HTMLInputElement>("select-all");
 const selectCount = mustGet<HTMLElement>("select-count");
 const batchBar = mustGet<HTMLElement>("batch-bar");
@@ -31,26 +37,21 @@ const overviewLatestDetail = mustGet<HTMLElement>("overview-latest-detail");
 
 const settings = await getSettings();
 const client = createKnowledgeApiClient(settings);
+const query = new URLSearchParams(globalThis.location.search);
+
 let currentItems: KnowledgeItem[] = [];
 let currentCollections: CollectionSummary[] = [];
+let activeStructureFilter: StructureFilter = normalizeStructureFilter(
+  query.get("structure") ?? (query.get("collectionId") ? "collections" : "all")
+);
+let activeSourceFilter: SourceFilter = normalizeSourceFilter(query.get("source"));
+const focusCollectionId = query.get("collectionId") || "";
 
 settingsButton.addEventListener("click", () => {
   void chrome.tabs.create({ url: chrome.runtime.getURL("options.html") });
 });
 
 refreshButton.addEventListener("click", () => {
-  void refreshItems();
-});
-
-sourceFilter.addEventListener("change", () => {
-  void refreshItems();
-});
-
-collectionFilter.addEventListener("change", () => {
-  void refreshItems();
-});
-
-hideCollectionItems.addEventListener("change", () => {
   void refreshItems();
 });
 
@@ -70,14 +71,17 @@ selectAll.addEventListener("change", () => {
 batchReparseBtn.addEventListener("click", () => {
   void batchReparse();
 });
+
 batchRemoveBtn.addEventListener("click", () => {
   void batchDelete("remove");
 });
+
 batchPurgeBtn.addEventListener("click", () => {
   void batchDelete("purge");
 });
 
 setStatus("Ready");
+renderFilterBars();
 await refreshItems();
 
 function itemCheckboxes(): NodeListOf<HTMLInputElement> {
@@ -171,14 +175,16 @@ async function refreshItems(): Promise<void> {
   refreshButton.disabled = true;
   itemList.replaceChildren(loadingNode());
   try {
-    const sourceType = sourceFilter.value ? sourceFilter.value as KnowledgeSourceType : undefined;
+    const sourceType = activeSourceFilter !== "all"
+      ? activeSourceFilter as KnowledgeSourceType
+      : undefined;
     const [result, collectionsResult] = await Promise.all([
       client.listItems(sourceType, settings.savedListLimit),
       client.listCollections()
     ]);
     currentCollections = collectionsResult.collections;
-    populateCollectionFilter();
-    renderItems(result.items);
+    currentItems = await hydrateCollectionIds(result.items);
+    renderItems(currentItems);
   } catch (error) {
     itemList.replaceChildren(emptyNode(errorMessage(error)));
   } finally {
@@ -186,64 +192,114 @@ async function refreshItems(): Promise<void> {
   }
 }
 
-function populateCollectionFilter(): void {
-  const currentValue = collectionFilter.value;
-  collectionFilter.replaceChildren();
-  const allOption = document.createElement("option");
-  allOption.value = "";
-  allOption.textContent = "All";
-  collectionFilter.append(allOption);
-  for (const col of currentCollections) {
-    const option = document.createElement("option");
-    option.value = col.collectionId;
-    option.textContent = col.title;
-    collectionFilter.append(option);
-  }
-  collectionFilter.value = currentValue;
+async function hydrateCollectionIds(items: KnowledgeItem[]): Promise<KnowledgeItem[]> {
+  return Promise.all(items.map(async (item) => {
+    try {
+      const detail = await client.item(item.itemId);
+      return { ...item, collectionIds: detail.collectionIds ?? [] };
+    } catch {
+      return { ...item, collectionIds: [] };
+    }
+  }));
 }
 
 function renderItems(items: KnowledgeItem[]): void {
   currentItems = items;
   renderOverview(items);
   itemList.replaceChildren();
-  if (items.length === 0 && currentCollections.length === 0) {
+  const entries = buildReaderListEntries({
+    items,
+    collections: currentCollections,
+    structureFilter: activeStructureFilter,
+    sourceFilter: activeSourceFilter
+  });
+
+  if (entries.length === 0) {
     itemList.append(emptyNode("No saved items match the current filter."));
     updateBatchBar();
     return;
   }
 
-  const hideCollection = hideCollectionItems.checked;
-  const selectedCollectionId = collectionFilter.value;
-
-  // Show collection cards
-  if (!selectedCollectionId) {
-    for (const col of currentCollections) {
-      itemList.append(collectionCard(col));
-    }
-  }
-
-  // Show individual items (filter out collection items when hide is checked)
-  for (const item of items) {
-    if (hideCollection && !selectedCollectionId) {
-      // Skip items that belong to any collection when hide is checked
-      // Without per-item collectionIds in the list, we show all items
-      // The hide toggle only affects flat listing
-      itemList.append(itemRow(item));
+  for (const entry of entries) {
+    if (entry.kind === "collection") {
+      itemList.append(collectionCard(entry));
     } else {
-      itemList.append(itemRow(item));
+      itemList.append(itemRow(entry));
     }
-  }
-
-  if (itemList.children.length === 0) {
-    itemList.append(emptyNode("No saved items match the current filter."));
   }
   updateBatchBar();
+}
+
+function renderFilterBars(): void {
+  renderChipGroup({
+    host: structureFilterBar,
+    name: "Structure",
+    value: activeStructureFilter,
+    options: [
+      { value: "all", label: "All" },
+      { value: "collections", label: "Collections" },
+      { value: "standalone", label: "Standalone" }
+    ],
+    onChange: (value) => {
+      activeStructureFilter = normalizeStructureFilter(value);
+      renderFilterBars();
+      renderItems(currentItems);
+    }
+  });
+
+  renderChipGroup({
+    host: sourceFilterBar,
+    name: "Source",
+    value: activeSourceFilter,
+    options: [
+      { value: "all", label: "All" },
+      { value: "url", label: "Web" },
+      { value: "epub", label: "EPUB" },
+      { value: "pdf", label: "PDF" }
+    ],
+    onChange: (value) => {
+      activeSourceFilter = normalizeSourceFilter(value);
+      renderFilterBars();
+      void refreshItems();
+    }
+  });
+}
+
+function renderChipGroup(params: {
+  host: HTMLElement;
+  name: string;
+  value: string;
+  options: Array<{ value: string; label: string }>;
+  onChange: (value: string) => void;
+}): void {
+  const label = document.createElement("span");
+  label.className = "filter-chip-label";
+  label.textContent = params.name;
+
+  const rail = document.createElement("div");
+  rail.className = "filter-chip-rail";
+
+  for (const option of params.options) {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "filter-chip";
+    chip.dataset.active = String(option.value === params.value);
+    chip.setAttribute("aria-pressed", String(option.value === params.value));
+    chip.textContent = option.label;
+    chip.addEventListener("click", () => params.onChange(option.value));
+    rail.append(chip);
+  }
+
+  params.host.replaceChildren(label, rail);
 }
 
 function collectionCard(collection: CollectionSummary): HTMLElement {
   const details = document.createElement("details");
   details.className = "collection-card";
   details.dataset.collectionId = collection.collectionId;
+  if (focusCollectionId === collection.collectionId) {
+    details.classList.add("focused");
+  }
 
   const summary = document.createElement("summary");
   summary.className = "collection-summary";
@@ -251,9 +307,12 @@ function collectionCard(collection: CollectionSummary): HTMLElement {
   const titleRow = document.createElement("div");
   titleRow.className = "collection-title-row";
 
-  const icon = document.createElement("span");
-  icon.className = "collection-icon";
-  icon.textContent = "📁";
+  const titleCluster = document.createElement("div");
+  titleCluster.className = "collection-title-cluster";
+
+  const eyebrow = document.createElement("span");
+  eyebrow.className = "collection-eyebrow";
+  eyebrow.textContent = "Collection";
 
   const title = document.createElement("span");
   title.className = "collection-title";
@@ -261,9 +320,23 @@ function collectionCard(collection: CollectionSummary): HTMLElement {
 
   const meta = document.createElement("span");
   meta.className = "collection-meta";
-  meta.textContent = `${collection.itemCount} page${collection.itemCount !== 1 ? "s" : ""} · ${collection.state}`;
+  meta.textContent = `${collection.itemCount} page${collection.itemCount !== 1 ? "s" : ""} · Updated ${formatDate(collection.updatedAt)}`;
 
-  titleRow.append(icon, title, meta);
+  titleCluster.append(eyebrow, title, meta);
+
+  const metaRail = document.createElement("div");
+  metaRail.className = "collection-meta-rail";
+  metaRail.append(
+    badge(sourceBadgeLabel(collection.sourceType as KnowledgeSourceType), "source"),
+    badge(collection.state === "active" ? "Ready" : collection.state, collection.state === "active" ? "parsed" : "captured")
+  );
+
+  const caret = document.createElement("span");
+  caret.className = "collection-caret";
+  caret.setAttribute("aria-hidden", "true");
+  caret.textContent = "▾";
+
+  titleRow.append(titleCluster, metaRail, caret);
   summary.append(titleRow);
   details.append(summary);
 
@@ -275,42 +348,55 @@ function collectionCard(collection: CollectionSummary): HTMLElement {
   body.append(loadingEl);
   details.append(body);
 
-  // Load items on expand
   details.addEventListener("toggle", async () => {
-    if (!details.open || body.children.length > 1 || body.querySelector(".collection-item")) {
+    caret.textContent = details.open ? "▴" : "▾";
+    if (!details.open || body.dataset.loaded === "true") {
       return;
     }
     try {
       const detail = await client.collection(collection.collectionId);
       body.replaceChildren();
+      body.dataset.loaded = "true";
       for (const item of detail.items) {
-        const row = document.createElement("div");
+        const row = document.createElement("article");
         row.className = "collection-item";
 
-        const itemTitle = document.createElement("span");
+        const indexBadge = document.createElement("span");
+        indexBadge.className = "collection-item-index";
+        indexBadge.textContent = `[${item.orderIndex + 1}]`;
+
+        const content = document.createElement("div");
+        content.className = "collection-item-content";
+
+        const itemTitle = document.createElement("h3");
         itemTitle.className = "collection-item-title";
         itemTitle.textContent = item.title || item.pageTitle || item.normalizedUrl;
 
-        const itemState = document.createElement("span");
-        itemState.className = `item-badge ${item.state}`;
-        itemState.textContent = item.state;
+        const creator = document.createElement("div");
+        creator.className = "collection-item-creator";
+        creator.textContent = item.creators?.join(", ") || "Unknown creator";
 
-        const itemUrl = document.createElement("span");
-        itemUrl.className = "collection-item-url";
-        itemUrl.textContent = item.normalizedUrl;
+        const itemMeta = document.createElement("div");
+        itemMeta.className = "collection-item-meta";
+        itemMeta.textContent = `${item.language || "Unknown language"} · Updated ${formatDate(item.updatedAt)}`;
 
-        row.append(itemState, itemTitle, itemUrl);
+        content.append(itemTitle, creator, itemMeta);
+        row.append(indexBadge, content);
 
         if (item.docId) {
           row.classList.add("clickable");
           row.addEventListener("click", () => {
-            void openKnowledgePage(`reader.html?docId=${encodeURIComponent(item.docId!)}`);
+            if (item.itemId) {
+              void openKnowledgePage(`reader.html?itemId=${encodeURIComponent(item.itemId)}`);
+            } else {
+              void openKnowledgePage(`reader.html?docId=${encodeURIComponent(item.docId!)}`);
+            }
           });
         }
 
         body.append(row);
       }
-      if (detail.items.length === 0) {
+      if (body.children.length === 0) {
         body.append(emptyNode("No items in this collection."));
       }
     } catch (error) {
@@ -318,6 +404,9 @@ function collectionCard(collection: CollectionSummary): HTMLElement {
     }
   });
 
+  if (focusCollectionId === collection.collectionId) {
+    details.open = true;
+  }
   return details;
 }
 
@@ -352,14 +441,13 @@ function itemRow(item: KnowledgeItem): HTMLElement {
   creator.textContent = item.creators.join(", ") || "Unknown creator";
   const meta = document.createElement("div");
   meta.className = "item-summary-line";
-  meta.textContent = [
-    item.language || "Unknown language",
-    `Updated ${formatDate(item.updatedAt)}`
-  ].join(" · ");
+  meta.textContent = `${item.language || "Unknown language"} · Updated ${formatDate(item.updatedAt)}`;
   body.append(kickerRow, title, creator, meta);
 
   const actions = document.createElement("div");
   actions.className = "item-actions";
+  const details = itemDetails(item);
+  details.hidden = true;
   const detailsButton = button("i", "info-button", () => {
     details.hidden = !details.hidden;
     detailsButton.setAttribute("aria-expanded", String(!details.hidden));
@@ -367,17 +455,17 @@ function itemRow(item: KnowledgeItem): HTMLElement {
   detailsButton.title = "Item details";
   detailsButton.setAttribute("aria-label", "Item details");
   detailsButton.setAttribute("aria-expanded", "false");
+
   const readButton = button("Read", "primary-button", () => openReader(item.itemId));
   readButton.disabled = item.state !== "parsed" || !item.activeDocId;
+
   const annotateButton = button("Annotations", "", () => {
     void openKnowledgePage(`annotations.html?docId=${encodeURIComponent(item.activeDocId!)}&itemId=${encodeURIComponent(item.itemId)}`);
   });
   annotateButton.disabled = !item.activeDocId;
+
   const more = itemMoreMenu(item);
   actions.append(detailsButton, readButton, annotateButton, more);
-
-  const details = itemDetails(item);
-  details.hidden = true;
   row.append(checkbox, avatar, body, actions, details);
   return row;
 }
@@ -394,7 +482,7 @@ function renderOverview(items: KnowledgeItem[]): void {
   overviewLatest.textContent = latest ? formatShortDate(latest.updatedAt) : "-";
   overviewTotalDetail.textContent = items.length === 0
     ? "Start by importing an EPUB or opening a saved web clip."
-    : `${items.filter((item) => item.sourceType === "url").length} web, ${items.filter((item) => item.sourceType === "epub").length} EPUB, ${items.filter((item) => item.sourceType === "pdf").length} PDF.`;
+    : `${items.filter((item) => item.sourceType === "url" || item.sourceType === "singlefile_html").length} web, ${items.filter((item) => item.sourceType === "epub").length} EPUB, ${items.filter((item) => item.sourceType === "pdf").length} PDF.`;
   overviewParsedDetail.textContent = parsed === 0
     ? "No reader-ready items yet."
     : `${parsed} of ${items.length} item(s) can open directly in Reader mode.`;
@@ -416,6 +504,7 @@ function itemDetails(item: KnowledgeItem): HTMLElement {
     detailsRow("Item ID", item.itemId),
     detailsRow("RawDoc ID", item.activeRawdocId),
     detailsRow("Document ID", item.activeDocId || "-"),
+    detailsRow("Collections", item.collectionIds?.length ? item.collectionIds.join(", ") : "-"),
     detailsRow("Identity hash", item.identityHash),
     detailsRow("Created", formatDate(item.createdAt)),
     detailsRow("Updated", formatDate(item.updatedAt)),
@@ -450,8 +539,8 @@ function itemMoreMenu(item: KnowledgeItem): HTMLElement {
   reparseBtn.type = "button";
   reparseBtn.textContent = "Reparse";
   reparseBtn.disabled = item.sourceType === "pdf";
-  reparseBtn.addEventListener("click", (e) => {
-    e.preventDefault();
+  reparseBtn.addEventListener("click", (event) => {
+    event.preventDefault();
     menu.open = false;
     void reparseItem(item.itemId);
   });
@@ -459,8 +548,8 @@ function itemMoreMenu(item: KnowledgeItem): HTMLElement {
   const removeBtn = document.createElement("button");
   removeBtn.type = "button";
   removeBtn.textContent = "Remove";
-  removeBtn.addEventListener("click", (e) => {
-    e.preventDefault();
+  removeBtn.addEventListener("click", (event) => {
+    event.preventDefault();
     menu.open = false;
     void deleteItem(item, "remove");
   });
@@ -469,8 +558,8 @@ function itemMoreMenu(item: KnowledgeItem): HTMLElement {
   purgeBtn.type = "button";
   purgeBtn.textContent = "Purge";
   purgeBtn.className = "danger-button";
-  purgeBtn.addEventListener("click", (e) => {
-    e.preventDefault();
+  purgeBtn.addEventListener("click", (event) => {
+    event.preventDefault();
     menu.open = false;
     void deleteItem(item, "purge");
   });
@@ -573,7 +662,7 @@ function sourceBadgeLabel(sourceType: KnowledgeSourceType): string {
     case "pdf":
       return "PDF";
     case "singlefile_html":
-      return "SingleFile";
+      return "Web Clip";
     default:
       return sourceType;
   }
@@ -582,13 +671,13 @@ function sourceBadgeLabel(sourceType: KnowledgeSourceType): string {
 function sourceShortLabel(sourceType: KnowledgeSourceType): string {
   switch (sourceType) {
     case "url":
-      return "WB";
+      return "WEB";
     case "epub":
       return "EP";
     case "pdf":
       return "PDF";
     case "singlefile_html":
-      return "SF";
+      return "WEB";
     default:
       return String(sourceType);
   }

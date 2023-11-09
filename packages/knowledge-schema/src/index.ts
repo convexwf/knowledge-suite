@@ -152,6 +152,7 @@ export interface KnowledgeItem {
   createdAt: string;
   updatedAt: string;
   parsedAt?: string;
+  collectionIds?: string[];
 }
 
 export type DocumentSectionType =
@@ -306,6 +307,7 @@ export interface KnowledgeItemDetailResponse {
   item: KnowledgeItem;
   rawdoc?: RawDoc;
   document?: KnowledgeDocument;
+  collectionIds?: string[];
 }
 
 export interface KnowledgeItemDeleteResponse {
@@ -522,6 +524,7 @@ export interface BatchDiscoverResponse {
 export interface CollectionItem {
   collectionItemId: string;
   collectionId: string;
+  itemId?: string;
   normalizedUrl: string;
   docId?: string;
   rawdocId?: string;
@@ -534,6 +537,8 @@ export interface CollectionItem {
   parentItemId?: string;
   source?: string;
   state: BatchItemState;
+  creators?: string[];
+  language?: string;
   createdAt: string;
   updatedAt: string;
 }

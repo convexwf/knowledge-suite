@@ -154,6 +154,7 @@ export interface KnowledgeItem {
   createdAt: string;
   updatedAt: string;
   parsedAt?: string;
+  collectionIds?: string[];
 }
 
 export interface KnowledgeItemListResult {
@@ -244,6 +245,7 @@ export interface CollectionDetail {
   collection: CollectionSummary;
   items: Array<{
     collectionItemId: string;
+    itemId?: string;
     normalizedUrl: string;
     docId?: string;
     rawdocId?: string;
@@ -252,6 +254,9 @@ export interface CollectionDetail {
     orderIndex: number;
     source?: string;
     state: string;
+    creators?: string[];
+    language?: string;
+    updatedAt: string;
   }>;
 }
 

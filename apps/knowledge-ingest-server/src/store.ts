@@ -137,6 +137,7 @@ interface CollectionRow {
 interface CollectionItemRow {
   collection_item_id: string;
   collection_id: string;
+  item_id: string | null;
   normalized_url: string;
   doc_id: string | null;
   rawdoc_id: string | null;
@@ -147,8 +148,16 @@ interface CollectionItemRow {
   parent_item_id: string | null;
   source: string | null;
   state: BatchItemState;
+  creators_json: string | null;
+  language: string | null;
   created_at: string;
   updated_at: string;
+}
+
+interface CollectionItemDetail extends CollectionItem {
+  itemId?: string;
+  creators?: string[];
+  language?: string;
 }
 
 interface SearchRow {
@@ -576,15 +585,33 @@ export class KnowledgeStore {
     return rows.map(toCollectionSummary);
   }
 
-  async loadCollection(collectionId: string): Promise<{ collection: CollectionSummary; items: CollectionItem[] }> {
+  async loadCollection(collectionId: string): Promise<{ collection: CollectionSummary; items: CollectionItemDetail[] }> {
     await this.ensure();
     const collection = this.loadCollectionSummary(collectionId);
     const rows = this.database!.prepare(`
-      SELECT collection_item_id, collection_id, normalized_url, doc_id, rawdoc_id, title, page_title,
-        order_index, depth, parent_item_id, source, state, created_at, updated_at
-      FROM collection_items
-      WHERE collection_id = ?
-      ORDER BY order_index ASC, created_at ASC
+      SELECT
+        ci.collection_item_id,
+        ci.collection_id,
+        ki.item_id,
+        ci.normalized_url,
+        ci.doc_id,
+        ci.rawdoc_id,
+        ci.title,
+        ci.page_title,
+        ci.order_index,
+        ci.depth,
+        ci.parent_item_id,
+        ci.source,
+        ci.state,
+        ki.creators_json,
+        COALESCE(ki.language, d.language) AS language,
+        ci.created_at,
+        COALESCE(ki.updated_at, ci.updated_at) AS updated_at
+      FROM collection_items ci
+      LEFT JOIN knowledge_items ki ON ki.active_doc_id = ci.doc_id
+      LEFT JOIN documents d ON d.doc_id = ci.doc_id
+      WHERE ci.collection_id = ?
+      ORDER BY ci.order_index ASC, ci.created_at ASC
     `).all(collectionId) as unknown as CollectionItemRow[];
     return {
       collection,
@@ -3035,11 +3062,12 @@ function toCollectionSummary(row: CollectionRow): CollectionSummary {
   };
 }
 
-function toCollectionItem(row: CollectionItemRow): CollectionItem {
+function toCollectionItem(row: CollectionItemRow): CollectionItemDetail {
   const titles = titleFields(row.page_title, row.title, row.normalized_url);
   return {
     collectionItemId: row.collection_item_id,
     collectionId: row.collection_id,
+    itemId: row.item_id ?? undefined,
     normalizedUrl: row.normalized_url,
     docId: row.doc_id ?? undefined,
     rawdocId: row.rawdoc_id ?? undefined,
@@ -3049,6 +3077,8 @@ function toCollectionItem(row: CollectionItemRow): CollectionItem {
     parentItemId: row.parent_item_id ?? undefined,
     source: row.source ?? undefined,
     state: row.state,
+    creators: safeJsonArray(row.creators_json ?? "[]"),
+    language: row.language ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };

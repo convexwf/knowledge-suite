@@ -67,27 +67,12 @@
           <div class="list-toolbar">
             <div>
               <h2>Saved Items</h2>
-              <p class="panel-description">All saved items are shown by default; narrow the source when needed.</p>
+              <p class="panel-description">Collections and standalone documents share one reading list with lightweight filters.</p>
             </div>
-            <label>
-              Source
-              <select id="source-filter">
-                <option value="">All</option>
-                <option value="url">Web</option>
-                <option value="epub">EPUB</option>
-                <option value="pdf">PDF</option>
-              </select>
-            </label>
-            <label>
-              Collection
-              <select id="collection-filter">
-                <option value="">All</option>
-              </select>
-            </label>
-            <label class="hide-collections-label">
-              <input type="checkbox" id="hide-collection-items" checked />
-              Hide collection items
-            </label>
+          </div>
+          <div class="filter-toolbar">
+            <div id="structure-filter" class="filter-chip-group" aria-label="Structure filter"></div>
+            <div id="source-filter" class="filter-chip-group" aria-label="Source filter"></div>
           </div>
           <div id="batch-bar" class="batch-bar" hidden>
             <label class="batch-select-all">

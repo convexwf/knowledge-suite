@@ -33,6 +33,7 @@ const readerSourceOutput = mustGet<HTMLElement>("reader-source");
 const readerStateOutput = mustGet<HTMLElement>("reader-state");
 const readerCollectionOutput = mustGet<HTMLElement>("reader-collection");
 const readerAnnotationCountOutput = mustGet<HTMLElement>("reader-annotation-count");
+const collectionNav = mustGet<HTMLElement>("collection-nav");
 const prevInCollectionBtn = mustGet<HTMLButtonElement>("prev-in-collection");
 const nextInCollectionBtn = mustGet<HTMLButtonElement>("next-in-collection");
 
@@ -1656,54 +1657,84 @@ function buildExportMarkdown(markdown: string, annotations: Annotation[]): strin
 async function loadCollectionContext(): Promise<void> {
   try {
     let collectionIds: string[] = [];
+    let collectionLinks: Array<{ collectionId: string; title: string }> = [];
 
     if (currentItem?.itemId) {
-      // Item-based lookup: get collectionIds from item detail
       const detail = await client.item(currentItem.itemId);
       collectionIds = detail.collectionIds ?? [];
     } else if (currentDocId) {
-      // Doc-based lookup: query collections directly
       const result = await client.collectionsByDoc(currentDocId);
       collectionIds = result.collections.map((c) => c.collectionId);
-      if (collectionIds.length > 0) {
-        readerCollectionOutput.textContent = result.collections.map((c) => c.title).join(", ");
-      } else {
-        readerCollectionOutput.textContent = "None";
-      }
+      collectionLinks = result.collections;
     } else {
       readerCollectionOutput.textContent = "-";
-      prevInCollectionBtn.disabled = true;
-      nextInCollectionBtn.disabled = true;
+      setCollectionNavigation(null);
       return;
     }
 
     if (collectionIds.length === 0) {
       readerCollectionOutput.textContent = "None";
-      prevInCollectionBtn.disabled = true;
-      nextInCollectionBtn.disabled = true;
+      setCollectionNavigation(null);
       return;
     }
 
-    // Show collection names (if not already set via doc-based lookup)
-    if (currentItem?.itemId) {
+    if (collectionLinks.length === 0) {
       const collectionsResult = await client.listCollections();
-      const matching = collectionsResult.collections.filter((c) => collectionIds.includes(c.collectionId));
-      readerCollectionOutput.textContent = matching.map((c) => c.title).join(", ") || "Unknown";
+      collectionLinks = collectionsResult.collections
+        .filter((c) => collectionIds.includes(c.collectionId))
+        .map((c) => ({ collectionId: c.collectionId, title: c.title }));
     }
 
-    // Fetch navigation for the first collection
+    renderCollectionLinks(collectionLinks);
+
     if (currentDocId && collectionIds[0]) {
       collectionNavData = await client.collectionNavigation(collectionIds[0], currentDocId);
-      prevInCollectionBtn.disabled = !collectionNavData.previous;
-      nextInCollectionBtn.disabled = !collectionNavData.next;
+      setCollectionNavigation(collectionNavData);
+      return;
     }
+    setCollectionNavigation(null);
   } catch {
     if (!readerCollectionOutput.textContent || readerCollectionOutput.textContent === "-") {
       readerCollectionOutput.textContent = "-";
     }
-    prevInCollectionBtn.disabled = true;
-    nextInCollectionBtn.disabled = true;
+    setCollectionNavigation(null);
   }
+}
+
+function renderCollectionLinks(collections: Array<{ collectionId: string; title: string }>): void {
+  if (collections.length === 0) {
+    readerCollectionOutput.textContent = "None";
+    return;
+  }
+  readerCollectionOutput.replaceChildren();
+  collections.forEach((collection, index) => {
+    const link = document.createElement("a");
+    link.className = "reader-collection-link";
+    link.href = chrome.runtime.getURL(`items.html?structure=collections&collectionId=${encodeURIComponent(collection.collectionId)}`);
+    link.textContent = collection.title;
+    readerCollectionOutput.append(link);
+    if (index < collections.length - 1) {
+      readerCollectionOutput.append(document.createTextNode(", "));
+    }
+  });
+}
+
+function setCollectionNavigation(
+  navigation: {
+    previous: { docId: string; itemId?: string; title?: string; normalizedUrl: string } | null;
+    next: { docId: string; itemId?: string; title?: string; normalizedUrl: string } | null;
+  } | null
+): void {
+  collectionNav.hidden = !navigation?.previous && !navigation?.next;
+
+  prevInCollectionBtn.hidden = !navigation?.previous;
+  nextInCollectionBtn.hidden = !navigation?.next;
+
+  prevInCollectionBtn.disabled = !navigation?.previous;
+  nextInCollectionBtn.disabled = !navigation?.next;
+
+  prevInCollectionBtn.title = navigation?.previous?.title || navigation?.previous?.normalizedUrl || "";
+  nextInCollectionBtn.title = navigation?.next?.title || navigation?.next?.normalizedUrl || "";
 }
 
 async function navigateInCollection(direction: "prev" | "next"): Promise<void> {

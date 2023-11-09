@@ -1220,22 +1220,30 @@ h2 {
 
 /* Collection navigation */
 .collection-nav {
-  align-items: center;
-  background: #ffffff;
-  border-bottom: 1px solid #dde3ea;
-  display: flex;
-  gap: 8px;
-  justify-content: center;
-  padding: 10px 14px;
+  inset: 0;
+  pointer-events: none;
+  position: fixed;
+  z-index: 14;
 }
 
 .collection-nav button {
-  background: #f0f2f5;
-  border: 1px solid #dde3ea;
-  border-radius: 6px;
+  align-items: center;
+  background: rgba(34, 50, 74, 0.94);
+  border: 1px solid rgba(34, 50, 74, 0.96);
+  border-radius: 999px;
+  box-shadow: 0 16px 28px rgba(15, 23, 42, 0.18);
+  color: #f8fafc;
   cursor: pointer;
+  display: inline-flex;
   font-size: 13px;
-  padding: 6px 14px;
+  font-weight: 700;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 16px;
+  pointer-events: auto;
+  position: fixed;
+  top: 50vh;
+  transform: translateY(-50%);
 }
 
 .collection-nav button:disabled {
@@ -1243,6 +1251,50 @@ h2 {
   opacity: 0.4;
 }
 
+.collection-nav button[hidden] {
+  display: none;
+}
+
+.collection-nav button span {
+  letter-spacing: 0.01em;
+}
+
 .collection-nav button:not(:disabled):hover {
-  background: #e4e8ed;
+  background: #172033;
+}
+
+#prev-in-collection {
+  left: 18px;
+}
+
+#next-in-collection {
+  right: 18px;
+}
+
+.reader-collection-link {
+  color: #245fbe;
+  text-decoration: none;
+}
+
+.reader-collection-link:hover {
+  text-decoration: underline;
+}
+
+@media (max-width: 900px) {
+  .collection-nav button {
+    min-height: 40px;
+    padding: 0 14px;
+    top: auto;
+    transform: none;
+  }
+
+  #prev-in-collection {
+    bottom: 74px;
+    left: 14px;
+  }
+
+  #next-in-collection {
+    bottom: 74px;
+    right: 14px;
+  }
 }
