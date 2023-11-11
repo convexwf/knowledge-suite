@@ -541,6 +541,33 @@ select {
   line-height: 1.25;
 }
 
+.scroll-title {
+  min-width: 0;
+  overflow: hidden;
+  position: relative;
+  white-space: nowrap;
+}
+
+.scroll-title-text {
+  display: inline-block;
+  min-width: 100%;
+  will-change: transform;
+}
+
+.scroll-title[data-marquee="true"]:hover .scroll-title-text,
+.scroll-title[data-marquee="true"]:focus-within .scroll-title-text {
+  animation: title-marquee var(--marquee-duration, 10s) linear infinite alternate;
+}
+
+@keyframes title-marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(calc(-1 * var(--marquee-distance, 0px)));
+  }
+}
+
 .item-creator {
   margin-top: 6px;
 }
@@ -855,7 +882,12 @@ select {
   background: linear-gradient(135deg, rgba(34, 50, 74, 0.16), rgba(72, 105, 214, 0.12));
   border-color: rgba(34, 50, 74, 0.14);
   color: #22324a;
-  width: 46px;
+  width: 40px;
+}
+
+.collection-row[data-selected="true"] {
+  border-color: rgba(72, 105, 214, 0.22);
+  box-shadow: 0 12px 24px rgba(72, 105, 214, 0.08);
 }
 
 .item-badge.collection {

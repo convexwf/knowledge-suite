@@ -262,11 +262,14 @@ function collectionRow(collection: ReaderListCollection): HTMLElement {
   checkbox.type = "checkbox";
   checkbox.className = "item-checkbox";
   checkbox.dataset.collectionId = collection.collectionId;
-  checkbox.addEventListener("change", updateBatchBar);
+  checkbox.addEventListener("change", () => {
+    syncCollectionSelection(collection.collectionId, checkbox.checked, members);
+    updateBatchBar();
+  });
 
   const avatar = document.createElement("div");
   avatar.className = "item-avatar collection-avatar";
-  avatar.textContent = "COL";
+  avatar.textContent = "[i]";
 
   const body = document.createElement("div");
   body.className = "item-body";
@@ -277,9 +280,7 @@ function collectionRow(collection: ReaderListCollection): HTMLElement {
     badge(`${collection.itemCount} page${collection.itemCount === 1 ? "" : "s"}`, "doc"),
     badge(collection.state === "active" ? "Reader Ready" : collection.state, collection.state === "active" ? "parsed" : "captured")
   );
-  const title = document.createElement("h3");
-  title.className = "item-title";
-  title.textContent = collection.title;
+  const title = marqueeTitle("h3", "item-title", collection.title);
   const creator = document.createElement("div");
   creator.className = "item-creator";
   creator.textContent = collection.rootUrl || "Collection of saved web clips";
@@ -298,7 +299,7 @@ function collectionRow(collection: ReaderListCollection): HTMLElement {
     members.hidden = !members.hidden;
     itemsButton.setAttribute("aria-expanded", String(!members.hidden));
     if (!members.hidden) {
-      void loadCollectionMembers(collection.collectionId, members);
+      void loadCollectionMembers(collection.collectionId, members, checkbox.checked);
     }
   });
   itemsButton.setAttribute("aria-expanded", "false");
@@ -314,12 +315,12 @@ function collectionRow(collection: ReaderListCollection): HTMLElement {
   if (focusCollectionId === collection.collectionId) {
     members.hidden = false;
     itemsButton.setAttribute("aria-expanded", "true");
-    void loadCollectionMembers(collection.collectionId, members);
+    void loadCollectionMembers(collection.collectionId, members, checkbox.checked);
   }
   return row;
 }
 
-async function loadCollectionMembers(collectionId: string, host: HTMLElement): Promise<void> {
+async function loadCollectionMembers(collectionId: string, host: HTMLElement, selectedByParent: boolean): Promise<void> {
   if (host.dataset.loaded === "true") return;
   host.replaceChildren(emptyNode("Loading collection items..."));
   try {
@@ -330,7 +331,12 @@ async function loadCollectionMembers(collectionId: string, host: HTMLElement): P
       if (!member.itemId) continue;
       const item = currentItems.find((entry) => entry.itemId === member.itemId);
       if (!item) continue;
-      list.append(itemRow(item, { nested: true, indexLabel: `[${member.orderIndex + 1}]` }));
+      const nestedRow = itemRow(item, { nested: true, indexLabel: `[${member.orderIndex + 1}]` });
+      const nestedCheckbox = nestedRow.querySelector<HTMLInputElement>(".item-checkbox");
+      if (nestedCheckbox) {
+        nestedCheckbox.checked = selectedByParent;
+      }
+      list.append(nestedRow);
     }
     host.replaceChildren(list.children.length ? list : emptyNode("No reader items in this collection."));
     host.dataset.loaded = "true";
@@ -365,9 +371,7 @@ function itemRow(item: KnowledgeItem, options?: { nested?: boolean; indexLabel?:
     badge(item.state === "parsed" ? "Reader Ready" : "Captured", item.state),
     item.activeDocId ? badge("Document", "doc") : badge("Raw Only", "raw")
   );
-  const title = document.createElement("h3");
-  title.className = "item-title";
-  title.textContent = displayTitle(item);
+  const title = marqueeTitle("h3", "item-title", displayTitle(item));
   const creator = document.createElement("div");
   creator.className = "item-creator";
   creator.textContent = item.creators.join(", ") || "Unknown creator";
@@ -692,6 +696,41 @@ function button(label: string, className: string, onClick: () => void): HTMLButt
   }
   element.addEventListener("click", onClick);
   return element;
+}
+
+function syncCollectionSelection(collectionId: string, checked: boolean, host: HTMLElement): void {
+  host.dataset.parentSelected = checked ? "true" : "false";
+  for (const checkbox of Array.from(host.querySelectorAll<HTMLInputElement>(".item-checkbox"))) {
+    checkbox.checked = checked;
+  }
+  const collectionRowElement = host.closest(".collection-row") as HTMLElement | null;
+  if (collectionRowElement) {
+    collectionRowElement.dataset.selected = checked ? "true" : "false";
+  }
+}
+
+function marqueeTitle<K extends keyof HTMLElementTagNameMap>(
+  tagName: K,
+  className: string,
+  text: string
+): HTMLElementTagNameMap[K] {
+  const heading = document.createElement(tagName);
+  heading.className = `${className} scroll-title`;
+  const textNode = document.createElement("span");
+  textNode.className = "scroll-title-text";
+  textNode.textContent = text;
+  heading.append(textNode);
+  heading.title = text;
+  globalThis.requestAnimationFrame(() => {
+    const overflow = textNode.scrollWidth - heading.clientWidth;
+    if (overflow > 12) {
+      heading.dataset.marquee = "true";
+      heading.style.setProperty("--marquee-distance", `${overflow}px`);
+      const seconds = Math.max(6, Math.min(16, overflow / 18));
+      heading.style.setProperty("--marquee-duration", `${seconds}s`);
+    }
+  });
+  return heading;
 }
 
 function loadingNode(): HTMLElement {
