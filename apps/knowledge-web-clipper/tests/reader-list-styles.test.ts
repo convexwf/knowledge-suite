@@ -6,6 +6,7 @@ const itemsCss = readFileSync(new URL("../public/items.css", import.meta.url), "
 const readerCss = readFileSync(new URL("../public/reader.css", import.meta.url), "utf8");
 const itemsHtml = readFileSync(new URL("../public/items.html", import.meta.url), "utf8");
 const readerHtml = readFileSync(new URL("../public/reader.html", import.meta.url), "utf8");
+const itemsTs = readFileSync(new URL("../src/items.ts", import.meta.url), "utf8");
 
 describe("reader list and reader style regressions", () => {
   it("uses chip filter groups instead of the old collection checkbox controls", () => {
@@ -15,6 +16,19 @@ describe("reader list and reader style regressions", () => {
     expect(itemsCss).toContain(".filter-chip");
     expect(itemsCss).toContain(".collection-row");
     expect(itemsCss).toContain(".collection-members-list");
+    expect(itemsCss).not.toContain(".collection-card");
+  });
+
+  it("keeps collection cards aligned with item cards", () => {
+    expect(itemsTs).toContain('avatar.textContent = "[i]"');
+    expect(itemsTs).toContain("actions.append(itemsButton, readButton, more);");
+    expect(itemsCss).toContain(".collection-actions");
+    expect(itemsCss).toContain(".collection-items-button");
+    expect(itemsCss).toContain(".collection-read-button");
+    expect(itemsTs).toContain("`${sourceCounts.web} web`");
+    expect(itemsTs).toContain("`${sourceCounts.epub} epub`");
+    expect(itemsTs).toContain("`${sourceCounts.pdf} pdf`");
+    expect(itemsTs).toContain("`${sourceCounts.collection} collection`");
   });
 
   it("keeps collection navigation as floating hidden-by-default controls", () => {

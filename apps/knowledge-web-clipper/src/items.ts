@@ -302,13 +302,17 @@ function collectionRow(collection: ReaderListCollection): HTMLElement {
       void loadCollectionMembers(collection.collectionId, members, checkbox.checked);
     }
   });
+  itemsButton.classList.add("collection-items-button");
   itemsButton.setAttribute("aria-expanded", "false");
 
   const readButton = button("Read", "primary-button", () => {
     void openCollectionFirstItem(collection.collectionId);
   });
+  readButton.classList.add("collection-read-button");
 
   const more = collectionMoreMenu(collection);
+  more.classList.add("collection-more-menu");
+  actions.classList.add("collection-actions");
   actions.append(itemsButton, readButton, more);
   row.append(checkbox, avatar, body, actions, members);
 
@@ -416,16 +420,28 @@ function renderOverview(entries: ReturnType<typeof buildReaderListEntries>): voi
   const collectionCount = entries.filter((entry) => entry.kind === "collection").length;
   const standaloneCount = entries.filter((entry) => entry.kind === "standalone").length;
   const visibleTotal = entries.length;
+  const sourceCounts = {
+    web: entries.filter((entry) => entry.kind === "standalone" && (entry.sourceType === "url" || entry.sourceType === "singlefile_html")).length,
+    epub: entries.filter((entry) => entry.kind === "standalone" && entry.sourceType === "epub").length,
+    pdf: entries.filter((entry) => entry.kind === "standalone" && entry.sourceType === "pdf").length,
+    collection: collectionCount
+  };
+  const sourceBreakdown = [
+    `${sourceCounts.web} web`,
+    `${sourceCounts.epub} epub`,
+    `${sourceCounts.pdf} pdf`,
+    `${sourceCounts.collection} collection`
+  ].join(" · ");
 
   overviewTotal.textContent = String(visibleTotal);
   overviewParsed.textContent = String(readyStandalone + readyCollections);
   overviewLatest.textContent = latest ? formatShortDate(latest.updatedAt) : "-";
   overviewTotalDetail.textContent = visibleTotal === 0
     ? "No cards match the current source filter."
-    : `${collectionCount} collection, ${standaloneCount} standalone top-level card(s).`;
+    : `${visibleTotal} top-level card(s) · ${sourceBreakdown}.`;
   overviewParsedDetail.textContent = readyStandalone + readyCollections === 0
     ? "No reader-ready items yet."
-    : `${readyCollections} collection(s) and ${readyStandalone} standalone doc(s) can open directly.`;
+    : `${readyCollections} collection(s) and ${readyStandalone} standalone doc(s) can open directly. ${standaloneCount} standalone card(s) remain visible.`;
   overviewLatestDetail.textContent = latest
     ? `${latest.kind === "collection" ? latest.title : displayTitle(latest)} was updated most recently.`
     : "No activity yet.";
