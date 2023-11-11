@@ -1,5 +1,12 @@
 import { createKnowledgeApiClient } from "./api-client.js";
-import { buildReaderListEntries, normalizeSourceFilter, ReaderListCollection, SourceFilter } from "./items-model.js";
+import {
+  buildBatchDeletePlan,
+  buildReaderListEntries,
+  normalizeSourceFilter,
+  ReaderListCollection,
+  resolveCollectionShellsToDelete,
+  SourceFilter
+} from "./items-model.js";
 import { getSettings } from "./settings.js";
 import { openKnowledgePage } from "./tabs.js";
 import { CollectionDetail, CollectionSummary, KnowledgeItem, KnowledgeSourceType } from "./types.js";
@@ -626,15 +633,52 @@ async function deleteItem(item: KnowledgeItem, mode: "remove" | "purge"): Promis
 }
 
 async function batchReparse(): Promise<void> {
-  const ids = await resolveSelectedItemIds();
+  const ids = (await resolveBatchDeletePlan()).itemIds;
   if (ids.length === 0) return;
   await performBatchReparse(ids, `Reparsing ${ids.length} selected item(s)...`);
 }
 
 async function batchDelete(mode: "remove" | "purge"): Promise<void> {
-  const ids = await resolveSelectedItemIds();
-  if (ids.length === 0) return;
-  await performBatchDelete(ids, mode, `${mode === "purge" ? "Purge" : "Remove"} ${ids.length} selected item(s)?`);
+  const plan = await resolveBatchDeletePlan();
+  if (plan.itemIds.length === 0 && plan.collectionTargets.length === 0) return;
+  if (mode === "purge" && plan.itemIds.length === 0) {
+    if (!globalThis.confirm(`Purge ${plan.collectionTargets.length} selected empty collection shell(s)?`)) return;
+    let deleted = 0;
+    for (const target of plan.collectionTargets) {
+      try {
+        const deleteResult = await client.deleteCollection(target.collectionId);
+        if (deleteResult.deleted) deleted += 1;
+      } catch (error) {
+        setStatus(`Failed to remove empty collection shell ${target.collectionId}: ${errorMessage(error)}`);
+      }
+    }
+    setStatus(`Purged ${deleted}/${plan.collectionTargets.length} empty collection shell(s).`);
+    await refreshItems();
+    return;
+  }
+  const result = await performBatchDelete(
+    plan.itemIds,
+    mode,
+    `${mode === "purge" ? "Purge" : "Remove"} ${plan.itemIds.length} selected item(s)?`
+  );
+  if (mode !== "purge" || result.cancelled) return;
+
+  const collectionIds = resolveCollectionShellsToDelete(plan.collectionTargets, result.successIds);
+  if (collectionIds.length === 0) return;
+
+  let deleted = 0;
+  for (const collectionId of collectionIds) {
+    try {
+      const deleteResult = await client.deleteCollection(collectionId);
+      if (deleteResult.deleted) deleted += 1;
+    } catch (error) {
+      setStatus(`Purged items, but failed to remove collection shell ${collectionId}: ${errorMessage(error)}`);
+    }
+  }
+  if (deleted > 0) {
+    setStatus(`Purged ${result.ok}/${plan.itemIds.length} item(s) and removed ${deleted} collection shell(s).`);
+    await refreshItems();
+  }
 }
 
 async function performBatchReparse(ids: string[], startMessage: string): Promise<void> {
@@ -657,37 +701,36 @@ async function performBatchDelete(
   mode: "remove" | "purge",
   confirmMessage: string,
   singularLabel?: string
-): Promise<{ ok: number; cancelled: boolean }> {
-  if (!globalThis.confirm(confirmMessage)) return { ok: 0, cancelled: true };
+): Promise<{ ok: number; cancelled: boolean; successIds: Set<string> }> {
+  if (!globalThis.confirm(confirmMessage)) return { ok: 0, cancelled: true, successIds: new Set<string>() };
   const verb = mode === "purge" ? "Purge" : "Remove";
   setStatus(`${verb.toLowerCase()}ing ${singularLabel ?? `${ids.length} item(s)`}...`);
   let ok = 0;
+  const successIds = new Set<string>();
   for (const id of ids) {
     try {
       await client.deleteItem(id, mode);
       ok += 1;
+      successIds.add(id);
     } catch (error) {
       setStatus(`${verb} failed for ${id}: ${errorMessage(error)}`);
     }
   }
   setStatus(`${verb}d ${ok}/${ids.length} item(s).`);
   await refreshItems();
-  return { ok, cancelled: false };
+  return { ok, cancelled: false, successIds };
 }
 
-async function resolveSelectedItemIds(): Promise<string[]> {
-  const ids = new Set<string>();
-  for (const selection of selectedSelections()) {
-    if (selection.itemId) {
-      ids.add(selection.itemId);
-    }
-    if (selection.collectionId) {
-      for (const itemId of await resolveCollectionItemIds(selection.collectionId)) {
-        ids.add(itemId);
-      }
-    }
+async function resolveBatchDeletePlan(): Promise<ReturnType<typeof buildBatchDeletePlan>> {
+  const selections = selectedSelections();
+  const collectionItemsById: Record<string, string[]> = {};
+  const collectionIds = [...new Set(selections.map((selection) => selection.collectionId).filter((value): value is string => Boolean(value)))];
+
+  for (const collectionId of collectionIds) {
+    collectionItemsById[collectionId] = await resolveCollectionItemIds(collectionId);
   }
-  return [...ids];
+
+  return buildBatchDeletePlan(selections, collectionItemsById);
 }
 
 async function resolveCollectionItemIds(collectionId: string): Promise<string[]> {

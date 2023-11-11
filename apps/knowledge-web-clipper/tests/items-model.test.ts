@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { buildReaderListEntries, normalizeSourceFilter } from "../src/items-model.js";
+import {
+  buildBatchDeletePlan,
+  buildReaderListEntries,
+  normalizeSourceFilter,
+  resolveCollectionShellsToDelete
+} from "../src/items-model.js";
 import { CollectionSummary, KnowledgeItem } from "../src/types.js";
 
 const sampleCollections: CollectionSummary[] = [
@@ -96,5 +101,36 @@ describe("items model", () => {
     expect(normalizeSourceFilter("pdf")).toBe("pdf");
     expect(normalizeSourceFilter("collection")).toBe("collection");
     expect(normalizeSourceFilter("strange")).toBe("all");
+  });
+
+  it("builds a batch delete plan that keeps selected collection shells", () => {
+    const plan = buildBatchDeletePlan(
+      [
+        { collectionId: "col-1" },
+        { itemId: "standalone-1" },
+        { itemId: "collection-member" }
+      ],
+      {
+        "col-1": ["collection-member", "collection-member-2"]
+      }
+    );
+
+    expect(plan.itemIds.sort()).toEqual(["collection-member", "collection-member-2", "standalone-1"]);
+    expect(plan.collectionTargets).toEqual([
+      {
+        collectionId: "col-1",
+        itemIds: ["collection-member", "collection-member-2"]
+      }
+    ]);
+  });
+
+  it("deletes a selected collection shell only after all of its items purge successfully", () => {
+    const collectionTargets = [
+      { collectionId: "col-1", itemIds: ["a", "b"] },
+      { collectionId: "col-2", itemIds: [] },
+      { collectionId: "col-3", itemIds: ["c"] }
+    ];
+
+    expect(resolveCollectionShellsToDelete(collectionTargets, ["a", "b", "x"])).toEqual(["col-1", "col-2"]);
   });
 });
