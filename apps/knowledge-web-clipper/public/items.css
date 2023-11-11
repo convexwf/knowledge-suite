@@ -673,16 +673,16 @@ select {
   gap: 6px;
 }
 
-.collection-items-button {
-  order: 1;
-}
-
 .collection-read-button {
   order: 2;
 }
 
-.collection-more-menu {
+.collection-items-button {
   order: 3;
+}
+
+.collection-more-menu {
+  order: 4;
 }
 
 .collection-row[data-selected="true"] {

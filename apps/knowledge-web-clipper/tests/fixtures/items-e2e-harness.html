@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Items E2E Harness</title>
+    <link rel="stylesheet" href="../../dist/items.css?v=20260618b" />
+  </head>
+  <body>
+    <main class="items-shell">
+      <header class="page-header">
+        <div>
+          <h1>Knowledge Items</h1>
+          <p>Open saved web clips and EPUB documents in reader mode.</p>
+        </div>
+        <div class="header-actions">
+          <button id="refresh-items" type="button">Refresh</button>
+          <button id="open-settings" type="button">Settings</button>
+        </div>
+      </header>
+
+      <section class="items-overview" aria-label="Library overview">
+        <article class="overview-card">
+          <span class="overview-label">Library</span>
+          <strong id="overview-total" class="overview-value">0</strong>
+          <p id="overview-total-detail">Saved items in this workspace.</p>
+        </article>
+        <article class="overview-card">
+          <span class="overview-label">Reader Ready</span>
+          <strong id="overview-parsed" class="overview-value">0</strong>
+          <p id="overview-parsed-detail">Parsed documents ready to open.</p>
+        </article>
+        <article class="overview-card">
+          <span class="overview-label">Latest Activity</span>
+          <strong id="overview-latest" class="overview-value">-</strong>
+          <p id="overview-latest-detail">No activity yet.</p>
+        </article>
+      </section>
+
+      <section class="workspace-grid">
+        <form id="upload-form" class="panel upload-panel">
+          <div>
+            <h2>Import EPUB</h2>
+            <p class="panel-description">Saved files use the same rawdocs, documents, chunks, and assets pipeline.</p>
+          </div>
+          <label>
+            EPUB file
+            <input id="epub-file" type="file" accept=".epub,application/epub+zip" />
+          </label>
+          <label>
+            Calibre folder
+            <input id="calibre-folder" type="file" webkitdirectory multiple />
+          </label>
+          <label>
+            Title hint
+            <input id="title-hint" type="text" autocomplete="off" placeholder="Optional" />
+          </label>
+          <label>
+            Tags
+            <input id="tags-input" type="text" autocomplete="off" placeholder="comma separated" />
+          </label>
+          <button id="upload-button" type="submit">Import</button>
+          <div id="status-output" class="status-output" role="status"></div>
+        </form>
+
+        <section class="panel list-panel">
+          <div class="list-toolbar">
+            <div>
+              <h2>Saved Items</h2>
+              <p class="panel-description">Collections and standalone documents share one reading list with lightweight filters.</p>
+            </div>
+          </div>
+          <div class="filter-toolbar">
+            <div id="source-filter" class="filter-chip-group" aria-label="Source filter"></div>
+          </div>
+          <div id="batch-bar" class="batch-bar" hidden>
+            <label class="batch-select-all">
+              <input type="checkbox" id="select-all" />
+              <span id="select-count">0 selected</span>
+            </label>
+            <div class="batch-actions">
+              <button id="batch-reparse" type="button">Reparse</button>
+              <button id="batch-remove" type="button">Remove</button>
+              <button id="batch-purge" type="button" class="danger-button">Purge</button>
+            </div>
+          </div>
+          <div id="item-list" class="item-list" aria-live="polite"></div>
+        </section>
+      </section>
+    </main>
+
+    <script>
+      const items = [
+        {
+          itemId: "item-standalone-web",
+          sourceType: "url",
+          identityHash: "hash-standalone-web",
+          activeRawdocId: "raw-standalone-web",
+          activeDocId: "doc-standalone-web",
+          title: "Web Clip Reader Ready Document",
+          creators: ["Unknown creator"],
+          language: "en",
+          tags: [],
+          state: "parsed",
+          createdAt: "2026-06-17T15:00:00.000Z",
+          updatedAt: "2026-06-18T07:04:17.000Z",
+          parsedAt: "2026-06-18T07:04:17.000Z",
+          collectionIds: []
+        },
+        {
+          itemId: "item-collection-1",
+          sourceType: "url",
+          identityHash: "hash-collection-1",
+          activeRawdocId: "raw-collection-1",
+          activeDocId: "doc-collection-1",
+          title: "7 Local LLM Families To Replace Claude/Codex (for everyday tasks) - Freedium",
+          creators: ["Unknown creator"],
+          language: "en",
+          tags: [],
+          state: "parsed",
+          createdAt: "2026-06-17T15:00:00.000Z",
+          updatedAt: "2026-06-18T07:04:17.000Z",
+          parsedAt: "2026-06-18T07:04:17.000Z",
+          collectionIds: ["collection-1"]
+        },
+        {
+          itemId: "item-collection-2",
+          sourceType: "url",
+          identityHash: "hash-collection-2",
+          activeRawdocId: "raw-collection-2",
+          activeDocId: "doc-collection-2",
+          title: "Another page in the same collection",
+          creators: ["Unknown creator"],
+          language: "en",
+          tags: [],
+          state: "parsed",
+          createdAt: "2026-06-17T15:00:00.000Z",
+          updatedAt: "2026-06-18T06:00:00.000Z",
+          parsedAt: "2026-06-18T06:00:00.000Z",
+          collectionIds: ["collection-1"]
+        },
+        {
+          itemId: "item-epub-1",
+          sourceType: "epub",
+          identityHash: "hash-epub-1",
+          activeRawdocId: "raw-epub-1",
+          activeDocId: "doc-epub-1",
+          title: "EPUB Reader Ready Document",
+          creators: ["Book Author"],
+          language: "en",
+          tags: [],
+          state: "parsed",
+          createdAt: "2026-06-16T15:00:00.000Z",
+          updatedAt: "2026-06-16T16:00:00.000Z",
+          parsedAt: "2026-06-16T16:00:00.000Z",
+          collectionIds: []
+        }
+      ];
+
+      const collections = [
+        {
+          collectionId: "collection-1",
+          title: "AI Reading Collection",
+          rootUrl: "https://freedium-mirror.cfd/https://agentnativedev.medium.com/7-local-llm-families-to-replace-claude-codex-for-everyday-tasks-25ba74c3635d",
+          sourceType: "collection",
+          state: "active",
+          itemCount: 2,
+          createdAt: "2026-06-17T15:00:00.000Z",
+          updatedAt: "2026-06-18T07:04:17.000Z"
+        }
+      ];
+
+      const collectionDetail = {
+        collectionId: "collection-1",
+        title: "AI Reading Collection",
+        rootUrl: "https://freedium-mirror.cfd/https://agentnativedev.medium.com/7-local-llm-families-to-replace-claude-codex-for-everyday-tasks-25ba74c3635d",
+        sourceType: "collection",
+        state: "active",
+        itemCount: 2,
+        createdAt: "2026-06-17T15:00:00.000Z",
+        updatedAt: "2026-06-18T07:04:17.000Z",
+        items: [
+          {
+            collectionItemId: "ci-1",
+            itemId: "item-collection-1",
+            docId: "doc-collection-1",
+            normalizedUrl: "https://example.com/one",
+            title: "7 Local LLM Families To Replace Claude/Codex (for everyday tasks) - Freedium",
+            orderIndex: 0
+          },
+          {
+            collectionItemId: "ci-2",
+            itemId: "item-collection-2",
+            docId: "doc-collection-2",
+            normalizedUrl: "https://example.com/two",
+            title: "Another page in the same collection",
+            orderIndex: 1
+          }
+        ]
+      };
+
+      globalThis.chrome = {
+        storage: {
+          local: {
+            async get() {
+              return {};
+            },
+            async set() {
+              return undefined;
+            }
+          }
+        },
+        tabs: {
+          async create(payload) {
+            console.log("chrome.tabs.create", payload);
+            return { id: 1 };
+          }
+        },
+        runtime: {
+          getURL(path) {
+            return path;
+          }
+        }
+      };
+
+      const originalFetch = globalThis.fetch.bind(globalThis);
+      globalThis.fetch = async (input, init) => {
+        const url = String(typeof input === "string" ? input : input.url);
+        if (!url.startsWith("http://127.0.0.1:18765/")) {
+          return originalFetch(input, init);
+        }
+
+        const payload = (() => {
+          if (url.includes("/api/items?")) {
+            return { items };
+          }
+          if (url.endsWith("/api/collections")) {
+            return { collections };
+          }
+          if (url.endsWith("/api/collections/collection-1")) {
+            return collectionDetail;
+          }
+          if (url.endsWith("/api/items/item-standalone-web")) {
+            return { item: items[0], collectionIds: [] };
+          }
+          if (url.endsWith("/api/items/item-collection-1")) {
+            return { item: items[1], collectionIds: ["collection-1"] };
+          }
+          if (url.endsWith("/api/items/item-collection-2")) {
+            return { item: items[2], collectionIds: ["collection-1"] };
+          }
+          if (url.endsWith("/api/items/item-epub-1")) {
+            return { item: items[3], collectionIds: [] };
+          }
+          if (url.includes("/navigation?")) {
+            return {
+              previous: null,
+              next: null
+            };
+          }
+          throw new Error(`Unhandled mock fetch: ${url}`);
+        })();
+
+        return new Response(JSON.stringify(payload), {
+          status: 200,
+          headers: { "Content-Type": "application/json" }
+        });
+      };
+    </script>
+    <script type="module" src="../../dist/items.js?v=20260618b"></script>
+  </body>
+</html>

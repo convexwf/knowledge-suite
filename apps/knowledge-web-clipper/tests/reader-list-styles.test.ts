@@ -21,7 +21,8 @@ describe("reader list and reader style regressions", () => {
 
   it("keeps collection cards aligned with item cards", () => {
     expect(itemsTs).toContain('avatar.textContent = "[i]"');
-    expect(itemsTs).toContain("actions.append(itemsButton, readButton, more);");
+    expect(itemsTs).toContain("actions.append(detailsButton, readButton, itemsButton, more);");
+    expect(itemsTs).toContain('detailsButton.title = "Collection details"');
     expect(itemsCss).toContain(".collection-actions");
     expect(itemsCss).toContain(".collection-items-button");
     expect(itemsCss).toContain(".collection-read-button");

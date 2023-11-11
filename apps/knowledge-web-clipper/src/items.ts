@@ -283,17 +283,31 @@ function collectionRow(collection: ReaderListCollection): HTMLElement {
   const title = marqueeTitle("h3", "item-title", collection.title);
   const creator = document.createElement("div");
   creator.className = "item-creator";
-  creator.textContent = collection.rootUrl || "Collection of saved web clips";
+  creator.textContent = "Collection of saved web clips";
   const meta = document.createElement("div");
   meta.className = "item-summary-line";
-  meta.textContent = `Collection · Updated ${formatDate(collection.updatedAt)}`;
+  meta.textContent = `${collection.itemCount} page${collection.itemCount === 1 ? "" : "s"} · Updated ${formatDate(collection.updatedAt)}`;
   body.append(kickerRow, title, creator, meta);
 
   const actions = document.createElement("div");
   actions.className = "item-actions";
+  const details = collectionDetails(collection);
+  details.hidden = true;
+  const detailsButton = button("i", "info-button", () => {
+    details.hidden = !details.hidden;
+    detailsButton.setAttribute("aria-expanded", String(!details.hidden));
+  });
+  detailsButton.title = "Collection details";
+  detailsButton.setAttribute("aria-label", "Collection details");
+  detailsButton.setAttribute("aria-expanded", "false");
   const members = document.createElement("div");
   members.className = "item-details collection-members";
   members.hidden = true;
+
+  const readButton = button("Read", "primary-button", () => {
+    void openCollectionFirstItem(collection.collectionId);
+  });
+  readButton.classList.add("collection-read-button");
 
   const itemsButton = button("Items", "", () => {
     members.hidden = !members.hidden;
@@ -305,16 +319,11 @@ function collectionRow(collection: ReaderListCollection): HTMLElement {
   itemsButton.classList.add("collection-items-button");
   itemsButton.setAttribute("aria-expanded", "false");
 
-  const readButton = button("Read", "primary-button", () => {
-    void openCollectionFirstItem(collection.collectionId);
-  });
-  readButton.classList.add("collection-read-button");
-
   const more = collectionMoreMenu(collection);
   more.classList.add("collection-more-menu");
   actions.classList.add("collection-actions");
-  actions.append(itemsButton, readButton, more);
-  row.append(checkbox, avatar, body, actions, members);
+  actions.append(detailsButton, readButton, itemsButton, more);
+  row.append(checkbox, avatar, body, actions, details, members);
 
   if (focusCollectionId === collection.collectionId) {
     members.hidden = false;
@@ -465,6 +474,24 @@ function itemDetails(item: KnowledgeItem): HTMLElement {
     detailsRow("Created", formatDate(item.createdAt)),
     detailsRow("Updated", formatDate(item.updatedAt)),
     detailsRow("Parsed", item.parsedAt ? formatDate(item.parsedAt) : "-")
+  );
+  wrapper.append(table);
+  return wrapper;
+}
+
+function collectionDetails(collection: ReaderListCollection): HTMLElement {
+  const wrapper = document.createElement("div");
+  wrapper.className = "item-details";
+  const table = document.createElement("table");
+  table.append(
+    detailsRow("Title", collection.title),
+    detailsRow("State", collection.state),
+    detailsRow("Source", "COLLECTION"),
+    detailsRow("Pages", String(collection.itemCount)),
+    detailsRow("Root URL", collection.rootUrl || "-"),
+    detailsRow("Collection ID", collection.collectionId),
+    detailsRow("Created", formatDate(collection.createdAt)),
+    detailsRow("Updated", formatDate(collection.updatedAt))
   );
   wrapper.append(table);
   return wrapper;
