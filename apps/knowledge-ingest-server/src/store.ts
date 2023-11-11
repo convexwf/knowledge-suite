@@ -619,6 +619,26 @@ export class KnowledgeStore {
     };
   }
 
+  async deleteCollection(collectionId: string): Promise<{ deleted: boolean; collectionId: string }> {
+    await this.ensure();
+    const existing = this.findCollection(collectionId);
+    if (!existing) {
+      return { deleted: false, collectionId };
+    }
+
+    try {
+      this.database!.exec("BEGIN");
+      this.database!.prepare("DELETE FROM collection_items WHERE collection_id = ?").run(collectionId);
+      this.database!.prepare("DELETE FROM collections WHERE collection_id = ?").run(collectionId);
+      this.database!.exec("COMMIT");
+    } catch (error) {
+      this.database!.exec("ROLLBACK");
+      throw error;
+    }
+
+    return { deleted: true, collectionId };
+  }
+
   async replaceCollectionItems(collectionId: string, items: Array<{
     normalizedUrl: string;
     title?: string;

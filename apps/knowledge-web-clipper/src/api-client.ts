@@ -90,6 +90,7 @@ export interface KnowledgeApiClient {
   checkCollectionName(title: string): Promise<CheckCollectionNameResult>;
   listCollections(limit?: number): Promise<{ collections: CollectionSummary[] }>;
   collection(collectionId: string): Promise<CollectionDetail>;
+  deleteCollection(collectionId: string): Promise<{ deleted: boolean; collectionId: string }>;
   collectionNavigation(collectionId: string, docId: string): Promise<{
     previous: { docId: string; itemId?: string; title?: string; normalizedUrl: string } | null;
     next: { docId: string; itemId?: string; title?: string; normalizedUrl: string } | null;
@@ -325,6 +326,14 @@ export function createKnowledgeApiClient(settings: ExtensionSettings): Knowledge
       baseUrl,
       settings.token,
       "GET",
+      `/api/collections/${encodeURIComponent(collectionId)}`,
+      undefined,
+      options
+    ),
+    deleteCollection: (collectionId) => request<{ deleted: boolean; collectionId: string }>(
+      baseUrl,
+      settings.token,
+      "DELETE",
       `/api/collections/${encodeURIComponent(collectionId)}`,
       undefined,
       options

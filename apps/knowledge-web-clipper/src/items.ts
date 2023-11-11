@@ -199,13 +199,13 @@ async function hydrateCollectionIds(items: KnowledgeItem[]): Promise<KnowledgeIt
 
 function renderItems(items: KnowledgeItem[]): void {
   currentItems = items;
-  renderOverview(items);
-  itemList.replaceChildren();
   const entries = buildReaderListEntries({
     items,
     collections: currentCollections,
     sourceFilter: activeSourceFilter
   });
+  renderOverview(entries);
+  itemList.replaceChildren();
 
   if (entries.length === 0) {
     itemList.append(emptyNode("No saved items match the current filter."));
@@ -406,24 +406,28 @@ function itemRow(item: KnowledgeItem, options?: { nested?: boolean; indexLabel?:
   return row;
 }
 
-function renderOverview(items: KnowledgeItem[]): void {
-  const parsed = items.filter((item) => item.state === "parsed").length;
-  const latest = items
-    .map((item) => ({ item, time: Date.parse(item.updatedAt) }))
+function renderOverview(entries: ReturnType<typeof buildReaderListEntries>): void {
+  const readyStandalone = entries.filter((entry) => entry.kind === "standalone" && entry.state === "parsed").length;
+  const readyCollections = entries.filter((entry) => entry.kind === "collection" && entry.state === "active").length;
+  const latest = entries
+    .map((entry) => ({ entry, time: Date.parse(entry.updatedAt) }))
     .filter((entry) => !Number.isNaN(entry.time))
-    .sort((left, right) => right.time - left.time)[0]?.item;
+    .sort((left, right) => right.time - left.time)[0]?.entry;
+  const collectionCount = entries.filter((entry) => entry.kind === "collection").length;
+  const standaloneCount = entries.filter((entry) => entry.kind === "standalone").length;
+  const visibleTotal = entries.length;
 
-  overviewTotal.textContent = String(items.length);
-  overviewParsed.textContent = String(parsed);
+  overviewTotal.textContent = String(visibleTotal);
+  overviewParsed.textContent = String(readyStandalone + readyCollections);
   overviewLatest.textContent = latest ? formatShortDate(latest.updatedAt) : "-";
-  overviewTotalDetail.textContent = items.length === 0
-    ? "Start by importing an EPUB or opening a saved web clip."
-    : `${items.filter((item) => item.sourceType === "url" || item.sourceType === "singlefile_html").length} web, ${items.filter((item) => item.sourceType === "epub").length} EPUB, ${items.filter((item) => item.sourceType === "pdf").length} PDF.`;
-  overviewParsedDetail.textContent = parsed === 0
+  overviewTotalDetail.textContent = visibleTotal === 0
+    ? "No cards match the current source filter."
+    : `${collectionCount} collection, ${standaloneCount} standalone top-level card(s).`;
+  overviewParsedDetail.textContent = readyStandalone + readyCollections === 0
     ? "No reader-ready items yet."
-    : `${parsed} of ${items.length} item(s) can open directly in Reader mode.`;
+    : `${readyCollections} collection(s) and ${readyStandalone} standalone doc(s) can open directly.`;
   overviewLatestDetail.textContent = latest
-    ? `${displayTitle(latest)} was updated most recently.`
+    ? `${latest.kind === "collection" ? latest.title : displayTitle(latest)} was updated most recently.`
     : "No activity yet.";
 }
 
@@ -532,6 +536,12 @@ async function openCollectionFirstItem(collectionId: string): Promise<void> {
 async function operateOnCollection(collectionId: string, mode: "reparse" | "remove" | "purge"): Promise<void> {
   const itemIds = await resolveCollectionItemIds(collectionId);
   if (itemIds.length === 0) {
+    if (mode === "purge") {
+      const result = await client.deleteCollection(collectionId);
+      setStatus(result.deleted ? "Purged empty collection shell." : "Collection no longer exists.");
+      await refreshItems();
+      return;
+    }
     setStatus("This collection has no reader items yet.");
     return;
   }
@@ -539,7 +549,18 @@ async function operateOnCollection(collectionId: string, mode: "reparse" | "remo
     await performBatchReparse(itemIds, `Reparsing collection (${itemIds.length} item(s))...`);
     return;
   }
-  await performBatchDelete(itemIds, mode, `${mode === "purge" ? "Purge" : "Remove"} this collection's ${itemIds.length} item(s)?`);
+  const result = await performBatchDelete(
+    itemIds,
+    mode,
+    `${mode === "purge" ? "Purge" : "Remove"} this collection's ${itemIds.length} item(s)?`
+  );
+  if (mode === "purge" && result.ok === itemIds.length) {
+    const deleteResult = await client.deleteCollection(collectionId);
+    if (deleteResult.deleted) {
+      setStatus(`Purged ${result.ok}/${itemIds.length} item(s) and removed the collection shell.`);
+      await refreshItems();
+    }
+  }
 }
 
 async function reparseItem(itemId: string): Promise<void> {
@@ -592,8 +613,8 @@ async function performBatchDelete(
   mode: "remove" | "purge",
   confirmMessage: string,
   singularLabel?: string
-): Promise<void> {
-  if (!globalThis.confirm(confirmMessage)) return;
+): Promise<{ ok: number; cancelled: boolean }> {
+  if (!globalThis.confirm(confirmMessage)) return { ok: 0, cancelled: true };
   const verb = mode === "purge" ? "Purge" : "Remove";
   setStatus(`${verb.toLowerCase()}ing ${singularLabel ?? `${ids.length} item(s)`}...`);
   let ok = 0;
@@ -607,6 +628,7 @@ async function performBatchDelete(
   }
   setStatus(`${verb}d ${ok}/${ids.length} item(s).`);
   await refreshItems();
+  return { ok, cancelled: false };
 }
 
 async function resolveSelectedItemIds(): Promise<string[]> {

@@ -361,6 +361,11 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
     return store.loadCollection(params.collectionId);
   });
 
+  app.delete("/api/collections/:collectionId", async (request) => {
+    const params = request.params as { collectionId: string };
+    return store.deleteCollection(params.collectionId);
+  });
+
   app.get("/api/collections/check-name", async (request) => {
     const query = request.query as { title?: string };
     if (!query.title?.trim()) {
