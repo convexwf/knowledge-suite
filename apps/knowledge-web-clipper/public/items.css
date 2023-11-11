@@ -577,11 +577,17 @@ select {
 }
 
 .item-actions {
-  align-items: start;
+  align-items: center;
+  align-self: center;
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
   justify-content: flex-end;
+}
+
+.item-slot-button {
+  min-width: 118px;
+  text-align: center;
 }
 
 @media (max-width: 800px) {
@@ -668,7 +674,7 @@ select {
 }
 
 .collection-actions {
-  align-items: start;
+  align-items: center;
   flex-wrap: nowrap;
   gap: 6px;
 }

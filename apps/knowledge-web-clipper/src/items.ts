@@ -316,7 +316,7 @@ function collectionRow(collection: ReaderListCollection): HTMLElement {
       void loadCollectionMembers(collection.collectionId, members, checkbox.checked);
     }
   });
-  itemsButton.classList.add("collection-items-button");
+  itemsButton.classList.add("collection-items-button", "item-slot-button");
   itemsButton.setAttribute("aria-expanded", "false");
 
   const more = collectionMoreMenu(collection);
@@ -411,6 +411,7 @@ function itemRow(item: KnowledgeItem, options?: { nested?: boolean; indexLabel?:
   const annotateButton = button("Annotations", "", () => {
     void openKnowledgePage(`annotations.html?docId=${encodeURIComponent(item.activeDocId!)}&itemId=${encodeURIComponent(item.itemId)}`);
   });
+  annotateButton.classList.add("item-slot-button");
   annotateButton.disabled = !item.activeDocId;
 
   const more = itemMoreMenu(item);

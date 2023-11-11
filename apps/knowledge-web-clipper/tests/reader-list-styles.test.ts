@@ -23,7 +23,10 @@ describe("reader list and reader style regressions", () => {
     expect(itemsTs).toContain('avatar.textContent = "[i]"');
     expect(itemsTs).toContain("actions.append(detailsButton, readButton, itemsButton, more);");
     expect(itemsTs).toContain('detailsButton.title = "Collection details"');
+    expect(itemsTs).toContain('itemsButton.classList.add("collection-items-button", "item-slot-button");');
+    expect(itemsTs).toContain('annotateButton.classList.add("item-slot-button");');
     expect(itemsCss).toContain(".collection-actions");
+    expect(itemsCss).toContain(".item-slot-button");
     expect(itemsCss).toContain(".collection-items-button");
     expect(itemsCss).toContain(".collection-read-button");
     expect(itemsTs).toContain("`${sourceCounts.web} web`");
