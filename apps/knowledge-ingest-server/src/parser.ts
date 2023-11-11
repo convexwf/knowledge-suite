@@ -1285,7 +1285,7 @@ function extractSections(root: Element, title: string): KnowledgeDocument["secti
 
   for (const node of nodes) {
     const tagName = node.tagName.toLowerCase();
-    if (isInsideMediaContainer(node) || isInsideListItem(node)) {
+    if (isInsideMediaContainer(node) || isInsideListItem(node) || isInsideMediaTag(node)) {
       continue;
     }
     const text = normalizeText(node.textContent ?? "");
@@ -1374,6 +1374,18 @@ function isInsideMediaContainer(node: Element): boolean {
     return false;
   }
   return Boolean(closestMediaContainer(parent));
+}
+
+function isInsideMediaTag(node: Element): boolean {
+  const tagName = node.tagName.toLowerCase();
+  // Skip img elements that are already inside a <figure> or another <img> container
+  if (tagName === "img") {
+    const parent = node.parentElement;
+    if (parent && (parent.tagName.toLowerCase() === "figure" || parent.tagName.toLowerCase() === "picture")) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function closestMediaContainer(node: Element): Element | undefined {
