@@ -277,6 +277,35 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
       return { ...state, ...(replaced ? { replaced } : {}) };
     });
 
+    // Item-first AI annotation route
+    app.post("/api/items/:itemId/ai-annotations", async (request, reply) => {
+      const params = request.params as { itemId: string };
+      const body = AIAnnotationGenerateRequestSchema.parse(request.body);
+      const detail = await store.loadItemDetail(params.itemId);
+      const docId = detail.document?.doc_id ?? detail.item?.activeDocId;
+      if (!docId) {
+        reply.code(404);
+        return { error: "Item has no active document" };
+      }
+      const document = await store.loadDocument(docId);
+      if (!document) {
+        reply.code(404);
+        return { error: "Document not found" };
+      }
+      let headingIds = body.section_ids;
+      if (!headingIds || headingIds.length === 0) {
+        headingIds = document.sections
+          .filter((s) => s.type === "heading" && s.section_id)
+          .map((s) => s.section_id!);
+      }
+      const { task, replaced } = taskManager.createTask(
+        aiProvider, store, document, aiModel, headingIds, body.force ?? false
+      );
+      void task.start();
+      const state = task.toState();
+      return { ...state, ...(replaced ? { replaced } : {}) };
+    });
+
     app.get("/api/tasks/:taskId", async (request, reply) => {
       const params = request.params as { taskId: string };
       const task = taskManager.getTask(params.taskId);
