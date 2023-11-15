@@ -895,6 +895,14 @@ export class KnowledgeStore {
     return rows.map((r) => ({ collectionId: r.collection_id, title: r.title }));
   }
 
+  async getUsedCollectionDocIds(): Promise<string[]> {
+    await this.ensure();
+    const rows = this.database!.prepare(
+      "SELECT DISTINCT doc_id FROM collection_items WHERE doc_id IS NOT NULL"
+    ).all() as Array<{ doc_id: string }>;
+    return rows.map((r) => r.doc_id);
+  }
+
   async updateBatchItem(params: {
     itemId: string;
     state: BatchItemState;

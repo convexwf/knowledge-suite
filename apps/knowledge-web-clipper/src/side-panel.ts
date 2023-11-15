@@ -611,30 +611,16 @@ async function refreshServerStatus(): Promise<void> {
 
 async function loadSavedClips(): Promise<void> {
   try {
-    const [clipsResult, collectionsResult] = await Promise.all([
+    const [clipsResult, collectionsResult, usedDocIdsResult] = await Promise.all([
       createKnowledgeApiClient(settings).list(settings.savedListLimit),
-      createKnowledgeApiClient(settings).listCollections()
+      createKnowledgeApiClient(settings).listCollections(),
+      createKnowledgeApiClient(settings).usedCollectionDocIds()
     ]);
     savedClips = clipsResult.clips;
 
-    // Build set of docIds that belong to any collection
-    const collectionDocIds = new Set<string>();
-    const collectionUrls = new Set<string>();
-    for (const col of collectionsResult.collections) {
-      try {
-        const detail = await createKnowledgeApiClient(settings).collection(col.collectionId);
-        for (const item of detail.items) {
-          if (item.docId) collectionDocIds.add(item.docId);
-          collectionUrls.add(item.normalizedUrl);
-        }
-      } catch {
-        // Skip collections that fail to load
-      }
-    }
+    const collectionDocIds = new Set(usedDocIdsResult.docIds);
+    const standaloneClips = savedClips.filter((clip) => !(clip.docId && collectionDocIds.has(clip.docId)));
 
-    const standaloneClips = savedClips.filter(
-      (clip) => !(clip.docId && collectionDocIds.has(clip.docId)) && !collectionUrls.has(clip.normalizedUrl)
-    );
     if (activeView === "saved") {
       renderSavedList(collectionsResult.collections, standaloneClips);
     }
@@ -652,44 +638,76 @@ function renderSavedList(collections: CollectionSummary[], standaloneClips: Clip
     return;
   }
 
-  const items: HTMLElement[] = [];
+  const allItems: HTMLElement[] = [];
 
-  // Collection cards
+  // Collection cards — same DOM structure as clip cards
   for (const col of collections) {
-    const card = document.createElement("article");
-    card.className = "saved-item saved-collection";
+    const item = document.createElement("article");
+    item.className = "saved-item";
 
     const main = document.createElement("button");
     main.type = "button";
     main.className = "saved-card-button";
     main.title = `Open collection ${col.title}`;
-    main.addEventListener("click", () => {
-      void openKnowledgePage("items.html");
+    main.addEventListener("click", async () => {
+      try {
+        const detail = await createKnowledgeApiClient(settings).collection(col.collectionId);
+        const firstWithDoc = detail.items.find((i) => i.docId);
+        if (firstWithDoc?.itemId) {
+          void openKnowledgePage(`reader.html?itemId=${encodeURIComponent(firstWithDoc.itemId)}`);
+        } else if (firstWithDoc?.docId) {
+          void openKnowledgePage(`reader.html?docId=${encodeURIComponent(firstWithDoc.docId)}`);
+        } else {
+          void openKnowledgePage("items.html");
+        }
+      } catch {
+        void openKnowledgePage("items.html");
+      }
     });
 
     const titleRow = document.createElement("div");
     titleRow.className = "saved-title-row";
-    const icon = document.createElement("span");
-    icon.textContent = "📁 ";
     const title = document.createElement("div");
     title.className = "saved-title";
     title.textContent = col.title;
-    titleRow.append(icon, title);
+    titleRow.append(title);
+
+    const url = document.createElement("div");
+    url.className = "saved-url";
+    url.textContent = `${col.itemCount} page${col.itemCount !== 1 ? "s" : ""} · collection`;
 
     const meta = document.createElement("div");
     meta.className = "saved-meta";
-    meta.textContent = `${col.itemCount} page${col.itemCount !== 1 ? "s" : ""} · collection`;
+    meta.textContent = `Updated ${new Date(col.updatedAt).toLocaleDateString()}`;
 
-    const details = document.createElement("div");
-    details.className = "saved-details";
-    details.textContent = `Created ${new Date(col.createdAt).toLocaleDateString()}`;
+    main.append(titleRow, url, meta);
+    item.append(main);
 
-    main.append(titleRow, meta, details);
-    card.append(main);
-    items.push(card);
+    const readerBtn = document.createElement("button");
+    readerBtn.className = "saved-open-reader";
+    readerBtn.type = "button";
+    readerBtn.textContent = "First";
+    readerBtn.title = "Open first page of collection";
+    readerBtn.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      try {
+        const detail = await createKnowledgeApiClient(settings).collection(col.collectionId);
+        const firstWithDoc = detail.items.find((i) => i.docId);
+        if (firstWithDoc?.itemId) {
+          void openKnowledgePage(`reader.html?itemId=${encodeURIComponent(firstWithDoc.itemId)}`);
+        } else if (firstWithDoc?.docId) {
+          void openKnowledgePage(`reader.html?docId=${encodeURIComponent(firstWithDoc.docId)}`);
+        }
+      } catch {
+        // silent
+      }
+    });
+    item.append(readerBtn);
+
+    allItems.push(item);
   }
 
-  // Standalone clips (not belonging to any collection)
+  // Standalone clip cards
   for (const clip of standaloneClips) {
     const item = document.createElement("article");
     item.className = "saved-item";
@@ -704,7 +722,6 @@ function renderSavedList(collections: CollectionSummary[], standaloneClips: Clip
 
     const titleRow = document.createElement("div");
     titleRow.className = "saved-title-row";
-
     const title = document.createElement("div");
     title.className = "saved-title";
     title.textContent = clip.title || clip.normalizedUrl;
@@ -742,10 +759,10 @@ function renderSavedList(collections: CollectionSummary[], standaloneClips: Clip
       });
       item.append(openReaderButton);
     }
-    items.push(item);
+    allItems.push(item);
   }
 
-  savedList.replaceChildren(...items);
+  savedList.replaceChildren(...allItems);
 }
 
 async function openSavedClipUrl(url: string): Promise<void> {

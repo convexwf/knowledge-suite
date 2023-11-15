@@ -676,7 +676,6 @@ select {
 .collection-actions {
   align-items: center;
   flex-wrap: nowrap;
-  gap: 6px;
 }
 
 .collection-read-button {

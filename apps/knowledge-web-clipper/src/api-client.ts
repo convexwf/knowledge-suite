@@ -96,6 +96,7 @@ export interface KnowledgeApiClient {
     next: { docId: string; itemId?: string; title?: string; normalizedUrl: string } | null;
   }>;
   collectionsByDoc(docId: string): Promise<{ collections: Array<{ collectionId: string; title: string }> }>;
+  usedCollectionDocIds(): Promise<{ docIds: string[] }>;
   annotations(docId: string): Promise<AnnotationListResult>;
   saveAnnotation(docId: string, annotation: Annotation): Promise<AnnotationSaveResult>;
   deleteAnnotation(docId: string, annotationId: string): Promise<AnnotationDeleteResult>;
@@ -354,6 +355,14 @@ export function createKnowledgeApiClient(settings: ExtensionSettings): Knowledge
       settings.token,
       "GET",
       `/api/collections/by-doc?docId=${encodeURIComponent(docId)}`,
+      undefined,
+      options
+    ),
+    usedCollectionDocIds: () => request<{ docIds: string[] }>(
+      baseUrl,
+      settings.token,
+      "GET",
+      "/api/collections/used-doc-ids",
       undefined,
       options
     ),
