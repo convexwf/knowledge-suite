@@ -155,7 +155,6 @@ interface CollectionItemRow {
 }
 
 interface CollectionItemDetail extends CollectionItem {
-  itemId?: string;
   creators?: string[];
   language?: string;
 }
@@ -281,7 +280,7 @@ interface EpubMetadataInput {
   metadata?: Record<string, unknown>;
 }
 
-const STORE_SCHEMA_VERSION = 9;
+const STORE_SCHEMA_VERSION = 10;
 
 interface SearchOptions {
   limit?: number;
@@ -336,12 +335,12 @@ export class KnowledgeStore {
     await this.ensure();
     const boundedLimit = Math.min(Math.max(Math.trunc(limit) || 50, 1), 200);
     const rows = this.database!.prepare(`
-      SELECT url_hash, normalized_url, original_url, canonical_url, rawdoc_id, active_doc_id, page_title, content_title,
+      SELECT url_hash, normalized_url, original_url, canonical_url, rawdoc_id, active_doc_id, item_id, page_title, content_title,
         capture_saved_at, capture_updated_at, parse_updated_at
       FROM clips
       ORDER BY COALESCE(parse_updated_at, capture_updated_at) DESC
       LIMIT ?
-    `).all(boundedLimit) as unknown as ClipRow[];
+    `).all(boundedLimit) as unknown as (ClipRow & { item_id: string | null })[];
 
     return rows.map((row) => ({
       normalizedUrl: row.normalized_url,
@@ -355,6 +354,7 @@ export class KnowledgeStore {
       captureUpdatedAt: row.capture_updated_at,
       parseUpdatedAt: row.parse_updated_at ?? undefined,
       ...titleFields(row.page_title, row.content_title, row.normalized_url),
+      itemId: row.item_id ?? undefined,
       docId: row.active_doc_id ?? undefined,
       rawdocId: row.rawdoc_id
     }));
@@ -592,7 +592,7 @@ export class KnowledgeStore {
       SELECT
         ci.collection_item_id,
         ci.collection_id,
-        ki.item_id,
+        COALESCE(ci.item_id, ki.item_id) AS item_id,
         ci.normalized_url,
         ci.doc_id,
         ci.rawdoc_id,
@@ -608,7 +608,7 @@ export class KnowledgeStore {
         ci.created_at,
         COALESCE(ki.updated_at, ci.updated_at) AS updated_at
       FROM collection_items ci
-      LEFT JOIN knowledge_items ki ON ki.active_doc_id = ci.doc_id
+      LEFT JOIN knowledge_items ki ON ki.item_id = ci.item_id
       LEFT JOIN documents d ON d.doc_id = ci.doc_id
       WHERE ci.collection_id = ?
       ORDER BY ci.order_index ASC, ci.created_at ASC
@@ -658,6 +658,7 @@ export class KnowledgeStore {
         INSERT INTO collection_items (
           collection_item_id,
           collection_id,
+          item_id,
           normalized_url,
           title,
           page_title,
@@ -668,12 +669,15 @@ export class KnowledgeStore {
           created_at,
           updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
       for (const item of items) {
+        const itemHash = urlHash(item.normalizedUrl);
+        const itemId = `url:sha256:${itemHash}`;
         insert.run(
           makeId(),
           collectionId,
+          itemId,
           item.normalizedUrl,
           item.title ?? null,
           item.pageTitle ?? null,
@@ -707,8 +711,7 @@ export class KnowledgeStore {
     const rows = this.database!.prepare(`
       SELECT DISTINCT ci.collection_id
       FROM collection_items ci
-      JOIN knowledge_items ki ON ki.active_doc_id = ci.doc_id
-      WHERE ki.item_id = ?
+      WHERE ci.item_id = ?
     `).all(itemId) as Array<{ collection_id: string }>;
     return rows.map((r) => r.collection_id);
   }
@@ -1898,6 +1901,7 @@ export class KnowledgeStore {
       CREATE TABLE IF NOT EXISTS collection_items (
         collection_item_id TEXT PRIMARY KEY,
         collection_id TEXT NOT NULL,
+        item_id TEXT,
         normalized_url TEXT NOT NULL,
         doc_id TEXT,
         rawdoc_id TEXT,
@@ -2020,6 +2024,7 @@ export class KnowledgeStore {
         this.ensureKnowledgeItemTables();
         this.ensureTitleColumns();
         this.ensureRawContentColumns();
+        this.ensureCollectionItemIdColumn();
         this.backfillUrlKnowledgeItems();
         this.rebuildChunksFtsIndex();
       }
@@ -2077,6 +2082,7 @@ export class KnowledgeStore {
       this.ensureKnowledgeItemTables();
       this.ensureTitleColumns();
       this.ensureRawContentColumns();
+      this.ensureCollectionItemIdColumn();
       this.backfillUrlKnowledgeItems();
       this.rebuildChunksFtsIndex();
       this.database!.exec(`PRAGMA user_version = ${STORE_SCHEMA_VERSION}`);
@@ -2094,11 +2100,38 @@ export class KnowledgeStore {
     this.addColumnIfMissing("rawdocs", "page_title", "TEXT");
     this.addColumnIfMissing("chunks", "page_title", "TEXT");
     this.addColumnIfMissing("collection_items", "page_title", "TEXT");
+    this.addColumnIfMissing("collection_items", "item_id", "TEXT");
     this.database!.exec(`
       UPDATE clips SET content_title = COALESCE(content_title, page_title);
       UPDATE documents SET page_title = COALESCE(page_title, title);
       UPDATE chunks SET page_title = COALESCE(page_title, title);
       UPDATE collection_items SET page_title = COALESCE(page_title, title);
+    `);
+  }
+
+  private ensureCollectionItemIdColumn(): void {
+    this.addColumnIfMissing("collection_items", "item_id", "TEXT");
+    this.database!.exec(`
+      UPDATE collection_items
+      SET item_id = (
+        SELECT 'url:sha256:' || SUBSTR(ci.normalized_url_hash, 1, 16)
+        FROM (
+          SELECT normalized_url,
+            LOWER(HEX(SHA256(normalized_url))) AS normalized_url_hash
+          FROM collection_items AS inner_ci
+          WHERE inner_ci.collection_item_id = collection_items.collection_item_id
+        )
+      )
+      WHERE item_id IS NULL AND doc_id IS NOT NULL
+    `);
+    this.database!.exec(`
+      UPDATE collection_items
+      SET item_id = (
+        SELECT ki.item_id
+        FROM knowledge_items ki
+        WHERE ki.active_doc_id = collection_items.doc_id
+      )
+      WHERE item_id IS NULL AND doc_id IS NOT NULL
     `);
   }
 
@@ -2601,7 +2634,7 @@ export class KnowledgeStore {
     `).run(state, new Date().toISOString(), collectionId);
   }
 
-  private toStatus(row: ClipRow): ClipStatus {
+  private toStatus(row: ClipRow & { item_id?: string }): ClipStatus {
     const hasDocument = Boolean(row.active_doc_id);
     return {
       normalizedUrl: row.normalized_url,
@@ -2615,6 +2648,7 @@ export class KnowledgeStore {
       captureUpdatedAt: row.capture_updated_at,
       parseUpdatedAt: row.parse_updated_at ?? undefined,
       ...titleFields(row.page_title, row.content_title, row.normalized_url),
+      itemId: row.item_id ?? undefined,
       docId: row.active_doc_id ?? undefined,
       rawdocId: row.rawdoc_id
     };
@@ -2646,6 +2680,15 @@ export class KnowledgeStore {
             parse_updated_at = NULL
         WHERE url_hash = ?
       `).run(now, row.url_hash);
+      this.database!.prepare(`
+        UPDATE knowledge_items
+        SET active_doc_id = NULL,
+            state = 'captured',
+            updated_at = ?,
+            parsed_at = NULL
+        WHERE active_doc_id = ?
+          AND source_type IN ('url', 'singlefile_html')
+      `).run(now, row.active_doc_id);
       this.database!.exec("COMMIT");
     } catch (error) {
       this.database!.exec("ROLLBACK");
@@ -3095,7 +3138,7 @@ function toCollectionItem(row: CollectionItemRow): CollectionItemDetail {
   return {
     collectionItemId: row.collection_item_id,
     collectionId: row.collection_id,
-    itemId: row.item_id ?? undefined,
+    itemId: row.item_id ?? `url:sha256:${urlHash(row.normalized_url)}`,
     normalizedUrl: row.normalized_url,
     docId: row.doc_id ?? undefined,
     rawdocId: row.rawdoc_id ?? undefined,

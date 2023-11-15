@@ -260,6 +260,7 @@ export interface ClipStatus {
   pageTitle?: string;
   contentTitle?: string;
   displayTitle?: string;
+  itemId?: string;
   docId?: string;
   rawdocId?: string;
 }
@@ -404,6 +405,7 @@ export interface ClipListItem {
   pageTitle?: string;
   contentTitle?: string;
   displayTitle?: string;
+  itemId?: string;
   docId?: string;
   rawdocId?: string;
 }
@@ -507,6 +509,7 @@ export interface BatchDiscoverItem {
   depth: number;
   selectedByDefault: boolean;
   status: ClipStatus["state"];
+  itemId?: string;
   docId?: string;
   rawdocId?: string;
 }
@@ -524,7 +527,7 @@ export interface BatchDiscoverResponse {
 export interface CollectionItem {
   collectionItemId: string;
   collectionId: string;
-  itemId?: string;
+  itemId: string;
   normalizedUrl: string;
   docId?: string;
   rawdocId?: string;
