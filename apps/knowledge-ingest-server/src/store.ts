@@ -3,11 +3,6 @@ import { DatabaseSync } from "node:sqlite";
 import { access, copyFile, mkdir, readFile, readdir, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { dirname, extname, isAbsolute, join } from "node:path";
 import {
-  ClipDeleteMode,
-  ClipDeleteResponse,
-  ClipListItem,
-  ClipSaveResponse,
-  ClipStatus,
   Annotation,
   AnnotationFile,
   AnnotationFileSchema,
@@ -18,6 +13,7 @@ import {
   CollectionItem,
   CollectionState,
   CollectionSummary,
+  ContextCitation,
   KnowledgeItem,
   KnowledgeItemDeleteMode,
   KnowledgeItemDeleteResponse,
@@ -25,6 +21,7 @@ import {
   makeId,
   normalizeUrlForKnowledge,
   RawDoc,
+  SearchResultItem,
   StoreClearParsedResponse,
   StoreClearResponse,
   StoreMaintenanceScan,
@@ -33,60 +30,109 @@ import {
 import { buildChunks } from "./chunks.js";
 import { resolveInsideRoot } from "./path-guard.js";
 
-interface ClipRow {
-  url_hash: string;
-  normalized_url: string;
-  original_url: string | null;
-  canonical_url: string | null;
-  rawdoc_id: string;
-  active_doc_id: string | null;
-  page_title: string | null;
-  content_title: string | null;
-  capture_saved_at: string;
-  capture_updated_at: string;
-  parse_updated_at: string | null;
-}
+// ── Row interfaces (target model) ──────────────────────────────────────────
 
-interface KnowledgeItemRow {
+interface ItemRow {
   item_id: string;
-  source_type: "url" | "singlefile_html" | "pdf" | "epub";
-  identity_hash: string;
-  active_rawdoc_id: string;
-  active_doc_id: string | null;
+  item_type: "document" | "collection";
+  source_type: "url" | "singlefile_html" | "pdf" | "epub" | "virtual_collection";
+  identity_key: string | null;
   title: string | null;
   subtitle: string | null;
   creators_json: string;
   language: string | null;
   tags_json: string;
-  state: "captured" | "parsed";
+  state: "empty" | "captured" | "parsed" | "stale" | "archived";
+  member_visibility_mode: "hide_members" | "show_members" | null;
+  active_capture_id: string | null;
+  active_doc_id: string | null;
   created_at: string;
   updated_at: string;
   parsed_at: string | null;
 }
 
+interface ItemAliasRow {
+  alias_id: string;
+  item_id: string;
+  alias_type: string;
+  alias_value: string;
+  is_primary: number;
+  created_at: string;
+}
+
+interface RawdocRow {
+  capture_id: string;
+  item_id: string;
+  source_uri: string;
+  source_type: string;
+  input_mode: string;
+  content_type: string | null;
+  content_length: number | null;
+  content_hash: string | null;
+  content_ext: string;
+  page_title: string | null;
+  captured_at: string | null;
+  fetched_at: string | null;
+  created_at: string;
+}
+
 interface DocumentRow {
   doc_id: string;
-  rawdoc_id: string;
+  item_id: string;
+  capture_id: string;
   title: string;
   page_title: string | null;
+  source_url: string | null;
+  language: string | null;
+  authors_json: string | null;
+  published_at: string | null;
+  parser_version: string;
+  parser_method: string;
+  parser_profile: string | null;
+  content_hash: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
-interface DocumentStatistics {
-  sectionCount: number;
-  headingCount: number;
-  paragraphCount: number;
-  tableCount: number;
-  figureCount: number;
-  imageCount: number;
-  assetCount: number;
-  charCount: number;
+interface CollectionMembershipRow {
+  membership_id: string;
+  collection_item_id: string;
+  member_item_id: string;
+  order_index: number;
+  depth: number;
+  parent_membership_id: string | null;
+  inclusion_mode: string;
+  inclusion_reason: string | null;
+  source_rule_id: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
-type DocumentMetaWithDerivedInfo = KnowledgeDocument["meta"] & {
-  cover_asset_id?: string;
-  statistics?: DocumentStatistics;
-};
+interface SearchChunkRow {
+  chunk_id: string;
+  doc_id: string;
+  item_id: string;
+  capture_id: string;
+  chunk_index: number;
+  title: string;
+  page_title: string | null;
+  source_url: string | null;
+  heading_path: string | null;
+  section_ids_json: string;
+  text: string;
+  token_estimate: number | null;
+  char_count: number;
+  parser_version: string | null;
+  parser_method: string | null;
+  parser_profile: string | null;
+  content_hash: string;
+  created_at: string;
+  updated_at: string;
+  score?: number;
+  rank?: number;
+}
 
+// Keep batch rows for now (will be replaced by refresh_* tables later)
 interface BatchJobRow {
   job_id: string;
   collection_id: string | null;
@@ -112,7 +158,7 @@ interface BatchItemRow {
   normalized_url: string | null;
   source: string | null;
   title_hint: string | null;
-  state: BatchItemState;
+  state: string;
   rawdoc_id: string | null;
   doc_id: string | null;
   error_code: string | null;
@@ -122,153 +168,21 @@ interface BatchItemRow {
   updated_at: string;
 }
 
-interface CollectionRow {
-  collection_id: string;
-  title: string;
-  root_url: string | null;
-  normalized_root_url: string | null;
-  source_type: string;
-  state: CollectionState;
-  created_at: string;
-  updated_at: string;
-  item_count?: number;
+interface DocumentStatistics {
+  sectionCount: number;
+  headingCount: number;
+  paragraphCount: number;
+  tableCount: number;
+  figureCount: number;
+  imageCount: number;
+  assetCount: number;
+  charCount: number;
 }
 
-interface CollectionItemRow {
-  collection_item_id: string;
-  collection_id: string;
-  item_id: string | null;
-  normalized_url: string;
-  doc_id: string | null;
-  rawdoc_id: string | null;
-  title: string | null;
-  page_title: string | null;
-  order_index: number;
-  depth: number;
-  parent_item_id: string | null;
-  source: string | null;
-  state: BatchItemState;
-  creators_json: string | null;
-  language: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-interface CollectionItemDetail extends CollectionItem {
-  creators?: string[];
-  language?: string;
-}
-
-interface SearchRow {
-  chunk_id: string;
-  doc_id: string;
-  rawdoc_id: string;
-  section_ids_json: string;
-  title: string;
-  page_title: string | null;
-  source_url: string | null;
-  normalized_url: string | null;
-  heading_path: string | null;
-  parser_version: string | null;
-  parser_method: string | null;
-  parser_profile: string | null;
-  score: number;
-  snippet: string;
-  text: string;
-}
-
-interface ChunkIndexRow {
-  rowid: number;
-  title: string;
-  heading_path: string | null;
-  text: string;
-}
-
-interface SearchResultItem {
-  chunkId: string;
-  docId: string;
-  rawdocId: string;
-  sectionIds: string[];
-  title: string;
-  pageTitle?: string;
-  contentTitle?: string;
-  displayTitle?: string;
-  sourceUrl?: string;
-  normalizedUrl?: string;
-  headingPath?: string;
-  snippet: string;
-  score: number;
-  parserVersion?: string;
-  parserMethod?: string;
-  parserProfile?: string;
-  trace?: SearchTrace;
-}
-
-interface SearchTrace {
-  queryTerms: string[];
-  matchedTerms: string[];
-  termCoverage: number;
-  bm25Score: number;
-  rankingScore: number;
-  titleMatches: number;
-  headingMatches: number;
-  phraseMatched: boolean;
-}
-
-interface ScoredSearchRow {
-  row: SearchRow;
-  trace: SearchTrace;
-}
-
-interface ContextCitation {
-  citationId: string;
-  marker: string;
-  rank: number;
-  chunkId: string;
-  docId: string;
-  rawdocId: string;
-  sectionIds: string[];
-  title: string;
-  pageTitle?: string;
-  contentTitle?: string;
-  displayTitle?: string;
-  sourceUrl?: string;
-  normalizedUrl?: string;
-  headingPath?: string;
-  content: string;
-  score: number;
-  parserVersion?: string;
-  parserMethod?: string;
-  parserProfile?: string;
-  truncated: boolean;
-  trace?: SearchTrace;
-}
-
-interface ContextPackResponse {
-  query: string;
-  retriever: "sqlite_fts";
-  packer: "section_chunk_v1";
-  budget: {
-    maxChars: number;
-    usedChars: number;
-  };
-  contextText: string;
-  citations: ContextCitation[];
-}
-
-interface SavePaths {
-  rawHtmlPath: string;
-  rawdocPath: string;
-  documentPath: string;
-  markdownPath: string;
-}
-
-interface ImportSavePaths {
-  rawContentPath: string;
-  rawdocPath: string;
-  documentPath: string;
-  markdownPath: string;
-}
+type DocumentMetaWithDerivedInfo = KnowledgeDocument["meta"] & {
+  cover_asset_id?: string;
+  statistics?: DocumentStatistics;
+};
 
 interface EpubMetadataInput {
   isbn?: string;
@@ -279,8 +193,6 @@ interface EpubMetadataInput {
   chapterCount?: number;
   metadata?: Record<string, unknown>;
 }
-
-const STORE_SCHEMA_VERSION = 10;
 
 interface SearchOptions {
   limit?: number;
@@ -294,10 +206,94 @@ interface ContextOptions extends SearchOptions {
   maxChars?: number;
 }
 
+interface CollectionItemDetail extends CollectionItem {
+  creators?: string[];
+  language?: string;
+}
+
+const STORE_SCHEMA_VERSION = 11;
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+
+function sha256(input: string): string {
+  return createHash("sha256").update(input, "utf-8").digest("hex");
+}
+
+function sha256Buffer(buf: Buffer): string {
+  return createHash("sha256").update(buf).digest("hex");
+}
+
+function safeJsonArray(raw: string): string[] {
+  try { return JSON.parse(raw) as string[]; } catch { return []; }
+}
+
+function pageTitleFor(document: KnowledgeDocument, rawdoc: RawDoc): string {
+  const metaTitle = document.meta.page_title;
+  if (metaTitle && metaTitle !== document.meta.title) return metaTitle;
+  const rawPageTitle = (rawdoc.metadata as Record<string, unknown> | undefined)?.pageTitle;
+  if (typeof rawPageTitle === "string" && rawPageTitle !== document.meta.title) return rawPageTitle;
+  return document.meta.title;
+}
+
+function titleFields(
+  pageTitle: string | null,
+  contentTitle: string | null,
+  normalizedUrl: string
+): { title: string; pageTitle?: string; contentTitle?: string; displayTitle: string } {
+  const displayTitle = pageTitle || contentTitle || tryHostnameTitle(normalizedUrl);
+  return {
+    title: displayTitle,
+    pageTitle: pageTitle ?? undefined,
+    contentTitle: contentTitle ?? undefined,
+    displayTitle
+  };
+}
+
+function tryHostnameTitle(input: string): string {
+  try { return new URL(input).hostname; } catch { return input.slice(0, 80) || "Untitled"; }
+}
+
+function parserInfoFor(document: KnowledgeDocument, rawdoc: RawDoc): {
+  version: string;
+  method: string;
+  profile: string | null;
+} {
+  const meta = rawdoc.metadata as Record<string, unknown> | undefined;
+  return {
+    version: (meta?.parserVersion as string) ?? document.meta.parser_version ?? "0.0.0",
+    method: (meta?.parserMethod as string) ?? "unknown",
+    profile: (meta?.parserProfile as string | undefined) ?? null
+  };
+}
+
+function sanitizeExtension(ext: string): string {
+  return ext.replace(/[^a-zA-Z0-9]/g, "").slice(0, 10);
+}
+
+function pathsFor(docId: string, captureId: string) {
+  return {
+    rawHtmlPath: `rawdocs/${captureId}.html`,
+    rawdocPath: `rawdocs/${captureId}.json`,
+    documentPath: `documents/${docId}.json`,
+    markdownPath: `markdown/${docId}.md`
+  };
+}
+
+function pathsForActiveCapture(captureId: string) {
+  return {
+    rawHtmlPath: `rawdocs/${captureId}.html`,
+    rawdocPath: `rawdocs/${captureId}.json`
+  };
+}
+
+// ── KnowledgeStore ──────────────────────────────────────────────────────────
+
 export class KnowledgeStore {
   private database?: DatabaseSync;
 
   constructor(private readonly root: string) {}
+
+  // ── lifecycle ──────────────────────────────────────────────────────────
 
   async ensure(): Promise<void> {
     await Promise.all([
@@ -306,1525 +302,117 @@ export class KnowledgeStore {
       mkdir(join(this.root, "markdown"), { recursive: true }),
       mkdir(join(this.root, "assets"), { recursive: true })
     ]);
-    await this.resetLegacyStoreIfNeeded();
     this.ensureDatabase();
     this.migrateSchemaIfNeeded();
     this.ensureIndexes();
   }
 
-  async status(inputUrl: string): Promise<ClipStatus> {
-    await this.ensure();
-    const normalized = normalizeUrlForKnowledge(inputUrl);
-    const hash = urlHash(normalized);
-    const row = this.findClip(hash) ?? this.findClipByOriginalUrl(inputUrl);
-
-    if (!row) {
-      return {
-        normalizedUrl: normalized,
-        urlHash: hash,
-        state: "empty",
-        hasRawdoc: false,
-        hasDocument: false
-      };
-    }
-
-    return this.toStatus(row);
-  }
-
-  async list(limit = 50): Promise<ClipListItem[]> {
-    await this.ensure();
-    const boundedLimit = Math.min(Math.max(Math.trunc(limit) || 50, 1), 200);
-    const rows = this.database!.prepare(`
-      SELECT url_hash, normalized_url, original_url, canonical_url, rawdoc_id, active_doc_id, item_id, page_title, content_title,
-        capture_saved_at, capture_updated_at, parse_updated_at
-      FROM clips
-      ORDER BY COALESCE(parse_updated_at, capture_updated_at) DESC
-      LIMIT ?
-    `).all(boundedLimit) as unknown as (ClipRow & { item_id: string | null })[];
-
-    return rows.map((row) => ({
-      normalizedUrl: row.normalized_url,
-      urlHash: row.url_hash,
-      state: row.active_doc_id ? "parsed" : "captured",
-      hasRawdoc: true,
-      hasDocument: Boolean(row.active_doc_id),
-      originalUrl: row.original_url ?? undefined,
-      canonicalUrl: row.canonical_url ?? undefined,
-      captureSavedAt: row.capture_saved_at,
-      captureUpdatedAt: row.capture_updated_at,
-      parseUpdatedAt: row.parse_updated_at ?? undefined,
-      ...titleFields(row.page_title, row.content_title, row.normalized_url),
-      itemId: row.item_id ?? undefined,
-      docId: row.active_doc_id ?? undefined,
-      rawdocId: row.rawdoc_id
-    }));
-  }
-
-  async search(query: string, options: SearchOptions = {}): Promise<SearchResultItem[]> {
-    await this.ensure();
-    const trimmed = query.trim();
-    if (!trimmed) {
-      return [];
-    }
-
-    const limit = boundedSearchLimit(options.limit ?? 10);
-    return this.searchRankedRows(trimmed, options, limit).map(({ row, trace }) => this.toSearchResult(row, trace, options.trace));
-  }
-
-  async retrieveContext(query: string, options: ContextOptions = {}): Promise<ContextPackResponse> {
-    await this.ensure();
-    const trimmed = query.trim();
-    const maxChars = boundedContextChars(options.maxChars ?? 6000);
-    if (!trimmed) {
-      return emptyContextPack(query, maxChars);
-    }
-
-    const limit = Math.min(boundedSearchLimit(options.limit ?? 5), 20);
-    const rankedRows = this.searchRankedRows(trimmed, options, limit);
-    const citations: ContextCitation[] = [];
-    const contextBlocks: string[] = [];
-
-    for (const { row, trace } of rankedRows) {
-      const citationId = String(citations.length + 1);
-      const marker = `[${citationId}]`;
-      const titles = titleFields(row.page_title, row.title, row.normalized_url ?? row.source_url ?? row.doc_id);
-      const header = contextHeader(marker, titles.displayTitle, row.source_url, row.heading_path);
-      const separator = contextBlocks.length > 0 ? "\n\n" : "";
-      const remaining = maxChars - contextBlocks.join("\n\n").length - separator.length - header.length - 2;
-      if (remaining < MIN_CONTEXT_CONTENT_CHARS) {
-        break;
-      }
-
-      const normalizedContent = normalizeContextContent(row.text);
-      const { content, truncated } = clipContextContent(normalizedContent, remaining);
-      if (!content) {
-        continue;
-      }
-
-      const block = `${header}\n\n${content}`;
-      contextBlocks.push(block);
-      citations.push({
-        citationId,
-        marker,
-        rank: citations.length + 1,
-        chunkId: row.chunk_id,
-        docId: row.doc_id,
-        rawdocId: row.rawdoc_id,
-        sectionIds: safeJsonArray(row.section_ids_json),
-        title: titles.title,
-        pageTitle: row.page_title ?? undefined,
-        contentTitle: row.title,
-        displayTitle: titles.displayTitle,
-        sourceUrl: row.source_url ?? undefined,
-        normalizedUrl: row.normalized_url ?? undefined,
-        headingPath: row.heading_path ?? undefined,
-        content,
-        score: trace.rankingScore,
-        parserVersion: row.parser_version ?? undefined,
-        parserMethod: row.parser_method ?? undefined,
-        parserProfile: row.parser_profile ?? undefined,
-        truncated,
-        trace: options.trace ? trace : undefined
-      });
-    }
-
-    const contextText = contextBlocks.join("\n\n");
-    return {
-      query,
-      retriever: "sqlite_fts",
-      packer: "section_chunk_v1",
-      budget: {
-        maxChars,
-        usedChars: contextText.length
-      },
-      contextText,
-      citations
-    };
-  }
-
-  private searchRankedRows(query: string, options: SearchOptions, limit: number): ScoredSearchRow[] {
-    const clauses = ["chunks_fts MATCH ?"];
-    const values: Array<string | number> = [toFtsQuery(query)];
-
-    if (options.docId) {
-      clauses.push("c.doc_id = ?");
-      values.push(options.docId);
-    }
-    if (options.url) {
-      clauses.push("c.normalized_url = ?");
-      values.push(normalizeUrlForKnowledge(options.url));
-    }
-    if (options.parserMethod) {
-      clauses.push("c.parser_method = ?");
-      values.push(options.parserMethod);
-    }
-
-    const queryTerms = extractQueryTerms(query);
-    const candidateLimit = Math.min(Math.max(limit * 5, 50), 200);
-    values.push(candidateLimit);
-
-    const rows = this.database!.prepare(`
-      SELECT
-        c.chunk_id,
-        c.doc_id,
-        c.rawdoc_id,
-        c.section_ids_json,
-        c.title,
-        c.page_title,
-        c.source_url,
-        c.normalized_url,
-        c.heading_path,
-        c.parser_version,
-        c.parser_method,
-        c.parser_profile,
-        bm25(chunks_fts) AS score,
-        snippet(chunks_fts, 2, '[', ']', ' ... ', 18) AS snippet,
-        c.text
-      FROM chunks_fts
-      JOIN chunks c ON c.rowid = chunks_fts.rowid
-      WHERE ${clauses.join(" AND ")}
-      ORDER BY score
-      LIMIT ?
-    `).all(...values) as unknown as SearchRow[];
-
-    return rows
-      .map((row) => ({ row, trace: scoreSearchRow(row, query, queryTerms) }))
-      .sort((left, right) => left.trace.rankingScore - right.trace.rankingScore)
-      .slice(0, limit);
-  }
-
-  private toSearchResult(row: SearchRow, trace: SearchTrace, includeTrace?: boolean): SearchResultItem {
-    const titles = titleFields(row.page_title, row.title, row.normalized_url ?? row.source_url ?? row.doc_id);
-    return {
-      chunkId: row.chunk_id,
-      docId: row.doc_id,
-      rawdocId: row.rawdoc_id,
-      sectionIds: safeJsonArray(row.section_ids_json),
-      title: titles.title,
-      pageTitle: row.page_title ?? undefined,
-      contentTitle: row.title,
-      displayTitle: titles.displayTitle,
-      sourceUrl: row.source_url ?? undefined,
-      normalizedUrl: row.normalized_url ?? undefined,
-      headingPath: row.heading_path ?? undefined,
-      snippet: row.snippet,
-      score: trace.rankingScore,
-      parserVersion: row.parser_version ?? undefined,
-      parserMethod: row.parser_method ?? undefined,
-      parserProfile: row.parser_profile ?? undefined,
-      trace: includeTrace ? trace : undefined
-    };
-  }
-
-  async upsertCollection(params: {
-    collectionId?: string;
-    title: string;
-    rootUrl: string;
-    sourceType: string;
-    state?: CollectionState;
-  }): Promise<CollectionSummary> {
-    await this.ensure();
-    const now = new Date().toISOString();
-    const collectionId = params.collectionId ?? makeId();
-    const normalizedRootUrl = normalizeUrlForKnowledge(params.rootUrl);
-    const existing = this.findCollection(collectionId);
-
-    this.database!.prepare(`
-      INSERT INTO collections (
-        collection_id,
-        title,
-        root_url,
-        normalized_root_url,
-        source_type,
-        state,
-        created_at,
-        updated_at
-      )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(collection_id) DO UPDATE SET
-        title = excluded.title,
-        root_url = excluded.root_url,
-        normalized_root_url = excluded.normalized_root_url,
-        source_type = excluded.source_type,
-        state = excluded.state,
-        updated_at = excluded.updated_at
-    `).run(
-      collectionId,
-      params.title,
-      params.rootUrl,
-      normalizedRootUrl,
-      params.sourceType,
-      params.state ?? existing?.state ?? "active",
-      existing?.created_at ?? now,
-      now
-    );
-
-    return this.loadCollectionSummary(collectionId);
-  }
-
-  async listCollections(limit = 50): Promise<CollectionSummary[]> {
-    await this.ensure();
-    const boundedLimit = Math.min(Math.max(Math.trunc(limit) || 50, 1), 200);
-    const rows = this.database!.prepare(`
-      SELECT
-        c.collection_id,
-        c.title,
-        c.root_url,
-        c.normalized_root_url,
-        c.source_type,
-        c.state,
-        c.created_at,
-        c.updated_at,
-        COUNT(ci.collection_item_id) AS item_count
-      FROM collections c
-      LEFT JOIN collection_items ci ON ci.collection_id = c.collection_id
-      GROUP BY c.collection_id
-      ORDER BY c.updated_at DESC
-      LIMIT ?
-    `).all(boundedLimit) as unknown as CollectionRow[];
-    return rows.map(toCollectionSummary);
-  }
-
-  async loadCollection(collectionId: string): Promise<{ collection: CollectionSummary; items: CollectionItemDetail[] }> {
-    await this.ensure();
-    const collection = this.loadCollectionSummary(collectionId);
-    const rows = this.database!.prepare(`
-      SELECT
-        ci.collection_item_id,
-        ci.collection_id,
-        COALESCE(ci.item_id, ki.item_id) AS item_id,
-        ci.normalized_url,
-        ci.doc_id,
-        ci.rawdoc_id,
-        ci.title,
-        ci.page_title,
-        ci.order_index,
-        ci.depth,
-        ci.parent_item_id,
-        ci.source,
-        ci.state,
-        ki.creators_json,
-        COALESCE(ki.language, d.language) AS language,
-        ci.created_at,
-        COALESCE(ki.updated_at, ci.updated_at) AS updated_at
-      FROM collection_items ci
-      LEFT JOIN knowledge_items ki ON ki.item_id = ci.item_id
-      LEFT JOIN documents d ON d.doc_id = ci.doc_id
-      WHERE ci.collection_id = ?
-      ORDER BY ci.order_index ASC, ci.created_at ASC
-    `).all(collectionId) as unknown as CollectionItemRow[];
-    return {
-      collection,
-      items: rows.map(toCollectionItem)
-    };
-  }
-
-  async deleteCollection(collectionId: string): Promise<{ deleted: boolean; collectionId: string }> {
-    await this.ensure();
-    const existing = this.findCollection(collectionId);
-    if (!existing) {
-      return { deleted: false, collectionId };
-    }
-
-    try {
-      this.database!.exec("BEGIN");
-      this.database!.prepare("DELETE FROM collection_items WHERE collection_id = ?").run(collectionId);
-      this.database!.prepare("DELETE FROM collections WHERE collection_id = ?").run(collectionId);
-      this.database!.exec("COMMIT");
-    } catch (error) {
-      this.database!.exec("ROLLBACK");
-      throw error;
-    }
-
-    return { deleted: true, collectionId };
-  }
-
-  async replaceCollectionItems(collectionId: string, items: Array<{
-    normalizedUrl: string;
-    title?: string;
-    pageTitle?: string;
-    source?: string;
-    orderIndex: number;
-    depth: number;
-    state?: BatchItemState;
-  }>): Promise<CollectionItem[]> {
-    await this.ensure();
-    const now = new Date().toISOString();
-
-    try {
-      this.database!.exec("BEGIN");
-      this.database!.prepare("DELETE FROM collection_items WHERE collection_id = ?").run(collectionId);
-      const insert = this.database!.prepare(`
-        INSERT INTO collection_items (
-          collection_item_id,
-          collection_id,
-          item_id,
-          normalized_url,
-          title,
-          page_title,
-          order_index,
-          depth,
-          source,
-          state,
-          created_at,
-          updated_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `);
-      for (const item of items) {
-        const itemHash = urlHash(item.normalizedUrl);
-        const itemId = `url:sha256:${itemHash}`;
-        insert.run(
-          makeId(),
-          collectionId,
-          itemId,
-          item.normalizedUrl,
-          item.title ?? null,
-          item.pageTitle ?? null,
-          item.orderIndex,
-          item.depth,
-          item.source ?? null,
-          item.state ?? "pending",
-          now,
-          now
-        );
-      }
-      this.database!.exec("COMMIT");
-    } catch (error) {
-      this.database!.exec("ROLLBACK");
-      throw error;
-    }
-
-    return (await this.loadCollection(collectionId)).items;
-  }
-
-  async checkCollectionName(title: string): Promise<{ exists: boolean }> {
-    await this.ensure();
-    const row = this.database!.prepare(
-      "SELECT collection_id FROM collections WHERE title = ?"
-    ).get(title.trim()) as { collection_id: string } | undefined;
-    return { exists: Boolean(row) };
-  }
-
-  async getCollectionsForItem(itemId: string): Promise<string[]> {
-    await this.ensure();
-    const rows = this.database!.prepare(`
-      SELECT DISTINCT ci.collection_id
-      FROM collection_items ci
-      WHERE ci.item_id = ?
-    `).all(itemId) as Array<{ collection_id: string }>;
-    return rows.map((r) => r.collection_id);
-  }
-
-  async createBatchJob(params: {
-    collectionId: string;
-    sourcePageUrl: string;
-    mode: "server_fetch";
-    options?: Record<string, unknown>;
-    items: Array<{
-      url: string;
-      normalizedUrl: string;
-      source?: string;
-      titleHint?: string;
-      state?: BatchItemState;
-    }>;
-  }): Promise<BatchJobResponse> {
-    await this.ensure();
-    const now = new Date().toISOString();
-    const jobId = makeId();
-
-    try {
-      this.database!.exec("BEGIN");
-      this.database!.prepare(`
-        INSERT INTO batch_jobs (
-          job_id,
-          collection_id,
-          source_page_url,
-          mode,
-          state,
-          total_count,
-          options_json,
-          created_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        jobId,
-        params.collectionId,
-        params.sourcePageUrl,
-        params.mode,
-        "queued",
-        params.items.length,
-        JSON.stringify(params.options ?? {}),
-        now
-      );
-
-      const insertItem = this.database!.prepare(`
-        INSERT INTO batch_items (
-          item_id,
-          job_id,
-          collection_id,
-          url,
-          normalized_url,
-          source,
-          title_hint,
-          state,
-          created_at,
-          updated_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `);
-      for (const item of params.items) {
-        insertItem.run(
-          makeId(),
-          jobId,
-          params.collectionId,
-          item.url,
-          item.normalizedUrl,
-          item.source ?? null,
-          item.titleHint ?? null,
-          item.state ?? "pending",
-          now,
-          now
-        );
-      }
-      this.database!.exec("COMMIT");
-    } catch (error) {
-      this.database!.exec("ROLLBACK");
-      throw error;
-    }
-
-    return this.loadBatchJob(jobId);
-  }
-
-  async loadBatchJob(jobId: string): Promise<BatchJobResponse> {
-    await this.ensure();
-    const row = this.database!.prepare(`
-      SELECT job_id, collection_id, source_page_url, mode, state, total_count,
-        saved_count, skipped_count, failed_count, cancelled_count, options_json,
-        created_at, started_at, finished_at
-      FROM batch_jobs
-      WHERE job_id = ?
-    `).get(jobId) as BatchJobRow | undefined;
-    if (!row) {
-      throw new Error("Batch job does not exist");
-    }
-
-    const items = this.listBatchItems(jobId);
-    return toBatchJobResponse(row, items);
-  }
-
-  async listPendingBatchItems(jobId: string): Promise<BatchJobItem[]> {
-    await this.ensure();
-    return this.listBatchItems(jobId).filter((item) => item.state === "pending");
-  }
-
-  async updateBatchJobState(jobId: string, state: BatchJobState): Promise<void> {
-    await this.ensure();
-    const now = new Date().toISOString();
-    this.database!.prepare(`
-      UPDATE batch_jobs
-      SET state = ?,
-          started_at = CASE WHEN started_at IS NULL AND ? = 'running' THEN ? ELSE started_at END,
-          finished_at = CASE WHEN ? IN ('succeeded', 'failed', 'cancelled') THEN ? ELSE finished_at END
-      WHERE job_id = ?
-    `).run(state, state, now, state, now, jobId);
-  }
-
-  async recoverStaleJobs(): Promise<number> {
-    await this.ensure();
-    const now = new Date().toISOString();
-    const result = this.database!.prepare(`
-      UPDATE batch_jobs
-      SET state = 'failed', finished_at = ?
-      WHERE state IN ('queued', 'running')
-    `).run(now);
-    return Number(result.changes);
-  }
-
-  async getCollectionNavigation(collectionId: string, docId: string): Promise<{
-    previous: { docId: string; itemId?: string; title?: string; normalizedUrl: string } | null;
-    next: { docId: string; itemId?: string; title?: string; normalizedUrl: string } | null;
-  }> {
-    await this.ensure();
-    const current = this.database!.prepare(`
-      SELECT ci.order_index FROM collection_items ci
-      WHERE ci.collection_id = ? AND ci.doc_id = ?
-    `).get(collectionId, docId) as { order_index: number } | undefined;
-    if (!current) {
-      return { previous: null, next: null };
-    }
-
-    const previous = this.database!.prepare(`
-      SELECT ci.doc_id, ki.item_id, ci.title, ci.normalized_url
-      FROM collection_items ci
-      LEFT JOIN knowledge_items ki ON ki.active_doc_id = ci.doc_id
-      WHERE ci.collection_id = ? AND ci.order_index < ? AND ci.doc_id IS NOT NULL
-      ORDER BY ci.order_index DESC LIMIT 1
-    `).get(collectionId, current.order_index) as { doc_id: string; item_id: string | null; title: string | null; normalized_url: string } | undefined;
-
-    const next = this.database!.prepare(`
-      SELECT ci.doc_id, ki.item_id, ci.title, ci.normalized_url
-      FROM collection_items ci
-      LEFT JOIN knowledge_items ki ON ki.active_doc_id = ci.doc_id
-      WHERE ci.collection_id = ? AND ci.order_index > ? AND ci.doc_id IS NOT NULL
-      ORDER BY ci.order_index ASC LIMIT 1
-    `).get(collectionId, current.order_index) as { doc_id: string; item_id: string | null; title: string | null; normalized_url: string } | undefined;
-
-    return {
-      previous: previous ? { docId: previous.doc_id, itemId: previous.item_id ?? undefined, title: previous.title ?? undefined, normalizedUrl: previous.normalized_url } : null,
-      next: next ? { docId: next.doc_id, itemId: next.item_id ?? undefined, title: next.title ?? undefined, normalizedUrl: next.normalized_url } : null
-    };
-  }
-
-  async resetFailedBatchItems(jobId: string): Promise<number> {
-    await this.ensure();
-    const now = new Date().toISOString();
-    const result = this.database!.prepare(`
-      UPDATE batch_items
-      SET state = 'pending', error_code = NULL, error_message = NULL, attempt_count = 0, updated_at = ?
-      WHERE job_id = ? AND state = 'failed'
-    `).run(now, jobId);
-    return Number(result.changes);
-  }
-
-  async getCollectionsByDocId(docId: string): Promise<Array<{ collectionId: string; title: string }>> {
-    await this.ensure();
-    const rows = this.database!.prepare(`
-      SELECT DISTINCT c.collection_id, c.title
-      FROM collection_items ci
-      JOIN collections c ON c.collection_id = ci.collection_id
-      WHERE ci.doc_id = ?
-    `).all(docId) as Array<{ collection_id: string; title: string }>;
-    return rows.map((r) => ({ collectionId: r.collection_id, title: r.title }));
-  }
-
-  async getUsedCollectionDocIds(): Promise<string[]> {
-    await this.ensure();
-    const rows = this.database!.prepare(
-      "SELECT DISTINCT doc_id FROM collection_items WHERE doc_id IS NOT NULL"
-    ).all() as Array<{ doc_id: string }>;
-    return rows.map((r) => r.doc_id);
-  }
-
-  async updateBatchItem(params: {
-    itemId: string;
-    state: BatchItemState;
-    normalizedUrl?: string;
-    rawdocId?: string;
-    docId?: string;
-    title?: string;
-    pageTitle?: string;
-    errorCode?: string;
-    errorMessage?: string;
-    incrementAttempt?: boolean;
-  }): Promise<void> {
-    await this.ensure();
-    const now = new Date().toISOString();
-    const item = this.findBatchItem(params.itemId);
-    if (!item) {
-      throw new Error("Batch item does not exist");
-    }
-
-    this.database!.prepare(`
-      UPDATE batch_items
-      SET state = ?,
-          normalized_url = COALESCE(?, normalized_url),
-          rawdoc_id = COALESCE(?, rawdoc_id),
-          doc_id = COALESCE(?, doc_id),
-          error_code = ?,
-          error_message = ?,
-          attempt_count = attempt_count + ?,
-          updated_at = ?
-      WHERE item_id = ?
-    `).run(
-      params.state,
-      params.normalizedUrl ?? null,
-      params.rawdocId ?? null,
-      params.docId ?? null,
-      params.errorCode ?? null,
-      params.errorMessage ?? null,
-      params.incrementAttempt ? 1 : 0,
-      now,
-      params.itemId
-    );
-
-    if (item.collection_id) {
-      const previousNormalizedUrl = item.normalized_url ?? normalizeUrlForKnowledge(item.url);
-      const nextNormalizedUrl = params.normalizedUrl ?? previousNormalizedUrl;
-      this.database!.prepare(`
-        UPDATE collection_items
-        SET state = ?,
-            normalized_url = ?,
-            rawdoc_id = COALESCE(?, rawdoc_id),
-            doc_id = COALESCE(?, doc_id),
-            title = COALESCE(?, title),
-            page_title = COALESCE(?, page_title),
-            updated_at = ?
-        WHERE collection_id = ?
-          AND normalized_url = ?
-      `).run(
-        params.state,
-        nextNormalizedUrl,
-        params.rawdocId ?? null,
-        params.docId ?? null,
-        params.title ?? null,
-        params.pageTitle ?? null,
-        now,
-        item.collection_id,
-        previousNormalizedUrl
-      );
-      await this.refreshCollectionState(item.collection_id);
-    }
-
-    await this.refreshBatchCounts(item.job_id);
-  }
-
-  async loadAnnotations(docId: string): Promise<Annotation[]> {
-    await this.ensure();
-    const path = resolveInsideRoot(this.root, annotationsPath(docId));
-    try {
-      const raw = await readFile(path, "utf-8");
-      const file = AnnotationFileSchema.parse(JSON.parse(raw));
-      return file.annotations;
-    } catch {
-      return [];
-    }
-  }
-
-  async saveAnnotation(docId: string, annotation: Annotation): Promise<void> {
-    await this.ensure();
-    const path = resolveInsideRoot(this.root, annotationsPath(docId));
-    const existing = await this.loadAnnotations(docId);
-    const index = existing.findIndex(
-      (a) => a.annotation_id === annotation.annotation_id
-    );
-    if (index >= 0) {
-      existing[index] = annotation;
-    } else {
-      existing.push(annotation);
-    }
-    const file: AnnotationFile = {
-      doc_id: docId,
-      version: 1,
-      updated_at: new Date().toISOString(),
-      annotations: existing
-    };
-    await mkdir(dirname(path), { recursive: true });
-    await writeFile(path, JSON.stringify(file, null, 2), "utf-8");
-    this.upsertAnnotationSqlite(docId, annotation);
-  }
-
-  async deleteAnnotation(docId: string, annotationId: string): Promise<void> {
-    await this.ensure();
-    const path = resolveInsideRoot(this.root, annotationsPath(docId));
-    const existing = await this.loadAnnotations(docId);
-    const filtered = existing.filter(
-      (a) => a.annotation_id !== annotationId
-    );
-    if (filtered.length === existing.length) return;
-    if (filtered.length === 0) {
-      await rm(path, { force: true });
-      this.deleteAnnotationSqlite(annotationId);
-      return;
-    }
-    const file: AnnotationFile = {
-      doc_id: docId,
-      version: 1,
-      updated_at: new Date().toISOString(),
-      annotations: filtered
-    };
-    await writeFile(path, JSON.stringify(file, null, 2), "utf-8");
-    this.deleteAnnotationSqlite(annotationId);
-  }
-
-  async migrateAnnotations(
-    oldDocId: string,
-    newDocId: string,
-    newSectionIds: Set<string>
-  ): Promise<{ annotations: Annotation[]; orphanedCount: number }> {
-    await this.ensure();
-    const oldPath = resolveInsideRoot(this.root, annotationsPath(oldDocId));
-    let oldAnnotations: Annotation[] = [];
-    try {
-      const raw = await readFile(oldPath, "utf-8");
-      const file = AnnotationFileSchema.parse(JSON.parse(raw));
-      oldAnnotations = file.annotations;
-    } catch {
-      return { annotations: [], orphanedCount: 0 };
-    }
-
-    let orphanedCount = 0;
-    const now = new Date().toISOString();
-    const migrated: Annotation[] = oldAnnotations.map((anno) => {
-      if (newSectionIds.has(anno.section_id)) {
-        return { ...anno, doc_id: newDocId, orphaned: false, orphaned_at: undefined };
-      }
-      orphanedCount++;
-      return { ...anno, doc_id: newDocId, orphaned: true, orphaned_at: now };
-    });
-
-    const newPath = resolveInsideRoot(this.root, annotationsPath(newDocId));
-    const file: AnnotationFile = {
-      doc_id: newDocId,
-      version: 1,
-      updated_at: now,
-      annotations: migrated
-    };
-    await mkdir(dirname(newPath), { recursive: true });
-    await writeFile(newPath, JSON.stringify(file, null, 2), "utf-8");
-    await rm(oldPath, { force: true });
-
-    this.replaceAnnotationSqlite(oldDocId, newDocId, migrated);
-
-    return { annotations: migrated, orphanedCount };
-  }
-
-  async deleteAnnotationsForDoc(docId: string): Promise<void> {
-    await this.ensure();
-    const path = resolveInsideRoot(this.root, annotationsPath(docId));
-    await rm(path, { force: true });
-    this.deleteAnnotationSqliteForDoc(docId);
-  }
-
-  async listAnnotationDocs(): Promise<Array<{ doc_id: string; title: string | null; count: number; types: Record<string, number> }>> {
-    await this.ensure();
-    const dir = resolveInsideRoot(this.root, "annotations");
-    let files: string[];
-    try {
-      files = await readdir(dir);
-    } catch {
-      return [];
-    }
-    const results: Array<{ doc_id: string; title: string | null; count: number; types: Record<string, number> }> = [];
-    for (const name of files) {
-      if (!name.endsWith(".annotations.json")) continue;
-      const docId = name.slice(0, -".annotations.json".length);
-      try {
-        const annos = await this.loadAnnotations(docId);
-        const types: Record<string, number> = {};
-        for (const a of annos) {
-          types[a.type] = (types[a.type] ?? 0) + 1;
-        }
-        let title: string | null = null;
-        try {
-          const doc = await this.loadDocument(docId);
-          title = doc.meta.title;
-        } catch {
-          // document JSON may not exist
-        }
-        results.push({ doc_id: docId, title, count: annos.length, types });
-      } catch {
-        // skip unreadable files
-      }
-    }
-    return results;
-  }
-
-  close(): void {
+  async close(): Promise<void> {
     this.database?.close();
     this.database = undefined;
   }
 
-  async scanMaintenance(): Promise<StoreMaintenanceScan> {
-    await this.ensure();
-    return this.scanMaintenanceWithoutEnsure();
-  }
-
-  async clearAll(): Promise<StoreClearResponse> {
-    const before = await this.scanMaintenance();
-    this.close();
-
-    await Promise.all([
-      unlink(this.databasePath).catch(ignoreMissing),
-      rm(join(this.root, "rawdocs"), { recursive: true, force: true }),
-      rm(join(this.root, "documents"), { recursive: true, force: true }),
-      rm(join(this.root, "markdown"), { recursive: true, force: true }),
-      rm(join(this.root, "assets"), { recursive: true, force: true })
-    ]);
-
-    await this.ensure();
-    const after = await this.scanMaintenanceWithoutEnsure();
-    return {
-      cleared: true,
-      mode: "all",
-      before,
-      after
-    };
-  }
-
-  async clearParsedResults(): Promise<StoreClearParsedResponse> {
-    const before = await this.scanMaintenance();
-    const now = new Date().toISOString();
-
-    try {
-      this.database!.exec("BEGIN");
-      this.database!.prepare(`
-        UPDATE knowledge_items
-        SET active_doc_id = NULL,
-            state = 'captured',
-            updated_at = ?,
-            parsed_at = NULL
-        WHERE active_doc_id IS NOT NULL
-      `).run(now);
-      this.database!.prepare(`
-        UPDATE clips
-        SET active_doc_id = NULL,
-            content_title = NULL,
-            capture_updated_at = ?,
-            parse_updated_at = NULL
-        WHERE active_doc_id IS NOT NULL
-      `).run(now);
-      this.database!.prepare(`
-        UPDATE collection_items
-        SET doc_id = NULL,
-            page_title = NULL,
-            updated_at = ?
-        WHERE doc_id IS NOT NULL
-      `).run(now);
-      this.database!.prepare(`
-        UPDATE batch_items
-        SET doc_id = NULL,
-            updated_at = ?
-        WHERE doc_id IS NOT NULL
-      `).run(now);
-      this.database!.prepare("DELETE FROM chunks").run();
-      this.database!.prepare("DELETE FROM documents").run();
-      this.rebuildChunksFtsIndex();
-      this.database!.exec("COMMIT");
-    } catch (error) {
-      this.database!.exec("ROLLBACK");
-      throw error;
-    }
-
-    await Promise.all([
-      rm(join(this.root, "documents"), { recursive: true, force: true }),
-      rm(join(this.root, "markdown"), { recursive: true, force: true }),
-      rm(join(this.root, "assets"), { recursive: true, force: true })
-    ]);
-    await Promise.all([
-      mkdir(join(this.root, "documents"), { recursive: true }),
-      mkdir(join(this.root, "markdown"), { recursive: true }),
-      mkdir(join(this.root, "assets"), { recursive: true })
-    ]);
-
-    const after = await this.scanMaintenanceWithoutEnsure();
-    return {
-      cleared: true,
-      mode: "parsed",
-      before,
-      after
-    };
-  }
-
-  async deleteByUrl(inputUrl: string, mode: ClipDeleteMode): Promise<ClipDeleteResponse> {
-    await this.ensure();
-    const normalized = normalizeUrlForKnowledge(inputUrl);
-    const hash = urlHash(normalized);
-    const row = this.findClip(hash) ?? this.findClipByOriginalUrl(inputUrl);
-
-    if (!row) {
-      return {
-        normalizedUrl: normalized,
-        urlHash: hash,
-        state: "empty",
-        hasRawdoc: false,
-        hasDocument: false,
-        deleted: false,
-        mode,
-        previousState: "captured",
-        currentState: "empty",
-        deletedFiles: []
-      };
-    }
-
-    return mode === "remove" ? this.removeByRow(row) : this.purgeByRow(row);
-  }
-
-  async save(params: {
-    normalizedUrl: string;
-    html: string;
-    rawdoc: RawDoc;
-    document: KnowledgeDocument;
-    markdown: string;
-  }): Promise<ClipSaveResponse["paths"]> {
-    await this.ensure();
-
-    const normalized = normalizeUrlForKnowledge(params.normalizedUrl);
-    const hash = urlHash(normalized);
-    const itemId = `url:sha256:${hash}`;
-    const previous = this.findClip(hash);
-    const replacedDocId = previous?.active_doc_id && previous.active_doc_id !== params.document.doc_id
-      ? previous.active_doc_id
-      : undefined;
-    const replacedRawdocId = previous && previous.rawdoc_id !== params.rawdoc.rawdoc_id
-      ? previous.rawdoc_id
-      : undefined;
-    const paths = pathsFor(params.document.doc_id, params.rawdoc.rawdoc_id);
-    const parserInfo = parserInfoFor(params.document, params.rawdoc);
-    const now = new Date().toISOString();
-    const contentHash = sha256(params.markdown);
-    const authorsJson = JSON.stringify(params.document.meta.authors ?? []);
-    const rawMetadata = params.rawdoc.metadata ?? {};
-    const contentTitle = params.document.meta.title;
-    const pageTitle = pageTitleFor(params.document, params.rawdoc);
-    const originalUrl = typeof rawMetadata.originalUrl === "string"
-      ? rawMetadata.originalUrl
-      : params.rawdoc.source_uri;
-    const canonicalUrl = typeof rawMetadata.canonicalUrl === "string"
-      ? rawMetadata.canonicalUrl
-      : params.document.meta.source.url ?? params.rawdoc.source_uri;
-
-    await Promise.all([
-      this.writeText(paths.rawHtmlPath, params.html),
-      this.writeJson(paths.rawdocPath, params.rawdoc),
-      this.writeJson(paths.documentPath, params.document),
-      this.writeText(paths.markdownPath, params.markdown)
-    ]);
-
-    try {
-      this.database!.exec("BEGIN");
-      this.database!.prepare(`
-        INSERT INTO rawdocs (
-          rawdoc_id,
-          source_uri,
-          source_type,
-          normalized_url,
-          input_mode,
-          content_type,
-          content_length,
-          content_hash,
-          content_ext,
-          html_hash,
-          page_title,
-          captured_at,
-          fetched_at,
-          created_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(rawdoc_id) DO UPDATE SET
-          source_uri = excluded.source_uri,
-          source_type = excluded.source_type,
-          normalized_url = excluded.normalized_url,
-          input_mode = excluded.input_mode,
-          content_type = excluded.content_type,
-          content_length = excluded.content_length,
-          content_hash = excluded.content_hash,
-          content_ext = excluded.content_ext,
-          html_hash = excluded.html_hash,
-          page_title = excluded.page_title,
-          captured_at = excluded.captured_at,
-          fetched_at = excluded.fetched_at
-      `).run(
-        params.rawdoc.rawdoc_id,
-        params.rawdoc.source_uri,
-        params.rawdoc.source_type,
-        normalized,
-        typeof rawMetadata.inputMode === "string" ? rawMetadata.inputMode : "browser_html",
-        params.rawdoc.content_type ?? "text/html",
-        params.rawdoc.content_length ?? Buffer.byteLength(params.html),
-        sha256(params.html),
-        "html",
-        sha256(params.html),
-        pageTitle,
-        typeof rawMetadata.capturedAt === "string" ? rawMetadata.capturedAt : null,
-        params.rawdoc.fetch_time,
-        previous && previous.rawdoc_id === params.rawdoc.rawdoc_id ? previous.capture_saved_at : now
-      );
-
-      this.database!.prepare(`
-        INSERT INTO documents (
-          doc_id,
-          rawdoc_id,
-          title,
-          page_title,
-          source_url,
-          normalized_url,
-          language,
-          authors_json,
-          published_at,
-          parser_version,
-          parser_method,
-          parser_profile,
-          content_hash,
-          created_at,
-          updated_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(doc_id) DO UPDATE SET
-          rawdoc_id = excluded.rawdoc_id,
-          title = excluded.title,
-          page_title = excluded.page_title,
-          source_url = excluded.source_url,
-          normalized_url = excluded.normalized_url,
-          language = excluded.language,
-          authors_json = excluded.authors_json,
-          published_at = excluded.published_at,
-          parser_version = excluded.parser_version,
-          parser_method = excluded.parser_method,
-          parser_profile = excluded.parser_profile,
-          content_hash = excluded.content_hash,
-          updated_at = excluded.updated_at
-      `).run(
-        params.document.doc_id,
-        params.rawdoc.rawdoc_id,
-        contentTitle,
-        pageTitle,
-        params.document.meta.source.url ?? params.rawdoc.source_uri,
-        normalized,
-        params.document.meta.language ?? null,
-        authorsJson,
-        params.document.meta.published_at ?? null,
-        parserInfo.version,
-        parserInfo.method,
-        parserInfo.profile,
-        contentHash,
-        now,
-        now
-      );
-
-      this.replaceChunks(params.document, params.rawdoc, normalized, parserInfo, now);
-
-      this.upsertKnowledgeItemRow({
-        itemId,
-        sourceType: params.rawdoc.source_type,
-        identityHash: hash,
-        rawdocId: params.rawdoc.rawdoc_id,
-        docId: params.document.doc_id,
-        title: pageTitle,
-        creators: params.document.meta.authors ?? [],
-        language: params.document.meta.language,
-        tags: params.document.meta.tags ?? [],
-        now
-      });
-
-      this.database!.prepare(`
-        INSERT INTO clips (
-          url_hash,
-          normalized_url,
-          item_id,
-          original_url,
-          canonical_url,
-          rawdoc_id,
-          active_doc_id,
-          page_title,
-          content_title,
-          capture_saved_at,
-          capture_updated_at,
-          parse_updated_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(url_hash) DO UPDATE SET
-          normalized_url = excluded.normalized_url,
-          item_id = excluded.item_id,
-          original_url = excluded.original_url,
-          canonical_url = excluded.canonical_url,
-          rawdoc_id = excluded.rawdoc_id,
-          active_doc_id = excluded.active_doc_id,
-          page_title = excluded.page_title,
-          content_title = excluded.content_title,
-          capture_updated_at = excluded.capture_updated_at,
-          parse_updated_at = excluded.parse_updated_at
-      `).run(
-        hash,
-        normalized,
-        itemId,
-        originalUrl,
-        canonicalUrl,
-        params.rawdoc.rawdoc_id,
-        params.document.doc_id,
-        pageTitle,
-        contentTitle,
-        previous?.capture_saved_at ?? now,
-        now,
-        now
-      );
-
-      if (replacedDocId) {
-        this.deleteChunksByDocId(replacedDocId);
-        this.database!.prepare("DELETE FROM documents WHERE doc_id = ?").run(replacedDocId);
-      }
-      if (replacedRawdocId) {
-        this.database!.prepare("DELETE FROM rawdocs WHERE rawdoc_id = ?").run(replacedRawdocId);
-      }
-      this.database!.exec("COMMIT");
-    } catch (error) {
-      this.database!.exec("ROLLBACK");
-      throw error;
-    }
-
-    if (replacedDocId) {
-      await this.deleteDerivedArtifacts(replacedDocId);
-    }
-    if (replacedRawdocId) {
-      await this.deleteCaptureArtifacts(replacedRawdocId);
-    }
-
-    return paths;
-  }
-
-  async loadCaptureByUrl(inputUrl: string): Promise<{ clip: ClipStatus; html: string; rawdoc: RawDoc }> {
-    await this.ensure();
-    const normalized = normalizeUrlForKnowledge(inputUrl);
-    const row = this.findClip(urlHash(normalized)) ?? this.findClipByOriginalUrl(inputUrl);
-    if (!row) {
-      throw new Error("Capture does not exist for this URL");
-    }
-
-    const html = await this.readText(pathsForActiveCapture(row).rawHtmlPath);
-    const rawdoc = JSON.parse(await this.readText(pathsForActiveCapture(row).rawdocPath)) as RawDoc;
-    return {
-      clip: this.toStatus(row),
-      html,
-      rawdoc
-    };
-  }
-
-  async prepareDocumentAssets(document: KnowledgeDocument): Promise<KnowledgeDocument> {
-    await this.ensure();
-    const next: KnowledgeDocument = JSON.parse(JSON.stringify(document)) as KnowledgeDocument;
-    for (const section of next.sections) {
-      for (const asset of section.assets ?? []) {
-        if (!asset.path || !isAbsolute(asset.path)) {
-          continue;
-        }
-        const bytes = await readFile(asset.path).catch(() => undefined);
-        if (!bytes) {
-          continue;
-        }
-        const extension = sanitizeExtension(extname(asset.path)) || "bin";
-        const assetId = `${sha256Buffer(bytes).slice(0, 16)}.${extension}`;
-        const relativePath = `assets/${assetId}`;
-        const target = resolveInsideRoot(this.root, relativePath);
-        await mkdir(dirname(target), { recursive: true });
-        await copyFile(asset.path, target).catch(async (error: NodeJS.ErrnoException) => {
-          if (error.code !== "EEXIST") {
-            throw error;
-          }
-        });
-        asset.asset_id = assetId;
-        asset.path = relativePath;
-      }
-    }
-    const meta = next.meta as DocumentMetaWithDerivedInfo;
-    meta.cover_asset_id = firstAssetId(next);
-    meta.statistics = documentStatistics(next);
-    return next;
-  }
-
-  async saveImportItem(params: {
-    itemId: string;
-    identityHash: string;
-    rawContent: Buffer;
-    rawdoc: RawDoc;
-    document: KnowledgeDocument;
-    markdown: string;
-    contentExt: string;
-    epubMetadata?: EpubMetadataInput;
-  }): Promise<ImportSavePaths> {
-    await this.ensure();
-
-    const previous = this.findKnowledgeItem(params.itemId);
-    const replacedDocId = previous?.active_doc_id && previous.active_doc_id !== params.document.doc_id
-      ? previous.active_doc_id
-      : undefined;
-    const replacedRawdocId = previous && previous.active_rawdoc_id !== params.rawdoc.rawdoc_id
-      ? previous.active_rawdoc_id
-      : undefined;
-    const paths = importPathsFor(params.document.doc_id, params.rawdoc.rawdoc_id, params.contentExt);
-    const parserInfo = parserInfoFor(params.document, params.rawdoc);
-    const now = new Date().toISOString();
-    const contentHash = sha256(params.markdown);
-    const rawContentHash = sha256Buffer(params.rawContent);
-    const authorsJson = JSON.stringify(params.document.meta.authors ?? []);
-    const rawMetadata = params.rawdoc.metadata ?? {};
-
-    await Promise.all([
-      this.writeBuffer(paths.rawContentPath, params.rawContent),
-      this.writeJson(paths.rawdocPath, params.rawdoc),
-      this.writeJson(paths.documentPath, params.document),
-      this.writeText(paths.markdownPath, params.markdown)
-    ]);
-
-    try {
-      this.database!.exec("BEGIN");
-      this.database!.prepare(`
-        INSERT INTO rawdocs (
-          rawdoc_id,
-          source_uri,
-          source_type,
-          normalized_url,
-          input_mode,
-          content_type,
-          content_length,
-          content_hash,
-          content_ext,
-          html_hash,
-          page_title,
-          captured_at,
-          fetched_at,
-          created_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(rawdoc_id) DO UPDATE SET
-          source_uri = excluded.source_uri,
-          source_type = excluded.source_type,
-          normalized_url = excluded.normalized_url,
-          input_mode = excluded.input_mode,
-          content_type = excluded.content_type,
-          content_length = excluded.content_length,
-          content_hash = excluded.content_hash,
-          content_ext = excluded.content_ext,
-          html_hash = excluded.html_hash,
-          page_title = excluded.page_title,
-          captured_at = excluded.captured_at,
-          fetched_at = excluded.fetched_at
-      `).run(
-        params.rawdoc.rawdoc_id,
-        params.rawdoc.source_uri,
-        params.rawdoc.source_type,
-        params.itemId,
-        "file_import",
-        params.rawdoc.content_type ?? "application/octet-stream",
-        params.rawdoc.content_length ?? params.rawContent.byteLength,
-        rawContentHash,
-        params.contentExt,
-        rawContentHash,
-        pageTitleFor(params.document, params.rawdoc),
-        typeof rawMetadata.capturedAt === "string" ? rawMetadata.capturedAt : null,
-        params.rawdoc.fetch_time,
-        previous && previous.active_rawdoc_id === params.rawdoc.rawdoc_id ? previous.created_at : now
-      );
-
-      this.database!.prepare(`
-        INSERT INTO documents (
-          doc_id,
-          rawdoc_id,
-          title,
-          page_title,
-          source_url,
-          normalized_url,
-          language,
-          authors_json,
-          published_at,
-          parser_version,
-          parser_method,
-          parser_profile,
-          content_hash,
-          created_at,
-          updated_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(doc_id) DO UPDATE SET
-          rawdoc_id = excluded.rawdoc_id,
-          title = excluded.title,
-          page_title = excluded.page_title,
-          source_url = excluded.source_url,
-          normalized_url = excluded.normalized_url,
-          language = excluded.language,
-          authors_json = excluded.authors_json,
-          published_at = excluded.published_at,
-          parser_version = excluded.parser_version,
-          parser_method = excluded.parser_method,
-          parser_profile = excluded.parser_profile,
-          content_hash = excluded.content_hash,
-          updated_at = excluded.updated_at
-      `).run(
-        params.document.doc_id,
-        params.rawdoc.rawdoc_id,
-        params.document.meta.title,
-        pageTitleFor(params.document, params.rawdoc),
-        params.document.meta.source.url ?? params.rawdoc.source_uri,
-        params.itemId,
-        params.document.meta.language ?? null,
-        authorsJson,
-        params.document.meta.published_at ?? null,
-        parserInfo.version,
-        parserInfo.method,
-        parserInfo.profile,
-        contentHash,
-        now,
-        now
-      );
-
-      this.replaceChunks(params.document, params.rawdoc, params.itemId, parserInfo, now);
-      this.upsertKnowledgeItemRow({
-        itemId: params.itemId,
-        sourceType: params.rawdoc.source_type,
-        identityHash: params.identityHash,
-        rawdocId: params.rawdoc.rawdoc_id,
-        docId: params.document.doc_id,
-        title: params.document.meta.title,
-        creators: params.document.meta.authors ?? [],
-        language: params.document.meta.language,
-        tags: params.document.meta.tags ?? [],
-        now
-      });
-      if (params.rawdoc.source_type === "epub") {
-        this.upsertEpubMetadata(params.itemId, params.epubMetadata, params.document);
-      }
-
-      if (replacedDocId) {
-        this.deleteChunksByDocId(replacedDocId);
-        this.database!.prepare("DELETE FROM documents WHERE doc_id = ?").run(replacedDocId);
-      }
-      if (replacedRawdocId) {
-        this.database!.prepare("DELETE FROM rawdocs WHERE rawdoc_id = ?").run(replacedRawdocId);
-      }
-      this.database!.exec("COMMIT");
-    } catch (error) {
-      this.database!.exec("ROLLBACK");
-      throw error;
-    }
-
-    if (replacedDocId) {
-      await this.deleteDerivedArtifacts(replacedDocId);
-    }
-    if (replacedRawdocId) {
-      await this.deleteCaptureArtifacts(replacedRawdocId, params.contentExt);
-    }
-
-    return paths;
-  }
-
-  async listItems(params: { sourceType?: string; limit?: number } = {}): Promise<KnowledgeItem[]> {
-    await this.ensure();
-    const boundedLimit = Math.min(Math.max(Math.trunc(params.limit ?? 50) || 50, 1), 200);
-    const rows = params.sourceType
-      ? this.database!.prepare(`
-          SELECT item_id, source_type, identity_hash, active_rawdoc_id, active_doc_id, title, subtitle,
-            creators_json, language, tags_json, state, created_at, updated_at, parsed_at
-          FROM knowledge_items
-          WHERE source_type = ?
-          ORDER BY updated_at DESC
-          LIMIT ?
-        `).all(params.sourceType, boundedLimit)
-      : this.database!.prepare(`
-          SELECT item_id, source_type, identity_hash, active_rawdoc_id, active_doc_id, title, subtitle,
-            creators_json, language, tags_json, state, created_at, updated_at, parsed_at
-          FROM knowledge_items
-          ORDER BY updated_at DESC
-          LIMIT ?
-        `).all(boundedLimit);
-    return (rows as unknown as KnowledgeItemRow[]).map(toKnowledgeItem);
-  }
-
-  async loadItem(itemId: string): Promise<KnowledgeItem> {
-    await this.ensure();
-    const row = this.findKnowledgeItem(itemId);
-    if (!row) {
-      throw new Error("Knowledge item does not exist");
-    }
-    return toKnowledgeItem(row);
-  }
-
-  async loadItemDetail(itemId: string): Promise<{ item: KnowledgeItem; rawdoc?: RawDoc; document?: KnowledgeDocument; collectionIds: string[] }> {
-    const item = await this.loadItem(itemId);
-    const rawdoc = await this.loadRawdoc(item.activeRawdocId).catch(() => undefined);
-    const document = item.activeDocId ? await this.loadDocument(item.activeDocId).catch(() => undefined) : undefined;
-    const collectionIds = await this.getCollectionsForItem(itemId);
-    return { item, rawdoc, document, collectionIds };
-  }
-
-  async loadDocument(docId: string): Promise<KnowledgeDocument> {
-    await this.ensure();
-    if (!this.findDocument(docId)) {
-      throw new Error("Document does not exist");
-    }
-    return JSON.parse(await this.readText(documentJsonPath(docId))) as KnowledgeDocument;
-  }
-
-  async loadMarkdown(docId: string): Promise<string> {
-    await this.ensure();
-    if (!this.findDocument(docId)) {
-      throw new Error("Document does not exist");
-    }
-    return this.readText(markdownPath(docId));
-  }
-
-  async loadAsset(assetId: string): Promise<{ bytes: Buffer; contentType: string }> {
-    await this.ensure();
-    const safeAssetId = sanitizeAssetId(assetId);
-    if (!safeAssetId) {
-      throw new Error("Asset does not exist");
-    }
-    const contentType = assetContentType(safeAssetId);
-    return {
-      bytes: await this.readBuffer(`assets/${safeAssetId}`),
-      contentType
-    };
-  }
-
-  async loadRawContentForItem(itemId: string): Promise<{ item: KnowledgeItem; rawdoc: RawDoc; content: Buffer; contentExt: string }> {
-    const item = await this.loadItem(itemId);
-    const rawdoc = await this.loadRawdoc(item.activeRawdocId);
-    const contentExt = this.rawdocContentExt(item.activeRawdocId);
-    const content = await this.readBuffer(rawContentPath(item.activeRawdocId, contentExt));
-    return { item, rawdoc, content, contentExt };
-  }
-
-  async deleteItem(itemId: string, mode: KnowledgeItemDeleteMode): Promise<KnowledgeItemDeleteResponse> {
-    await this.ensure();
-    const row = this.findKnowledgeItem(itemId);
-    if (!row) {
-      return {
-        itemId,
-        deleted: false,
-        mode,
-        previousState: "captured",
-        currentState: "empty",
-        deletedFiles: []
-      };
-    }
-
-    return mode === "remove" ? this.removeKnowledgeItem(row) : this.purgeKnowledgeItem(row);
-  }
-
   private ensureDatabase(): void {
-    if (this.database) {
+    if (this.database) return;
+    this.database = new DatabaseSync(join(this.root, "index.sqlite3"));
+    this.database.exec("PRAGMA journal_mode = WAL");
+    this.database.exec("PRAGMA foreign_keys = ON");
+  }
+
+  private ensureIndexes(): void {
+    this.database!.exec(`
+      CREATE INDEX IF NOT EXISTS idx_items_type_state ON items(item_type, state);
+      CREATE INDEX IF NOT EXISTS idx_items_identity_key ON items(identity_key);
+      CREATE INDEX IF NOT EXISTS idx_item_aliases_lookup ON item_aliases(alias_type, alias_value);
+      CREATE INDEX IF NOT EXISTS idx_rawdocs_item ON rawdocs(item_id);
+      CREATE INDEX IF NOT EXISTS idx_documents_item ON documents(item_id);
+      CREATE INDEX IF NOT EXISTS idx_collection_memberships_collection ON collection_memberships(collection_item_id);
+      CREATE INDEX IF NOT EXISTS idx_collection_memberships_member ON collection_memberships(member_item_id);
+      CREATE INDEX IF NOT EXISTS idx_batch_items_job ON batch_items(job_id);
+      CREATE INDEX IF NOT EXISTS idx_batch_items_state ON batch_items(state);
+    `);
+  }
+
+  // ── schema migration ───────────────────────────────────────────────────
+
+  private migrateSchemaIfNeeded(): void {
+    const userVersion = this.database!.prepare("PRAGMA user_version").get() as { user_version: number } | undefined;
+    const currentVersion = userVersion?.user_version ?? 0;
+    if (currentVersion >= STORE_SCHEMA_VERSION) return;
+
+    // Version 11+: target model — drop old tables, create new ones
+    if (currentVersion < 11) {
+      this.database!.exec("BEGIN");
+      try {
+        this.createTargetTables();
+        this.database!.exec(`PRAGMA user_version = ${STORE_SCHEMA_VERSION}`);
+        this.database!.exec("COMMIT");
+      } catch (error) {
+        this.database!.exec("ROLLBACK");
+        throw error;
+      }
       return;
     }
 
-    const database = new DatabaseSync(this.databasePath);
-    database.exec(`
-      CREATE TABLE IF NOT EXISTS knowledge_items (
+    this.database!.exec(`PRAGMA user_version = ${STORE_SCHEMA_VERSION}`);
+  }
+
+  private createTargetTables(): void {
+    this.database!.exec(`
+      CREATE TABLE IF NOT EXISTS items (
         item_id TEXT PRIMARY KEY,
+        item_type TEXT NOT NULL CHECK(item_type IN ('document', 'collection')),
         source_type TEXT NOT NULL,
-        identity_hash TEXT NOT NULL,
-        active_rawdoc_id TEXT NOT NULL,
-        active_doc_id TEXT,
+        identity_key TEXT,
         title TEXT,
         subtitle TEXT,
         creators_json TEXT NOT NULL DEFAULT '[]',
         language TEXT,
         tags_json TEXT NOT NULL DEFAULT '[]',
-        state TEXT NOT NULL,
+        state TEXT NOT NULL DEFAULT 'empty',
+        member_visibility_mode TEXT CHECK(member_visibility_mode IN ('hide_members', 'show_members')),
+        active_capture_id TEXT,
+        active_doc_id TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         parsed_at TEXT
       );
 
-      CREATE TABLE IF NOT EXISTS clips (
-        url_hash TEXT PRIMARY KEY,
-        normalized_url TEXT NOT NULL UNIQUE,
-        item_id TEXT,
-        original_url TEXT,
-        canonical_url TEXT,
-        rawdoc_id TEXT NOT NULL,
-        active_doc_id TEXT,
+      CREATE TABLE IF NOT EXISTS item_aliases (
+        alias_id TEXT PRIMARY KEY,
+        item_id TEXT NOT NULL,
+        alias_type TEXT NOT NULL,
+        alias_value TEXT NOT NULL,
+        is_primary INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL,
+        UNIQUE(alias_type, alias_value),
+        FOREIGN KEY(item_id) REFERENCES items(item_id)
+      );
+
+      CREATE TABLE IF NOT EXISTS rawdocs (
+        capture_id TEXT PRIMARY KEY,
+        item_id TEXT NOT NULL,
+        source_uri TEXT NOT NULL,
+        source_type TEXT NOT NULL,
+        input_mode TEXT NOT NULL,
+        content_type TEXT,
+        content_length INTEGER,
+        content_hash TEXT,
+        content_ext TEXT NOT NULL DEFAULT 'html',
         page_title TEXT,
-        content_title TEXT,
-        capture_saved_at TEXT NOT NULL,
-        capture_updated_at TEXT NOT NULL,
-        parse_updated_at TEXT
+        captured_at TEXT,
+        fetched_at TEXT,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY(item_id) REFERENCES items(item_id)
       );
 
       CREATE TABLE IF NOT EXISTS documents (
         doc_id TEXT PRIMARY KEY,
-        rawdoc_id TEXT NOT NULL,
+        item_id TEXT NOT NULL,
+        capture_id TEXT NOT NULL,
         title TEXT NOT NULL,
         page_title TEXT,
         source_url TEXT,
-        normalized_url TEXT,
         language TEXT,
         authors_json TEXT,
         published_at TEXT,
@@ -1833,89 +421,29 @@ export class KnowledgeStore {
         parser_profile TEXT,
         content_hash TEXT,
         created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      );
-
-      CREATE TABLE IF NOT EXISTS rawdocs (
-        rawdoc_id TEXT PRIMARY KEY,
-        source_uri TEXT NOT NULL,
-        source_type TEXT NOT NULL DEFAULT 'url',
-        normalized_url TEXT,
-        input_mode TEXT NOT NULL,
-        content_type TEXT,
-        content_length INTEGER,
-        content_hash TEXT,
-        content_ext TEXT NOT NULL DEFAULT 'html',
-        html_hash TEXT,
-        page_title TEXT,
-        captured_at TEXT,
-        fetched_at TEXT,
-        created_at TEXT NOT NULL
-      );
-
-      CREATE TABLE IF NOT EXISTS epub_metadata (
-        item_id TEXT PRIMARY KEY,
-        isbn TEXT,
-        publisher TEXT,
-        published_at TEXT,
-        identifiers_json TEXT,
-        cover_asset_id TEXT,
-        chapter_count INTEGER,
-        metadata_json TEXT
-      );
-
-      CREATE TABLE IF NOT EXISTS chunks (
-        chunk_id TEXT PRIMARY KEY,
-        doc_id TEXT NOT NULL,
-        rawdoc_id TEXT NOT NULL,
-        chunk_index INTEGER NOT NULL,
-        title TEXT NOT NULL,
-        page_title TEXT,
-        source_url TEXT,
-        normalized_url TEXT,
-        heading_path TEXT,
-        section_ids_json TEXT NOT NULL,
-        text TEXT NOT NULL,
-        token_estimate INTEGER,
-        char_count INTEGER NOT NULL,
-        parser_version TEXT,
-        parser_method TEXT,
-        parser_profile TEXT,
-        content_hash TEXT NOT NULL,
-        created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
-        UNIQUE(doc_id, chunk_index)
+        FOREIGN KEY(item_id) REFERENCES items(item_id),
+        FOREIGN KEY(capture_id) REFERENCES rawdocs(capture_id)
       );
 
-      CREATE TABLE IF NOT EXISTS collections (
-        collection_id TEXT PRIMARY KEY,
-        title TEXT NOT NULL,
-        root_url TEXT,
-        normalized_root_url TEXT,
-        source_type TEXT NOT NULL,
-        state TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      );
-
-      CREATE TABLE IF NOT EXISTS collection_items (
-        collection_item_id TEXT PRIMARY KEY,
-        collection_id TEXT NOT NULL,
-        item_id TEXT,
-        normalized_url TEXT NOT NULL,
-        doc_id TEXT,
-        rawdoc_id TEXT,
-        title TEXT,
-        page_title TEXT,
+      CREATE TABLE IF NOT EXISTS collection_memberships (
+        membership_id TEXT PRIMARY KEY,
+        collection_item_id TEXT NOT NULL,
+        member_item_id TEXT NOT NULL,
         order_index INTEGER NOT NULL,
         depth INTEGER NOT NULL DEFAULT 0,
-        parent_item_id TEXT,
-        source TEXT,
-        state TEXT NOT NULL,
+        parent_membership_id TEXT,
+        inclusion_mode TEXT NOT NULL DEFAULT 'manual',
+        inclusion_reason TEXT,
+        source_rule_id TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
-        FOREIGN KEY(collection_id) REFERENCES collections(collection_id)
+        FOREIGN KEY(collection_item_id) REFERENCES items(item_id),
+        FOREIGN KEY(member_item_id) REFERENCES items(item_id),
+        UNIQUE(collection_item_id, member_item_id)
       );
+
+      -- Legacy tables kept for batch (will be replaced by refresh_*)
 
       CREATE TABLE IF NOT EXISTS batch_jobs (
         job_id TEXT PRIMARY KEY,
@@ -1953,6 +481,40 @@ export class KnowledgeStore {
         FOREIGN KEY(job_id) REFERENCES batch_jobs(job_id)
       );
 
+      CREATE TABLE IF NOT EXISTS epub_metadata (
+        item_id TEXT PRIMARY KEY,
+        isbn TEXT,
+        publisher TEXT,
+        published_at TEXT,
+        identifiers_json TEXT,
+        cover_asset_id TEXT,
+        chapter_count INTEGER DEFAULT 0,
+        metadata_json TEXT,
+        FOREIGN KEY(item_id) REFERENCES items(item_id)
+      );
+
+      CREATE TABLE IF NOT EXISTS chunks (
+        chunk_id TEXT PRIMARY KEY,
+        doc_id TEXT NOT NULL,
+        item_id TEXT NOT NULL,
+        capture_id TEXT NOT NULL,
+        chunk_index INTEGER NOT NULL,
+        title TEXT NOT NULL,
+        page_title TEXT,
+        source_url TEXT,
+        heading_path TEXT,
+        section_ids_json TEXT NOT NULL,
+        text TEXT NOT NULL,
+        token_estimate INTEGER,
+        char_count INTEGER NOT NULL,
+        parser_version TEXT,
+        parser_method TEXT,
+        parser_profile TEXT,
+        content_hash TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
       CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
         title,
         heading_path,
@@ -1977,501 +539,98 @@ export class KnowledgeStore {
         updated_at TEXT NOT NULL
       );
     `);
-    this.database = database;
   }
 
-  private ensureIndexes(): void {
-    this.database!.exec(`
-      CREATE INDEX IF NOT EXISTS idx_knowledge_items_source_type ON knowledge_items(source_type);
-      CREATE INDEX IF NOT EXISTS idx_knowledge_items_active_doc_id ON knowledge_items(active_doc_id);
-      CREATE INDEX IF NOT EXISTS idx_knowledge_items_active_rawdoc_id ON knowledge_items(active_rawdoc_id);
-      CREATE INDEX IF NOT EXISTS idx_knowledge_items_identity_hash ON knowledge_items(identity_hash);
-      CREATE INDEX IF NOT EXISTS idx_clips_rawdoc_id ON clips(rawdoc_id);
-      CREATE INDEX IF NOT EXISTS idx_clips_item_id ON clips(item_id);
-      CREATE INDEX IF NOT EXISTS idx_clips_active_doc_id ON clips(active_doc_id);
-      CREATE INDEX IF NOT EXISTS idx_documents_rawdoc_id ON documents(rawdoc_id);
-      CREATE INDEX IF NOT EXISTS idx_documents_normalized_url ON documents(normalized_url);
-      CREATE INDEX IF NOT EXISTS idx_documents_content_hash ON documents(content_hash);
-      CREATE INDEX IF NOT EXISTS idx_rawdocs_normalized_url ON rawdocs(normalized_url);
-      CREATE INDEX IF NOT EXISTS idx_rawdocs_html_hash ON rawdocs(html_hash);
-      CREATE INDEX IF NOT EXISTS idx_rawdocs_content_hash ON rawdocs(content_hash);
-      CREATE INDEX IF NOT EXISTS idx_chunks_doc_id ON chunks(doc_id);
-      CREATE INDEX IF NOT EXISTS idx_chunks_rawdoc_id ON chunks(rawdoc_id);
-      CREATE INDEX IF NOT EXISTS idx_chunks_normalized_url ON chunks(normalized_url);
-      CREATE INDEX IF NOT EXISTS idx_chunks_parser_method ON chunks(parser_method);
-      CREATE INDEX IF NOT EXISTS idx_collections_root_url ON collections(normalized_root_url);
-      CREATE INDEX IF NOT EXISTS idx_collection_items_collection_id ON collection_items(collection_id);
-      CREATE INDEX IF NOT EXISTS idx_collection_items_normalized_url ON collection_items(normalized_url);
-      CREATE INDEX IF NOT EXISTS idx_batch_items_job_id ON batch_items(job_id);
-      CREATE INDEX IF NOT EXISTS idx_batch_items_normalized_url ON batch_items(normalized_url);
-      CREATE INDEX IF NOT EXISTS idx_annotations_doc_id ON annotations(doc_id);
-      CREATE INDEX IF NOT EXISTS idx_annotations_section_id ON annotations(section_id);
-      CREATE INDEX IF NOT EXISTS idx_annotations_type ON annotations(type);
-    `);
-  }
+  // ── item CRUD ──────────────────────────────────────────────────────────
 
-  private migrateSchemaIfNeeded(): void {
-    const userVersion = this.database!.prepare("PRAGMA user_version").get() as { user_version: number } | undefined;
-    const clipsColumns = this.database!.prepare("PRAGMA table_info(clips)").all() as Array<{ name: string }>;
-    const hasActiveDocId = clipsColumns.some((column) => column.name === "active_doc_id");
-    if (hasActiveDocId && (userVersion?.user_version ?? 0) >= STORE_SCHEMA_VERSION) {
-      return;
+  async listItems(
+    sourceType?: string,
+    limit = 50
+  ): Promise<{ items: KnowledgeItem[] }> {
+    await this.ensure();
+    const boundedLimit = Math.min(Math.max(Math.trunc(limit) || 50, 1), 500);
+    let query = "SELECT * FROM items WHERE item_type = 'document'";
+    const params: unknown[] = [];
+    if (sourceType) {
+      query += " AND source_type = ?";
+      params.push(sourceType);
     }
+    query += " ORDER BY COALESCE(parsed_at, updated_at) DESC LIMIT ?";
+    params.push(boundedLimit);
+    const rows = this.database!.prepare(query).all(...params as string[]) as unknown as ItemRow[];
+    return { items: rows.map(toKnowledgeItem) };
+  }
 
-    const hasLegacyV2 = clipsColumns.some((column) => column.name === "doc_id");
-    if (!hasLegacyV2) {
-      if ((userVersion?.user_version ?? 0) < STORE_SCHEMA_VERSION) {
-        this.ensureKnowledgeItemTables();
-        this.ensureTitleColumns();
-        this.ensureRawContentColumns();
-        this.ensureCollectionItemIdColumn();
-        this.backfillUrlKnowledgeItems();
-        this.rebuildChunksFtsIndex();
-      }
-      this.database!.exec(`PRAGMA user_version = ${STORE_SCHEMA_VERSION}`);
-      return;
+  async loadItem(itemId: string): Promise<KnowledgeItem | undefined> {
+    await this.ensure();
+    const row = this.database!.prepare("SELECT * FROM items WHERE item_id = ?").get(itemId) as unknown as unknown as ItemRow | undefined;
+    return row ? toKnowledgeItem(row) : undefined;
+  }
+
+  async loadItemDetail(itemId: string): Promise<{
+    item: KnowledgeItem;
+    rawdoc?: RawDoc;
+    document?: KnowledgeDocument;
+    collectionIds?: string[];
+  }> {
+    await this.ensure();
+    const row = this.database!.prepare("SELECT * FROM items WHERE item_id = ?").get(itemId) as unknown as unknown as ItemRow | undefined;
+    if (!row) throw new Error("Item not found");
+    const item = toKnowledgeItem(row);
+    let rawdoc: RawDoc | undefined;
+    let document: KnowledgeDocument | undefined;
+    if (row.active_capture_id) {
+      rawdoc = await this.readJson<RawDoc>(`rawdocs/${row.active_capture_id}.json`).catch(() => undefined);
     }
-
-    this.database!.exec("BEGIN");
-    try {
-      this.database!.exec("ALTER TABLE clips RENAME TO clips_old");
-      this.database!.exec(`
-        CREATE TABLE clips (
-          url_hash TEXT PRIMARY KEY,
-          normalized_url TEXT NOT NULL UNIQUE,
-          original_url TEXT,
-          canonical_url TEXT,
-          rawdoc_id TEXT NOT NULL,
-          active_doc_id TEXT,
-          page_title TEXT,
-          content_title TEXT,
-          capture_saved_at TEXT NOT NULL,
-          capture_updated_at TEXT NOT NULL,
-          parse_updated_at TEXT
-        );
-      `);
-      this.database!.exec(`
-        INSERT INTO clips (
-          url_hash,
-          normalized_url,
-          original_url,
-          canonical_url,
-          rawdoc_id,
-          active_doc_id,
-          page_title,
-          content_title,
-          capture_saved_at,
-          capture_updated_at,
-          parse_updated_at
-        )
-        SELECT
-          url_hash,
-          normalized_url,
-          original_url,
-          canonical_url,
-          rawdoc_id,
-          doc_id,
-          page_title,
-          page_title,
-          saved_at,
-          updated_at,
-          updated_at
-        FROM clips_old
-      `);
-      this.database!.exec("DROP TABLE clips_old");
-      this.ensureKnowledgeItemTables();
-      this.ensureTitleColumns();
-      this.ensureRawContentColumns();
-      this.ensureCollectionItemIdColumn();
-      this.backfillUrlKnowledgeItems();
-      this.rebuildChunksFtsIndex();
-      this.database!.exec(`PRAGMA user_version = ${STORE_SCHEMA_VERSION}`);
-      this.database!.exec("COMMIT");
-    } catch (error) {
-      this.database!.exec("ROLLBACK");
-      throw error;
+    if (row.active_doc_id) {
+      document = await this.readJson<KnowledgeDocument>(`documents/${row.active_doc_id}.json`).catch(() => undefined);
     }
+    const collectionRows = this.database!.prepare(
+      "SELECT collection_item_id FROM collection_memberships WHERE member_item_id = ?"
+    ).all(itemId as string) as unknown as { collection_item_id: string }[];
+    return {
+      item,
+      rawdoc,
+      document,
+      collectionIds: collectionRows.map((r) => r.collection_item_id)
+    };
   }
 
-  private ensureTitleColumns(): void {
-    this.addColumnIfMissing("clips", "item_id", "TEXT");
-    this.addColumnIfMissing("clips", "content_title", "TEXT");
-    this.addColumnIfMissing("documents", "page_title", "TEXT");
-    this.addColumnIfMissing("rawdocs", "page_title", "TEXT");
-    this.addColumnIfMissing("chunks", "page_title", "TEXT");
-    this.addColumnIfMissing("collection_items", "page_title", "TEXT");
-    this.addColumnIfMissing("collection_items", "item_id", "TEXT");
-    this.database!.exec(`
-      UPDATE clips SET content_title = COALESCE(content_title, page_title);
-      UPDATE documents SET page_title = COALESCE(page_title, title);
-      UPDATE chunks SET page_title = COALESCE(page_title, title);
-      UPDATE collection_items SET page_title = COALESCE(page_title, title);
-    `);
-  }
-
-  private ensureCollectionItemIdColumn(): void {
-    this.addColumnIfMissing("collection_items", "item_id", "TEXT");
-    this.database!.exec(`
-      UPDATE collection_items
-      SET item_id = (
-        SELECT 'url:sha256:' || SUBSTR(ci.normalized_url_hash, 1, 16)
-        FROM (
-          SELECT normalized_url,
-            LOWER(HEX(SHA256(normalized_url))) AS normalized_url_hash
-          FROM collection_items AS inner_ci
-          WHERE inner_ci.collection_item_id = collection_items.collection_item_id
-        )
-      )
-      WHERE item_id IS NULL AND doc_id IS NOT NULL
-    `);
-    this.database!.exec(`
-      UPDATE collection_items
-      SET item_id = (
-        SELECT ki.item_id
-        FROM knowledge_items ki
-        WHERE ki.active_doc_id = collection_items.doc_id
-      )
-      WHERE item_id IS NULL AND doc_id IS NOT NULL
-    `);
-  }
-
-  private ensureKnowledgeItemTables(): void {
-    this.database!.exec(`
-      CREATE TABLE IF NOT EXISTS knowledge_items (
-        item_id TEXT PRIMARY KEY,
-        source_type TEXT NOT NULL,
-        identity_hash TEXT NOT NULL,
-        active_rawdoc_id TEXT NOT NULL,
-        active_doc_id TEXT,
-        title TEXT,
-        subtitle TEXT,
-        creators_json TEXT NOT NULL DEFAULT '[]',
-        language TEXT,
-        tags_json TEXT NOT NULL DEFAULT '[]',
-        state TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        parsed_at TEXT
-      );
-
-      CREATE TABLE IF NOT EXISTS epub_metadata (
-        item_id TEXT PRIMARY KEY,
-        isbn TEXT,
-        publisher TEXT,
-        published_at TEXT,
-        identifiers_json TEXT,
-        cover_asset_id TEXT,
-        chapter_count INTEGER,
-        metadata_json TEXT
-      );
-    `);
-  }
-
-  private ensureRawContentColumns(): void {
-    this.addColumnIfMissing("rawdocs", "source_type", "TEXT NOT NULL DEFAULT 'url'");
-    this.addColumnIfMissing("rawdocs", "content_hash", "TEXT");
-    this.addColumnIfMissing("rawdocs", "content_ext", "TEXT NOT NULL DEFAULT 'html'");
-    this.database!.exec(`
-      UPDATE rawdocs
-      SET source_type = COALESCE(source_type, 'url'),
-          content_ext = COALESCE(content_ext, 'html'),
-          content_hash = COALESCE(content_hash, html_hash);
-    `);
-  }
-
-  private backfillUrlKnowledgeItems(): void {
-    this.database!.exec(`
-      UPDATE clips
-      SET item_id = COALESCE(item_id, 'url:sha256:' || url_hash);
-
-      INSERT INTO knowledge_items (
-        item_id,
-        source_type,
-        identity_hash,
-        active_rawdoc_id,
-        active_doc_id,
-        title,
-        subtitle,
-        creators_json,
-        language,
-        tags_json,
-        state,
-        created_at,
-        updated_at,
-        parsed_at
-      )
-      SELECT
-        c.item_id,
-        COALESCE(r.source_type, 'url'),
-        c.url_hash,
-        c.rawdoc_id,
-        c.active_doc_id,
-        COALESCE(c.page_title, c.content_title, d.title, c.normalized_url),
-        c.content_title,
-        COALESCE(d.authors_json, '[]'),
-        d.language,
-        '[]',
-        CASE WHEN c.active_doc_id IS NULL THEN 'captured' ELSE 'parsed' END,
-        COALESCE(c.capture_saved_at, c.capture_updated_at),
-        c.capture_updated_at,
-        c.parse_updated_at
-      FROM clips c
-      LEFT JOIN rawdocs r ON r.rawdoc_id = c.rawdoc_id
-      LEFT JOIN documents d ON d.doc_id = c.active_doc_id
-      WHERE c.item_id IS NOT NULL
-      ON CONFLICT(item_id) DO UPDATE SET
-        source_type = excluded.source_type,
-        identity_hash = excluded.identity_hash,
-        active_rawdoc_id = excluded.active_rawdoc_id,
-        active_doc_id = excluded.active_doc_id,
-        title = COALESCE(knowledge_items.title, excluded.title),
-        subtitle = COALESCE(knowledge_items.subtitle, excluded.subtitle),
-        creators_json = CASE
-          WHEN knowledge_items.creators_json = '[]' THEN excluded.creators_json
-          ELSE knowledge_items.creators_json
-        END,
-        language = COALESCE(knowledge_items.language, excluded.language),
-        state = excluded.state,
-        updated_at = excluded.updated_at,
-        parsed_at = excluded.parsed_at;
-    `);
-  }
-
-  private addColumnIfMissing(table: string, column: string, definition: string): void {
-    const columns = this.database!.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
-    if (!columns.some((item) => item.name === column)) {
-      this.database!.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
-    }
-  }
-
-  private async resetLegacyStoreIfNeeded(): Promise<void> {
-    if (this.database) {
-      return;
-    }
-
-    try {
-      await access(this.databasePath);
-    } catch {
-      return;
-    }
-
-    const database = new DatabaseSync(this.databasePath);
-    try {
-      const clipsTable = database
-        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'clips'")
-        .get() as { name: string } | undefined;
-      if (!clipsTable) {
-        return;
-      }
-
-      const columns = database.prepare("PRAGMA table_info(clips)").all() as Array<{ name: string }>;
-      const hasResetCandidate = columns.some((column) => column.name === "markdown_path")
-        || columns.some((column) => column.name === "document_path")
-        || columns.some((column) => column.name === "rawdoc_path");
-      if (!hasResetCandidate) {
-        return;
-      }
-    } finally {
-      database.close();
-    }
-
-    await Promise.all([
-      unlink(this.databasePath).catch(ignoreMissing),
-      rm(join(this.root, "docs"), { recursive: true, force: true }),
-      rm(join(this.root, "rawdocs"), { recursive: true, force: true }),
-      rm(join(this.root, "documents"), { recursive: true, force: true }),
-      rm(join(this.root, "markdown"), { recursive: true, force: true })
-    ]);
-
-    await Promise.all([
-      mkdir(join(this.root, "rawdocs"), { recursive: true }),
-      mkdir(join(this.root, "documents"), { recursive: true }),
-      mkdir(join(this.root, "markdown"), { recursive: true })
-    ]);
-  }
-
-  private findClip(hash: string): ClipRow | undefined {
-    return this.database!.prepare(`
-      SELECT url_hash, normalized_url, original_url, canonical_url, rawdoc_id, active_doc_id, page_title, content_title,
-        capture_saved_at, capture_updated_at, parse_updated_at
-      FROM clips
-      WHERE url_hash = ?
-    `).get(hash) as ClipRow | undefined;
-  }
-
-  private findClipByOriginalUrl(input: string): ClipRow | undefined {
-    return this.database!.prepare(`
-      SELECT url_hash, normalized_url, original_url, canonical_url, rawdoc_id, active_doc_id, page_title, content_title,
-        capture_saved_at, capture_updated_at, parse_updated_at
-      FROM clips
-      WHERE original_url = ?
-    `).get(input) as ClipRow | undefined;
-  }
-
-  private findKnowledgeItem(itemId: string): KnowledgeItemRow | undefined {
-    return this.database!.prepare(`
-      SELECT item_id, source_type, identity_hash, active_rawdoc_id, active_doc_id, title, subtitle,
-        creators_json, language, tags_json, state, created_at, updated_at, parsed_at
-      FROM knowledge_items
-      WHERE item_id = ?
-    `).get(itemId) as KnowledgeItemRow | undefined;
-  }
-
-  private findDocument(docId: string): DocumentRow | undefined {
-    return this.database!.prepare(`
-      SELECT doc_id, rawdoc_id, title, page_title
-      FROM documents
-      WHERE doc_id = ?
-    `).get(docId) as DocumentRow | undefined;
-  }
-
-  private async loadRawdoc(rawdocId: string): Promise<RawDoc> {
-    return JSON.parse(await this.readText(rawdocMetaPath(rawdocId))) as RawDoc;
-  }
-
-  private rawdocContentExt(rawdocId: string): string {
-    const row = this.database!.prepare(`
-      SELECT content_ext
-      FROM rawdocs
-      WHERE rawdoc_id = ?
-    `).get(rawdocId) as { content_ext: string | null } | undefined;
-    return sanitizeExtension(row?.content_ext ?? "") || "html";
-  }
-
-  private upsertKnowledgeItemRow(params: {
-    itemId: string;
-    sourceType: RawDoc["source_type"];
-    identityHash: string;
-    rawdocId: string;
-    docId?: string;
-    title?: string;
-    subtitle?: string;
-    creators?: string[];
-    language?: string;
-    tags?: string[];
-    now: string;
-  }): void {
-    const previous = this.findKnowledgeItem(params.itemId);
-    this.database!.prepare(`
-      INSERT INTO knowledge_items (
-        item_id,
-        source_type,
-        identity_hash,
-        active_rawdoc_id,
-        active_doc_id,
-        title,
-        subtitle,
-        creators_json,
-        language,
-        tags_json,
-        state,
-        created_at,
-        updated_at,
-        parsed_at
-      )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(item_id) DO UPDATE SET
-        source_type = excluded.source_type,
-        identity_hash = excluded.identity_hash,
-        active_rawdoc_id = excluded.active_rawdoc_id,
-        active_doc_id = excluded.active_doc_id,
-        title = excluded.title,
-        subtitle = excluded.subtitle,
-        creators_json = excluded.creators_json,
-        language = excluded.language,
-        tags_json = excluded.tags_json,
-        state = excluded.state,
-        updated_at = excluded.updated_at,
-        parsed_at = excluded.parsed_at
-    `).run(
-      params.itemId,
-      params.sourceType,
-      params.identityHash,
-      params.rawdocId,
-      params.docId ?? null,
-      params.title ?? null,
-      params.subtitle ?? null,
-      JSON.stringify(params.creators ?? []),
-      params.language ?? null,
-      JSON.stringify(params.tags ?? []),
-      params.docId ? "parsed" : "captured",
-      previous?.created_at ?? params.now,
-      params.now,
-      params.docId ? params.now : null
-    );
-  }
-
-  private upsertEpubMetadata(
+  async deleteItem(
     itemId: string,
-    input: EpubMetadataInput | undefined,
-    document: KnowledgeDocument
-  ): void {
-    const coverAssetId = input?.coverAssetId ?? firstAssetId(document);
-    const chapterCount = input?.chapterCount ?? document.sections.filter((section) => section.type === "heading").length;
-    this.database!.prepare(`
-      INSERT INTO epub_metadata (
-        item_id,
-        isbn,
-        publisher,
-        published_at,
-        identifiers_json,
-        cover_asset_id,
-        chapter_count,
-        metadata_json
-      )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(item_id) DO UPDATE SET
-        isbn = excluded.isbn,
-        publisher = excluded.publisher,
-        published_at = excluded.published_at,
-        identifiers_json = excluded.identifiers_json,
-        cover_asset_id = COALESCE(excluded.cover_asset_id, epub_metadata.cover_asset_id),
-        chapter_count = excluded.chapter_count,
-        metadata_json = excluded.metadata_json
-    `).run(
-      itemId,
-      input?.isbn ?? null,
-      input?.publisher ?? null,
-      input?.publishedAt ?? null,
-      JSON.stringify(input?.identifiers ?? {}),
-      coverAssetId ?? null,
-      chapterCount,
-      JSON.stringify(input?.metadata ?? {})
-    );
+    mode: KnowledgeItemDeleteMode
+  ): Promise<KnowledgeItemDeleteResponse> {
+    await this.ensure();
+    const row = this.database!.prepare("SELECT * FROM items WHERE item_id = ?").get(itemId) as unknown as unknown as ItemRow | undefined;
+    if (!row) throw new Error("Item not found");
+    return mode === "remove" ? this.removeItem(row) : this.purgeItem(row);
   }
 
-  private async removeKnowledgeItem(row: KnowledgeItemRow): Promise<KnowledgeItemDeleteResponse> {
+  private async removeItem(row: ItemRow): Promise<KnowledgeItemDeleteResponse> {
     if (!row.active_doc_id) {
       return {
         itemId: row.item_id,
         deleted: false,
         mode: "remove",
-        previousState: "captured",
+        previousState: row.state as "captured" | "parsed",
         currentState: "captured",
         deletedFiles: []
       };
     }
-
     const now = new Date().toISOString();
     const deletedFiles = await this.deleteDerivedArtifacts(row.active_doc_id);
+    this.database!.exec("BEGIN");
     try {
-      this.database!.exec("BEGIN");
-      this.deleteChunksByDocId(row.active_doc_id);
+      this.database!.prepare("DELETE FROM chunks WHERE doc_id = ?").run(row.active_doc_id);
       this.database!.prepare("DELETE FROM documents WHERE doc_id = ?").run(row.active_doc_id);
-      this.database!.prepare(`
-        UPDATE knowledge_items
-        SET active_doc_id = NULL,
-            state = 'captured',
-            updated_at = ?,
-            parsed_at = NULL
-        WHERE item_id = ?
-      `).run(now, row.item_id);
+      this.database!.prepare(
+        "UPDATE items SET active_doc_id = NULL, state = 'captured', updated_at = ?, parsed_at = NULL WHERE item_id = ?"
+      ).run(now, row.item_id);
       this.database!.exec("COMMIT");
     } catch (error) {
       this.database!.exec("ROLLBACK");
       throw error;
     }
-
     return {
       itemId: row.item_id,
       deleted: true,
@@ -2483,28 +642,32 @@ export class KnowledgeStore {
     };
   }
 
-  private async purgeKnowledgeItem(row: KnowledgeItemRow): Promise<KnowledgeItemDeleteResponse> {
+  private async purgeItem(row: ItemRow): Promise<KnowledgeItemDeleteResponse> {
     const deletedFiles: string[] = [];
     if (row.active_doc_id) {
       deletedFiles.push(...await this.deleteDerivedArtifacts(row.active_doc_id));
     }
-    deletedFiles.push(...await this.deleteCaptureArtifacts(row.active_rawdoc_id));
-
+    if (row.active_capture_id) {
+      deletedFiles.push(...await this.deleteCaptureArtifacts(row.active_capture_id));
+    }
+    this.database!.exec("BEGIN");
     try {
-      this.database!.exec("BEGIN");
-      this.database!.prepare("DELETE FROM knowledge_items WHERE item_id = ?").run(row.item_id);
+      this.database!.prepare("DELETE FROM items WHERE item_id = ?").run(row.item_id);
+      this.database!.prepare("DELETE FROM item_aliases WHERE item_id = ?").run(row.item_id);
       this.database!.prepare("DELETE FROM epub_metadata WHERE item_id = ?").run(row.item_id);
+      this.database!.prepare("DELETE FROM collection_memberships WHERE member_item_id = ? OR collection_item_id = ?").run(row.item_id, row.item_id);
       if (row.active_doc_id) {
-        this.deleteChunksByDocId(row.active_doc_id);
+        this.database!.prepare("DELETE FROM chunks WHERE doc_id = ?").run(row.active_doc_id);
         this.database!.prepare("DELETE FROM documents WHERE doc_id = ?").run(row.active_doc_id);
       }
-      this.database!.prepare("DELETE FROM rawdocs WHERE rawdoc_id = ?").run(row.active_rawdoc_id);
+      if (row.active_capture_id) {
+        this.database!.prepare("DELETE FROM rawdocs WHERE capture_id = ?").run(row.active_capture_id);
+      }
       this.database!.exec("COMMIT");
     } catch (error) {
       this.database!.exec("ROLLBACK");
       throw error;
     }
-
     return {
       itemId: row.item_id,
       deleted: true,
@@ -2513,400 +676,963 @@ export class KnowledgeStore {
       currentState: "empty",
       deletedFiles,
       removedDocId: row.active_doc_id ?? undefined,
-      removedRawdocId: row.active_rawdoc_id
+      removedRawdocId: row.active_capture_id ?? undefined
     };
   }
 
-  private findCollection(collectionId: string): CollectionRow | undefined {
-    return this.database!.prepare(`
-      SELECT collection_id, title, root_url, normalized_root_url, source_type, state, created_at, updated_at
-      FROM collections
-      WHERE collection_id = ?
-    `).get(collectionId) as CollectionRow | undefined;
+  // ── alias helpers ──────────────────────────────────────────────────────
+
+  private findItemByAlias(aliasType: string, aliasValue: string): ItemRow | undefined {
+    const aliasRow = this.database!.prepare(
+      "SELECT item_id FROM item_aliases WHERE alias_type = ? AND alias_value = ?"
+    ).get(aliasType, aliasValue) as { item_id: string } | undefined;
+    if (!aliasRow) return undefined;
+    return this.database!.prepare("SELECT * FROM items WHERE item_id = ?").get(aliasRow.item_id) as unknown as unknown as ItemRow | undefined;
   }
 
-  private loadCollectionSummary(collectionId: string): CollectionSummary {
-    const row = this.database!.prepare(`
-      SELECT
-        c.collection_id,
-        c.title,
-        c.root_url,
-        c.normalized_root_url,
-        c.source_type,
-        c.state,
-        c.created_at,
-        c.updated_at,
-        COUNT(ci.collection_item_id) AS item_count
-      FROM collections c
-      LEFT JOIN collection_items ci ON ci.collection_id = c.collection_id
-      WHERE c.collection_id = ?
-      GROUP BY c.collection_id
-    `).get(collectionId) as CollectionRow | undefined;
-    if (!row) {
-      throw new Error("Collection does not exist");
+  private upsertAlias(itemId: string, aliasType: string, aliasValue: string, isPrimary: boolean): void {
+    this.database!.prepare(`
+      INSERT INTO item_aliases (alias_id, item_id, alias_type, alias_value, is_primary, created_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(alias_type, alias_value) DO UPDATE SET
+        item_id = excluded.item_id,
+        is_primary = excluded.is_primary
+    `).run(makeId(), itemId, aliasType, aliasValue, isPrimary ? 1 : 0, new Date().toISOString());
+  }
+
+  // ── save (web clip) ────────────────────────────────────────────────────
+
+  async save(params: {
+    normalizedUrl: string;
+    html: string;
+    rawdoc: RawDoc;
+    document: KnowledgeDocument;
+    markdown: string;
+  }): Promise<{ paths: ReturnType<typeof pathsFor> }> {
+    await this.ensure();
+    const normalized = normalizeUrlForKnowledge(params.normalizedUrl);
+    const hash = urlHash(normalized);
+    const itemId = `url:sha256:${hash}`;
+    const previous = this.findItemByAlias("normalized_url", normalized);
+    const captureId = params.rawdoc.rawdoc_id; // keep rawdoc_id for file storage
+    const docId = params.document.doc_id;
+    const paths = pathsFor(docId, captureId);
+    const parserInfo = parserInfoFor(params.document, params.rawdoc);
+    const now = new Date().toISOString();
+    const contentHash = sha256(params.markdown);
+    const authorsJson = JSON.stringify(params.document.meta.authors ?? []);
+    const rawMetadata = params.rawdoc.metadata ?? {};
+    const contentTitle = params.document.meta.title;
+    const pageTitle = pageTitleFor(params.document, params.rawdoc);
+    const sourceUrl = (params.document.meta.source.url ?? params.rawdoc.source_uri) || normalized;
+    const originalUrl = typeof rawMetadata.originalUrl === "string" ? rawMetadata.originalUrl : params.rawdoc.source_uri;
+    const canonicalUrl = typeof rawMetadata.canonicalUrl === "string" ? rawMetadata.canonicalUrl : null;
+    const replacedDocId = previous?.active_doc_id && previous.active_doc_id !== docId
+      ? previous.active_doc_id : undefined;
+    const replacedCaptureId = previous?.active_capture_id && previous.active_capture_id !== captureId
+      ? previous.active_capture_id : undefined;
+
+    await Promise.all([
+      this.writeText(paths.rawHtmlPath, params.html),
+      this.writeJson(paths.rawdocPath, params.rawdoc),
+      this.writeJson(paths.documentPath, params.document),
+      this.writeText(paths.markdownPath, params.markdown)
+    ]);
+
+    this.database!.exec("BEGIN");
+    try {
+      // items
+      const nowIso = now;
+      this.database!.prepare(`
+        INSERT INTO items (item_id, item_type, source_type, identity_key, title, creators_json, language, tags_json, state, active_capture_id, active_doc_id, created_at, updated_at, parsed_at)
+        VALUES (?, 'document', ?, ?, ?, ?, ?, ?, 'parsed', ?, ?, ?, ?, ?)
+        ON CONFLICT(item_id) DO UPDATE SET
+          source_type = excluded.source_type,
+          identity_key = excluded.identity_key,
+          title = excluded.title,
+          creators_json = excluded.creators_json,
+          language = excluded.language,
+          tags_json = excluded.tags_json,
+          state = 'parsed',
+          active_capture_id = excluded.active_capture_id,
+          active_doc_id = excluded.active_doc_id,
+          updated_at = excluded.updated_at,
+          parsed_at = excluded.parsed_at
+      `).run(
+        itemId, params.rawdoc.source_type, hash, pageTitle, authorsJson,
+        params.document.meta.language ?? null, JSON.stringify(params.document.meta.tags ?? []),
+        captureId, docId,
+        previous?.created_at ?? nowIso, nowIso, nowIso
+      );
+
+      // aliases
+      this.upsertAlias(itemId, "normalized_url", normalized, true);
+      if (canonicalUrl && canonicalUrl !== normalized) {
+        this.upsertAlias(itemId, "canonical_url", canonicalUrl, false);
+      }
+      if (originalUrl && originalUrl !== normalized) {
+        this.upsertAlias(itemId, "original_url", originalUrl, false);
+      }
+
+      // rawdocs
+      this.database!.prepare(`
+        INSERT INTO rawdocs (capture_id, item_id, source_uri, source_type, input_mode, content_type, content_length, content_hash, content_ext, page_title, captured_at, fetched_at, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'html', ?, ?, ?, ?)
+        ON CONFLICT(capture_id) DO UPDATE SET
+          item_id = excluded.item_id,
+          source_uri = excluded.source_uri,
+          source_type = excluded.source_type,
+          input_mode = excluded.input_mode,
+          content_type = excluded.content_type,
+          content_length = excluded.content_length,
+          content_hash = excluded.content_hash,
+          page_title = excluded.page_title,
+          captured_at = excluded.captured_at,
+          fetched_at = excluded.fetched_at
+      `).run(
+        captureId, itemId, params.rawdoc.source_uri, params.rawdoc.source_type,
+        (rawMetadata.inputMode as string) ?? "browser_html",
+        params.rawdoc.content_type ?? null, params.rawdoc.content_length ?? null,
+        params.html ? sha256(params.html) : null,
+        pageTitle, params.rawdoc.fetch_time ?? null, nowIso, nowIso
+      );
+
+      // documents
+      this.database!.prepare(`
+        INSERT INTO documents (doc_id, item_id, capture_id, title, page_title, source_url, language, authors_json, published_at, parser_version, parser_method, parser_profile, content_hash, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(doc_id) DO UPDATE SET
+          item_id = excluded.item_id,
+          capture_id = excluded.capture_id,
+          title = excluded.title,
+          page_title = excluded.page_title,
+          source_url = excluded.source_url,
+          language = excluded.language,
+          authors_json = excluded.authors_json,
+          published_at = excluded.published_at,
+          parser_version = excluded.parser_version,
+          parser_method = excluded.parser_method,
+          parser_profile = excluded.parser_profile,
+          content_hash = excluded.content_hash,
+          updated_at = excluded.updated_at
+      `).run(
+        docId, itemId, captureId, contentTitle, pageTitle, sourceUrl,
+        params.document.meta.language ?? null, authorsJson,
+        params.document.meta.published_at ?? null,
+        parserInfo.version, parserInfo.method, parserInfo.profile, contentHash, nowIso, nowIso
+      );
+
+      // chunks
+      this.replaceChunks(params.document, params.rawdoc, itemId, captureId, parserInfo, nowIso);
+
+      // Cleanup replaced versions
+      if (replacedDocId && replacedDocId !== docId) {
+        this.database!.prepare("DELETE FROM chunks WHERE doc_id = ?").run(replacedDocId);
+        this.database!.prepare("DELETE FROM documents WHERE doc_id = ?").run(replacedDocId);
+      }
+      if (replacedCaptureId && replacedCaptureId !== captureId) {
+        this.database!.prepare("DELETE FROM rawdocs WHERE capture_id = ?").run(replacedCaptureId);
+      }
+
+      this.database!.exec("COMMIT");
+    } catch (error) {
+      this.database!.exec("ROLLBACK");
+      throw error;
     }
-    return toCollectionSummary(row);
+
+    if (replacedDocId && replacedDocId !== docId) {
+      await this.deleteDerivedArtifacts(replacedDocId);
+    }
+    if (replacedCaptureId && replacedCaptureId !== captureId) {
+      await this.deleteCaptureArtifacts(replacedCaptureId);
+    }
+
+    return { paths };
   }
 
-  private listBatchItems(jobId: string): BatchJobItem[] {
+  // ── save import (EPUB) ─────────────────────────────────────────────────
+
+  async saveImportItem(params: {
+    itemId: string;
+    sourceType: "pdf" | "epub";
+    sourceUri: string;
+    rawdocId: string;
+    rawContentPath: string | Buffer;
+    document: KnowledgeDocument;
+    markdown: string;
+    pageTitle?: string;
+    language?: string;
+    creators?: string[];
+    tags?: string[];
+    identityHash?: string;
+    content?: string | Buffer;
+    contentExt?: string;
+  }): Promise<{
+    knowledgeItem: KnowledgeItem;
+    rawdoc: RawDoc;
+    document: KnowledgeDocument;
+    markdown: string;
+    saved: true;
+    paths: { rawContentPath: string; rawdocPath: string; documentPath: string; markdownPath: string };
+  }> {
+    await this.ensure();
+    const captureId = params.rawdocId;
+    const docId = params.document.doc_id;
+    const paths = pathsFor(docId, captureId);
+    const parserInfo = parserInfoFor(params.document, {} as RawDoc);
+    const now = new Date().toISOString();
+    const contentHash = sha256(params.markdown);
+    const authorsJson = JSON.stringify(params.creators ?? []);
+    const previous = this.database!.prepare("SELECT * FROM items WHERE item_id = ?").get(params.itemId) as unknown as unknown as ItemRow | undefined;
+
+    await Promise.all([
+      this.writeJson(paths.rawdocPath, { rawdoc_id: captureId, source_type: params.sourceType, source_uri: params.sourceUri, fetch_time: now }),
+      this.writeJson(paths.documentPath, params.document),
+      this.writeText(paths.markdownPath, params.markdown)
+    ]);
+
+    this.database!.exec("BEGIN");
+    try {
+      this.database!.prepare(`
+        INSERT INTO items (item_id, item_type, source_type, identity_key, title, creators_json, language, tags_json, state, active_capture_id, active_doc_id, created_at, updated_at, parsed_at)
+        VALUES (?, 'document', ?, ?, ?, ?, ?, ?, 'parsed', ?, ?, ?, ?, ?)
+        ON CONFLICT(item_id) DO UPDATE SET
+          source_type = excluded.source_type,
+          title = excluded.title,
+          creators_json = excluded.creators_json,
+          language = excluded.language,
+          tags_json = excluded.tags_json,
+          state = 'parsed',
+          active_capture_id = excluded.active_capture_id,
+          active_doc_id = excluded.active_doc_id,
+          updated_at = excluded.updated_at,
+          parsed_at = excluded.parsed_at
+      `).run(
+        params.itemId, params.sourceType, null, params.pageTitle ?? params.document.meta.title,
+        authorsJson, params.language ?? null, JSON.stringify(params.tags ?? []),
+        captureId, docId, previous?.created_at ?? now, now, now
+      );
+
+      this.database!.prepare(`
+        INSERT INTO rawdocs (capture_id, item_id, source_uri, source_type, input_mode, content_type, content_length, content_hash, content_ext, page_title, captured_at, created_at)
+        VALUES (?, ?, ?, ?, 'file_import', NULL, NULL, NULL, ?, ?, ?, ?)
+        ON CONFLICT(capture_id) DO UPDATE SET
+          item_id = excluded.item_id,
+          source_uri = excluded.source_uri,
+          source_type = excluded.source_type
+      `).run(
+        captureId, params.itemId, params.sourceUri, params.sourceType,
+        params.sourceType === "epub" ? "epub" : "pdf",
+        params.pageTitle ?? null, now, now
+      );
+
+      this.database!.prepare(`
+        INSERT INTO documents (doc_id, item_id, capture_id, title, page_title, source_url, language, authors_json, published_at, parser_version, parser_method, parser_profile, content_hash, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, NULL, ?, ?, NULL, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(doc_id) DO UPDATE SET
+          item_id = excluded.item_id,
+          capture_id = excluded.capture_id,
+          title = excluded.title,
+          page_title = excluded.page_title,
+          language = excluded.language,
+          authors_json = excluded.authors_json,
+          parser_version = excluded.parser_version,
+          parser_method = excluded.parser_method,
+          parser_profile = excluded.parser_profile,
+          content_hash = excluded.content_hash,
+          updated_at = excluded.updated_at
+      `).run(
+        docId, params.itemId, captureId, params.document.meta.title,
+        params.pageTitle ?? null, params.language ?? null, authorsJson,
+        parserInfo.version, parserInfo.method, parserInfo.profile, contentHash, now, now
+      );
+
+      this.replaceChunks(params.document, { rawdoc_id: captureId, source_type: params.sourceType } as RawDoc, params.itemId, captureId, parserInfo, now);
+
+      this.database!.exec("COMMIT");
+    } catch (error) {
+      this.database!.exec("ROLLBACK");
+      throw error;
+    }
+
+    const item = toKnowledgeItem(this.database!.prepare("SELECT * FROM items WHERE item_id = ?").get(params.itemId) as unknown as ItemRow);
+    const rawdoc: RawDoc = { rawdoc_id: captureId, source_type: params.sourceType, source_uri: params.sourceUri, fetch_time: now };
+    return {
+      knowledgeItem: item!,
+      rawdoc,
+      document: params.document,
+      markdown: params.markdown,
+      saved: true,
+      paths: { rawContentPath: params.rawContentPath as string, rawdocPath: paths.rawdocPath, documentPath: paths.documentPath, markdownPath: paths.markdownPath }
+    };
+  }
+
+  // ── reparse ────────────────────────────────────────────────────────────
+
+  async loadCaptureByUrl(inputUrl: string): Promise<{ clip: KnowledgeItem; html: string; rawdoc: RawDoc; itemId: string }> {
+    await this.ensure();
+    const normalized = normalizeUrlForKnowledge(inputUrl);
+    const row = this.findItemByAlias("normalized_url", normalized);
+    if (!row || !row.active_capture_id) {
+      throw new Error("Capture does not exist for this URL");
+    }
+    const html = await this.readText(`rawdocs/${row.active_capture_id}.html`);
+    const rawdoc = JSON.parse(await this.readText(`rawdocs/${row.active_capture_id}.json`)) as RawDoc;
+    return { clip: toKnowledgeItem(row), html, rawdoc, itemId: row.item_id };
+  }
+
+  async loadRawContentForItem(itemId: string): Promise<{ item: KnowledgeItem; html: string; rawdoc: RawDoc; content: string; contentExt: string }> {
+    await this.ensure();
+    const row = this.database!.prepare("SELECT * FROM items WHERE item_id = ?").get(itemId) as unknown as unknown as ItemRow | undefined;
+    if (!row || !row.active_capture_id) {
+      throw new Error("Item has no active capture");
+    }
+    const htmlPath = `rawdocs/${row.active_capture_id}.html`;
+    const html = await this.readText(htmlPath);
+    const rawdoc = JSON.parse(await this.readText(`rawdocs/${row.active_capture_id}.json`)) as RawDoc;
+    return { item: toKnowledgeItem(row), html, rawdoc, content: html, contentExt: "html" };
+  }
+
+  // ── collection membership ──────────────────────────────────────────────
+
+  async replaceCollectionMembers(collectionItemId: string, members: Array<{
+    memberItemId: string;
+    orderIndex: number;
+    depth: number;
+    inclusionMode?: string;
+    inclusionReason?: string;
+  }>): Promise<CollectionItem[]> {
+    await this.ensure();
+    const now = new Date().toISOString();
+    this.database!.exec("BEGIN");
+    try {
+      this.database!.prepare("DELETE FROM collection_memberships WHERE collection_item_id = ?").run(collectionItemId);
+      const insert = this.database!.prepare(`
+        INSERT INTO collection_memberships (membership_id, collection_item_id, member_item_id, order_index, depth, inclusion_mode, inclusion_reason, source_rule_id, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
+      `);
+      for (const m of members) {
+        insert.run(
+          makeId(), collectionItemId, m.memberItemId, m.orderIndex, m.depth,
+          m.inclusionMode ?? "manual", m.inclusionReason ?? null, now, now
+        );
+      }
+      if (members.length > 0) {
+        this.database!.prepare(
+          "UPDATE items SET state = 'parsed', updated_at = ? WHERE item_id = ?"
+        ).run(now, collectionItemId);
+      }
+      this.database!.exec("COMMIT");
+    } catch (error) {
+      this.database!.exec("ROLLBACK");
+      throw error;
+    }
+    return this.loadCollectionMembers(collectionItemId);
+  }
+
+  async loadCollection(
+    collectionItemId: string
+  ): Promise<{ collection: CollectionSummary; items: CollectionItemDetail[] }> {
+    await this.ensure();
+    const collection = this.loadCollectionSummary(collectionItemId);
+    const items = await this.loadCollectionMembers(collectionItemId);
+    return { collection, items };
+  }
+
+  private async loadCollectionMembers(collectionItemId: string): Promise<CollectionItemDetail[]> {
     const rows = this.database!.prepare(`
-      SELECT item_id, job_id, collection_id, url, normalized_url, source, title_hint, state,
-        rawdoc_id, doc_id, error_code, error_message, attempt_count, created_at, updated_at
-      FROM batch_items
-      WHERE job_id = ?
-      ORDER BY created_at ASC
-    `).all(jobId) as unknown as BatchItemRow[];
+      SELECT
+        cm.membership_id,
+        cm.collection_item_id AS collection_id,
+        COALESCE(i.item_id, cm.member_item_id) AS item_id,
+        COALESCE(i.identity_key, '') AS normalized_url,
+        i.active_doc_id AS doc_id,
+        i.active_capture_id AS rawdoc_id,
+        i.title,
+        NULL AS page_title,
+        cm.order_index,
+        cm.depth,
+        cm.parent_membership_id,
+        cm.inclusion_reason AS source,
+        'saved' AS state,
+        i.creators_json,
+        i.language,
+        cm.created_at,
+        i.updated_at
+      FROM collection_memberships cm
+      LEFT JOIN items i ON i.item_id = cm.member_item_id
+      WHERE cm.collection_item_id = ?
+      ORDER BY cm.order_index ASC, cm.created_at ASC
+    `).all(collectionItemId) as unknown as (CollectionMembershipRow & {
+      collection_id: string;
+      item_id: string;
+      normalized_url: string;
+      doc_id: string | null;
+      rawdoc_id: string | null;
+      title: string | null;
+      page_title: null;
+      order_index: number;
+      depth: number;
+      parent_membership_id: string | null;
+      source: string | null;
+      state: string;
+      creators_json: string | null;
+      language: string | null;
+      created_at: string;
+      updated_at: string | null;
+    })[];
+
+    return rows.map((row) => {
+      const titles = titleFields(null, row.title, row.normalized_url || "");
+      return {
+        collectionItemId: row.membership_id,
+        collectionId: row.collection_id,
+        itemId: row.item_id,
+        normalizedUrl: row.normalized_url,
+        docId: row.doc_id ?? undefined,
+        rawdocId: row.rawdoc_id ?? undefined,
+        ...titles,
+        orderIndex: row.order_index,
+        depth: row.depth,
+        parentItemId: row.parent_membership_id ?? undefined,
+        source: row.source ?? undefined,
+        state: row.state as BatchItemState,
+        creators: safeJsonArray(row.creators_json ?? "[]"),
+        language: row.language ?? undefined,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at ?? row.created_at
+      };
+    });
+  }
+
+  async getCollectionsForItem(itemId: string): Promise<string[]> {
+    await this.ensure();
+    const rows = this.database!.prepare(
+      "SELECT collection_item_id FROM collection_memberships WHERE member_item_id = ?"
+    ).all(itemId as string) as unknown as { collection_item_id: string }[];
+    return rows.map((r) => r.collection_item_id);
+  }
+
+  async getCollectionNavigation(
+    collectionItemId: string,
+    itemId: string
+  ): Promise<{
+    previous: { docId?: string; itemId: string; title?: string; normalizedUrl?: string } | null;
+    next: { docId?: string; itemId: string; title?: string; normalizedUrl?: string } | null;
+  }> {
+    await this.ensure();
+    const memberships = this.database!.prepare(
+      "SELECT member_item_id, order_index FROM collection_memberships WHERE collection_item_id = ? ORDER BY order_index ASC"
+    ).all(collectionItemId) as { member_item_id: string; order_index: number }[];
+    const idx = memberships.findIndex((m) => m.member_item_id === itemId);
+    if (idx < 0) return { previous: null, next: null };
+
+    const toNav = (m: { member_item_id: string; order_index: number }) => {
+      const item = this.database!.prepare("SELECT item_id, title, identity_key FROM items WHERE item_id = ?").get(m.member_item_id) as unknown as unknown as ItemRow | undefined;
+      return item ? {
+        itemId: item.item_id,
+        title: item.title ?? undefined,
+        normalizedUrl: item.identity_key ?? undefined,
+        docId: item.active_doc_id ?? undefined
+      } : { itemId: m.member_item_id };
+    };
+
+    return {
+      previous: idx > 0 ? toNav(memberships[idx - 1]) : null,
+      next: idx < memberships.length - 1 ? toNav(memberships[idx + 1]) : null
+    };
+  }
+
+  async getUsedCollectionMemberDocIds(): Promise<{ docIds: string[] }> {
+    await this.ensure();
+    const rows = this.database!.prepare(
+      "SELECT DISTINCT i.active_doc_id FROM collection_memberships cm JOIN items i ON i.item_id = cm.member_item_id WHERE i.active_doc_id IS NOT NULL"
+    ).all() as { active_doc_id: string }[];
+    return { docIds: rows.map((r) => r.active_doc_id) };
+  }
+
+  // ── collection item CRUD ───────────────────────────────────────────────
+
+  async upsertCollection(params: {
+    collectionId?: string;
+    title: string;
+    sourceType?: string;
+    rootUrl?: string;
+    normalizedRootUrl?: string;
+  }): Promise<{ collectionId: string; collection: CollectionSummary }> {
+    await this.ensure();
+    const now = new Date().toISOString();
+    const id = params.collectionId ?? makeId();
+    const identityKey = params.normalizedRootUrl ? urlHash(params.normalizedRootUrl) : null;
+    this.database!.prepare(`
+      INSERT INTO items (item_id, item_type, source_type, identity_key, title, creators_json, tags_json, state, member_visibility_mode, created_at, updated_at)
+      VALUES (?, 'collection', ?, ?, ?, '[]', '[]', 'active', 'show_members', ?, ?)
+      ON CONFLICT(item_id) DO UPDATE SET
+        title = excluded.title,
+        identity_key = excluded.identity_key,
+        updated_at = excluded.updated_at
+    `).run(id, params.sourceType ?? "virtual_collection", identityKey, params.title, now, now);
+    return { collectionId: id, collection: this.loadCollectionSummary(id) };
+  }
+
+  private loadCollectionSummary(collectionItemId: string): CollectionSummary {
+    const row = this.database!.prepare(
+      "SELECT item_id, title, identity_key, source_type, state, created_at, updated_at FROM items WHERE item_id = ? AND item_type = 'collection'"
+    ).get(collectionItemId) as unknown as unknown as ItemRow | undefined;
+    if (!row) throw new Error("Collection not found");
+    const memberCount = (this.database!.prepare(
+      "SELECT COUNT(*) AS count FROM collection_memberships WHERE collection_item_id = ?"
+    ).get(collectionItemId) as unknown as { count: number }).count;
+    return {
+      collectionId: row.item_id,
+      title: row.title ?? "",
+      rootUrl: row.identity_key ?? undefined,
+      normalizedRootUrl: row.identity_key ?? undefined,
+      sourceType: row.source_type,
+      state: row.state as CollectionState,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      itemCount: memberCount
+    };
+  }
+
+  async listCollections(limit = 50): Promise<{ collections: CollectionSummary[] }> {
+    await this.ensure();
+    const rows = this.database!.prepare(
+      "SELECT item_id FROM items WHERE item_type = 'collection' ORDER BY updated_at DESC LIMIT ?"
+    ).all(Math.min(Math.max(Math.trunc(limit) || 50, 1), 200)) as { item_id: string }[];
+    const collections = rows.map((r) => this.loadCollectionSummary(r.item_id));
+    return { collections };
+  }
+
+  async checkCollectionName(title: string): Promise<{ exists: boolean }> {
+    await this.ensure();
+    const row = this.database!.prepare(
+      "SELECT item_id FROM items WHERE item_type = 'collection' AND title = ?"
+    ).get(title.trim()) as { item_id: string } | undefined;
+    return { exists: Boolean(row) };
+  }
+
+  async deleteCollection(collectionItemId: string): Promise<{ deleted: boolean; collectionId: string }> {
+    await this.ensure();
+    this.database!.exec("BEGIN");
+    try {
+      this.database!.prepare("DELETE FROM collection_memberships WHERE collection_item_id = ?").run(collectionItemId);
+      this.database!.prepare("DELETE FROM items WHERE item_id = ?").run(collectionItemId);
+      this.database!.exec("COMMIT");
+    } catch (error) {
+      this.database!.exec("ROLLBACK");
+      throw error;
+    }
+    return { deleted: true, collectionId: collectionItemId };
+  }
+
+  // ── backward-compat wrappers for server.ts ────────────────────────────
+
+  async status(inputUrl: string): Promise<KnowledgeItem | null> {
+    await this.ensure();
+    const normalized = normalizeUrlForKnowledge(inputUrl);
+    const row = this.findItemByAlias("normalized_url", normalized);
+    if (!row) return null;
+    return toKnowledgeItem(row);
+  }
+
+  async list(limit = 50): Promise<KnowledgeItem[]> {
+    await this.ensure();
+    const result = await this.listItems(undefined, limit);
+    return result.items;
+  }
+
+  async deleteByUrl(inputUrl: string, mode: KnowledgeItemDeleteMode): Promise<KnowledgeItemDeleteResponse> {
+    await this.ensure();
+    const normalized = normalizeUrlForKnowledge(inputUrl);
+    const row = this.findItemByAlias("normalized_url", normalized);
+    if (!row) throw new Error("Item not found for this URL");
+    return this.deleteItem(row.item_id, mode);
+  }
+
+  async replaceCollectionItems(collectionId: string, items: Array<{
+    normalizedUrl: string;
+    title?: string;
+    pageTitle?: string;
+    source?: string;
+    orderIndex: number;
+    depth: number;
+    state?: string;
+  }>): Promise<CollectionItem[]> {
+    await this.ensure();
+    const now = new Date().toISOString();
+    for (const item of items) {
+      const hash = urlHash(item.normalizedUrl);
+      const memberItemId = `url:sha256:${hash}`;
+      this.database!.prepare(`
+        INSERT INTO items (item_id, item_type, source_type, identity_key, title, creators_json, tags_json, state, active_capture_id, active_doc_id, created_at, updated_at)
+        VALUES (?, 'document', 'url', ?, ?, '[]', '[]', 'captured', NULL, NULL, ?, ?)
+        ON CONFLICT(item_id) DO NOTHING
+      `).run(memberItemId, hash, item.title ?? item.pageTitle ?? null, now, now);
+      this.upsertAlias(memberItemId, "normalized_url", item.normalizedUrl, true);
+    }
+    const members = items.map((item, index) => ({
+      memberItemId: `url:sha256:${urlHash(item.normalizedUrl)}`,
+      orderIndex: item.orderIndex ?? index,
+      depth: item.depth ?? 0,
+      inclusionMode: "manual"
+    }));
+    return this.replaceCollectionMembers(collectionId, members);
+  }
+
+  async getCollectionsByDocId(docId: string): Promise<{ collections: Array<{ collectionId: string; title: string }> }> {
+    await this.ensure();
+    const docRow = this.database!.prepare("SELECT item_id FROM documents WHERE doc_id = ?").get(docId) as { item_id: string } | undefined;
+    if (!docRow) return { collections: [] };
+    const rows = this.database!.prepare(
+      "SELECT cm.collection_item_id, i.title FROM collection_memberships cm JOIN items i ON i.item_id = cm.collection_item_id WHERE cm.member_item_id = ?"
+    ).all(docRow.item_id) as { collection_item_id: string; title: string | null }[];
+    return { collections: rows.map((r) => ({ collectionId: r.collection_item_id, title: r.title ?? "" })) };
+  }
+
+  async getUsedCollectionDocIds(): Promise<{ docIds: string[] }> {
+    return this.getUsedCollectionMemberDocIds();
+  }
+
+  // ── document loading ───────────────────────────────────────────────────
+
+  async loadDocument(docId: string): Promise<KnowledgeDocument | undefined> {
+    await this.ensure();
+    return this.readJson<KnowledgeDocument>(`documents/${docId}.json`).catch(() => undefined);
+  }
+
+  async loadMarkdown(docId: string): Promise<string> {
+    await this.ensure();
+    return this.readText(`markdown/${docId}.md`);
+  }
+
+  async loadAsset(assetId: string): Promise<{ path: string; contentType: string; bytes: Buffer }> {
+    const assetPath = resolveInsideRoot(this.root, `assets/${assetId}`);
+    const bytes = await readFile(assetPath);
+    const contentType = guessContentType(assetId);
+    return { path: assetPath, contentType, bytes };
+  }
+
+  async prepareDocumentAssets(document: KnowledgeDocument): Promise<KnowledgeDocument> {
+    await this.ensure();
+    const next: KnowledgeDocument = JSON.parse(JSON.stringify(document)) as KnowledgeDocument;
+    for (const section of next.sections) {
+      for (const asset of section.assets ?? []) {
+        if (!asset.path || !isAbsolute(asset.path)) continue;
+        const bytes = await readFile(asset.path).catch(() => undefined);
+        if (!bytes) continue;
+        const extension = sanitizeExtension(extname(asset.path)) || "bin";
+        const assetId = `${sha256Buffer(bytes).slice(0, 16)}.${extension}`;
+        const target = resolveInsideRoot(this.root, `assets/${assetId}`);
+        await mkdir(dirname(target), { recursive: true });
+        await copyFile(asset.path, target).catch(async (error: NodeJS.ErrnoException) => {
+          if (error.code !== "EEXIST") throw error;
+        });
+        asset.asset_id = assetId;
+        asset.path = undefined;
+      }
+    }
+    return next;
+  }
+
+  // ── batch (legacy, will be replaced by refresh_* ) ────────────────────
+
+  async recoverStaleJobs(): Promise<number> {
+    await this.ensure();
+    const result = this.database!.prepare(
+      "UPDATE batch_jobs SET state = 'failed' WHERE state = 'running'"
+    ).run();
+    this.database!.prepare(
+      "UPDATE batch_items SET state = 'failed', error_code = 'stale', error_message = 'Job was interrupted', updated_at = ? WHERE state IN ('fetching', 'parsing', 'saving')"
+    ).run(new Date().toISOString());
+    return Number(result.changes);
+  }
+
+  async resetFailedBatchItems(jobId: string): Promise<number> {
+    await this.ensure();
+    const result = this.database!.prepare(
+      "UPDATE batch_items SET state = 'pending', error_code = NULL, error_message = NULL, updated_at = ? WHERE job_id = ? AND state = 'failed'"
+    ).run(new Date().toISOString(), jobId);
+    return Number(result.changes);
+  }
+
+  async createBatchJob(params: {
+    sourcePageUrl: string;
+    collectionId?: string;
+    mode: string;
+    totalCount: number;
+    options?: Record<string, unknown>;
+  }): Promise<{ jobId: string }> {
+    await this.ensure();
+    const jobId = makeId();
+    const now = new Date().toISOString();
+    this.database!.prepare(`
+      INSERT INTO batch_jobs (job_id, collection_id, source_page_url, mode, state, total_count, options_json, created_at)
+      VALUES (?, ?, ?, ?, 'queued', ?, ?, ?)
+    `).run(jobId, params.collectionId ?? null, params.sourcePageUrl, params.mode, params.totalCount, params.options ? JSON.stringify(params.options) : null, now);
+    return { jobId };
+  }
+
+  async listPendingBatchItems(jobId: string): Promise<BatchJobItem[]> {
+    await this.ensure();
+    const rows = this.database!.prepare(
+      "SELECT * FROM batch_items WHERE job_id = ? AND state = 'pending' ORDER BY created_at ASC"
+    ).all(jobId) as unknown as BatchItemRow[];
     return rows.map(toBatchJobItem);
   }
 
-  private findBatchItem(itemId: string): BatchItemRow | undefined {
-    return this.database!.prepare(`
-      SELECT item_id, job_id, collection_id, url, normalized_url, source, title_hint, state,
-        rawdoc_id, doc_id, error_code, error_message, attempt_count, created_at, updated_at
-      FROM batch_items
-      WHERE item_id = ?
-    `).get(itemId) as BatchItemRow | undefined;
-  }
-
-  private async refreshBatchCounts(jobId: string): Promise<void> {
-    const rows = this.database!.prepare(`
-      SELECT state, COUNT(*) AS count
-      FROM batch_items
-      WHERE job_id = ?
-      GROUP BY state
-    `).all(jobId) as Array<{ state: BatchItemState; count: number }>;
-    const counts = new Map(rows.map((row) => [row.state, row.count]));
-    const saved = counts.get("saved") ?? 0;
-    const skipped = counts.get("skipped") ?? 0;
-    const failed = counts.get("failed") ?? 0;
-    const cancelled = counts.get("cancelled") ?? 0;
-    const terminal = saved + skipped + failed + cancelled;
-    const job = this.database!.prepare(`
-      SELECT total_count, state
-      FROM batch_jobs
-      WHERE job_id = ?
-    `).get(jobId) as { total_count: number; state: BatchJobState } | undefined;
-    if (!job) {
-      return;
-    }
-
-    const nextState: BatchJobState = terminal >= job.total_count
-      ? "succeeded"
-      : job.state === "queued"
-        ? "running"
-        : job.state;
-    const now = new Date().toISOString();
-    this.database!.prepare(`
-      UPDATE batch_jobs
-      SET saved_count = ?,
-          skipped_count = ?,
-          failed_count = ?,
-          cancelled_count = ?,
-          state = ?,
-          started_at = CASE WHEN started_at IS NULL THEN ? ELSE started_at END,
-          finished_at = CASE WHEN ? = 'succeeded' THEN ? ELSE finished_at END
-      WHERE job_id = ?
-    `).run(saved, skipped, failed, cancelled, nextState, now, nextState, now, jobId);
-  }
-
-  private async refreshCollectionState(collectionId: string): Promise<void> {
-    const rows = this.database!.prepare(`
-      SELECT state, COUNT(*) AS count
-      FROM collection_items
-      WHERE collection_id = ?
-      GROUP BY state
-    `).all(collectionId) as Array<{ state: BatchItemState; count: number }>;
-    const total = rows.reduce((sum, row) => sum + row.count, 0);
-    const saved = rows.find((row) => row.state === "saved")?.count ?? 0;
-    const skipped = rows.find((row) => row.state === "skipped")?.count ?? 0;
-    const failed = rows.find((row) => row.state === "failed")?.count ?? 0;
-    const useful = saved + skipped;
-    const state: CollectionState = useful === 0 && failed === 0
-      ? "draft"
-      : failed > 0 || useful < total
-        ? "partial"
-        : "active";
-    this.database!.prepare(`
-      UPDATE collections
-      SET state = ?,
-          updated_at = ?
-      WHERE collection_id = ?
-    `).run(state, new Date().toISOString(), collectionId);
-  }
-
-  private toStatus(row: ClipRow & { item_id?: string }): ClipStatus {
-    const hasDocument = Boolean(row.active_doc_id);
+  async loadBatchJob(jobId: string): Promise<BatchJobResponse> {
+    await this.ensure();
+    const job = this.database!.prepare("SELECT * FROM batch_jobs WHERE job_id = ?").get(jobId) as BatchJobRow | undefined;
+    if (!job) throw new Error("Batch job not found");
+    const items = this.database!.prepare(
+      "SELECT * FROM batch_items WHERE job_id = ? ORDER BY created_at ASC"
+    ).all(jobId) as unknown as BatchItemRow[];
     return {
-      normalizedUrl: row.normalized_url,
-      urlHash: row.url_hash,
-      state: hasDocument ? "parsed" : "captured",
-      hasRawdoc: true,
-      hasDocument,
-      originalUrl: row.original_url ?? undefined,
-      canonicalUrl: row.canonical_url ?? undefined,
-      captureSavedAt: row.capture_saved_at,
-      captureUpdatedAt: row.capture_updated_at,
-      parseUpdatedAt: row.parse_updated_at ?? undefined,
-      ...titleFields(row.page_title, row.content_title, row.normalized_url),
-      itemId: row.item_id ?? undefined,
-      docId: row.active_doc_id ?? undefined,
-      rawdocId: row.rawdoc_id
+      collectionId: job.collection_id ?? undefined,
+      jobId: job.job_id,
+      state: job.state,
+      total: job.total_count,
+      saved: job.saved_count,
+      skipped: job.skipped_count,
+      failed: job.failed_count,
+      cancelled: job.cancelled_count,
+      items: items.map(toBatchJobItem)
     };
   }
 
-  private async removeByRow(row: ClipRow): Promise<ClipDeleteResponse> {
-    if (!row.active_doc_id) {
-      return {
-        ...this.toStatus(row),
-        deleted: false,
-        mode: "remove",
-        previousState: "captured",
-        currentState: "captured",
-        deletedFiles: []
+  async updateBatchJobState(jobId: string, state: BatchJobState): Promise<void> {
+    await this.ensure();
+    const updates: Record<string, string | null> = { state };
+    if (state === "running") updates.started_at = new Date().toISOString();
+    if (state === "succeeded" || state === "failed" || state === "cancelled") updates.finished_at = new Date().toISOString();
+    const setClauses = Object.entries(updates).map(([k]) => `${k} = ?`).join(", ");
+    this.database!.prepare(`UPDATE batch_jobs SET ${setClauses} WHERE job_id = ?`).run(...Object.values(updates), jobId);
+  }
+
+  async updateBatchItem(params: {
+    itemId: string;
+    state?: BatchItemState;
+    normalizedUrl?: string;
+    rawdocId?: string;
+    docId?: string;
+    errorCode?: string;
+    errorMessage?: string;
+    incrementAttempt?: boolean;
+  }): Promise<void> {
+    await this.ensure();
+    const sets: string[] = ["updated_at = ?"];
+    const values: unknown[] = [new Date().toISOString()];
+    if (params.state) { sets.push("state = ?"); values.push(params.state); }
+    if (params.normalizedUrl) { sets.push("normalized_url = ?"); values.push(params.normalizedUrl); }
+    if (params.rawdocId) { sets.push("rawdoc_id = ?"); values.push(params.rawdocId); }
+    if (params.docId) { sets.push("doc_id = ?"); values.push(params.docId); }
+    if (params.errorCode) { sets.push("error_code = ?"); values.push(params.errorCode); }
+    if (params.errorMessage) { sets.push("error_message = ?"); values.push(params.errorMessage); }
+    if (params.incrementAttempt) sets.push("attempt_count = attempt_count + 1");
+    values.push(params.itemId);
+    this.database!.prepare(`UPDATE batch_items SET ${sets.join(", ")} WHERE item_id = ?`).run(...values as string[]);
+    // Update job counters
+    if (params.state === "saved") {
+      this.database!.prepare("UPDATE batch_jobs SET saved_count = saved_count + 1 WHERE job_id = (SELECT job_id FROM batch_items WHERE item_id = ?)").run(params.itemId);
+    } else if (params.state === "skipped") {
+      this.database!.prepare("UPDATE batch_jobs SET skipped_count = skipped_count + 1 WHERE job_id = (SELECT job_id FROM batch_items WHERE item_id = ?)").run(params.itemId);
+    } else if (params.state === "failed") {
+      this.database!.prepare("UPDATE batch_jobs SET failed_count = failed_count + 1 WHERE job_id = (SELECT job_id FROM batch_items WHERE item_id = ?)").run(params.itemId);
+    } else if (params.state === "cancelled") {
+      this.database!.prepare("UPDATE batch_jobs SET cancelled_count = cancelled_count + 1 WHERE job_id = (SELECT job_id FROM batch_items WHERE item_id = ?)").run(params.itemId);
+    }
+  }
+
+  // ── search / context ───────────────────────────────────────────────────
+
+  async search(query: string, options: SearchOptions = {}): Promise<SearchResultItem[]> {
+    await this.ensure();
+    const trimmed = query.trim();
+    if (!trimmed) return [];
+    const searchResults = this.searchChunks(trimmed, options);
+    const results = await Promise.all(searchResults.map(async (c) => ({
+      chunkId: c.chunk_id,
+      docId: c.doc_id,
+      rawdocId: c.capture_id,
+      sectionIds: safeJsonArray(c.section_ids_json ?? "[]"),
+      title: c.title,
+      pageTitle: c.page_title ?? undefined,
+      contentTitle: c.title,
+      displayTitle: c.page_title ?? c.title,
+      sourceUrl: c.source_url ?? undefined,
+      normalizedUrl: c.source_url ?? undefined,
+      headingPath: c.heading_path ?? undefined,
+      snippet: c.text.slice(0, 300),
+      score: c.score ?? 0,
+      parserVersion: c.parser_version ?? undefined,
+      parserMethod: c.parser_method ?? undefined,
+      parserProfile: c.parser_profile ?? undefined,
+      ...(options.trace ? { trace: this.buildTrace(query, c) } : {})
+    })));
+    return results;
+  }
+
+  async retrieveContext(query: string, options: ContextOptions = {}): Promise<ContextCitation[]> {
+    await this.ensure();
+    const trimmed = query.trim();
+    if (!trimmed) return [];
+    const searchResults = this.searchChunks(trimmed, { ...options, limit: options.limit ?? 10 }) as unknown as SearchChunkRow[];
+    const maxChars = options.maxChars ?? 6000;
+    let usedChars = 0;
+    const citations: ContextCitation[] = [];
+    for (const c of searchResults) {
+      const content = c.text.length > 800 ? c.text.slice(0, 800) + CONTEXT_TRUNCATION_SUFFIX : c.text;
+      const marker: string = `[${citations.length + 1}]`;
+      const citation: ContextCitation = {
+        citationId: c.chunk_id,
+        marker,
+        rank: citations.length + 1,
+        chunkId: c.chunk_id,
+        docId: c.doc_id,
+        rawdocId: c.capture_id,
+        sectionIds: safeJsonArray(c.section_ids_json ?? "[]"),
+        title: c.title,
+        pageTitle: c.page_title ?? undefined,
+        contentTitle: c.title,
+        displayTitle: c.page_title ?? c.title,
+        sourceUrl: c.source_url ?? undefined,
+        normalizedUrl: c.source_url ?? undefined,
+        headingPath: c.heading_path ?? undefined,
+        content,
+        score: c.score ?? 0,
+        parserVersion: c.parser_version ?? undefined,
+        parserMethod: c.parser_method ?? undefined,
+        parserProfile: c.parser_profile ?? undefined,
+        truncated: c.text.length > 800,
+        ...(options.trace ? { trace: this.buildTrace(query, c) } : {})
       };
+      if (usedChars + content.length > maxChars && citations.length > 0) break;
+      citations.push(citation);
+      usedChars += content.length;
     }
+    return citations as ContextCitation[];
+  }
 
-    const now = new Date().toISOString();
-    const deletedFiles = await this.deleteDerivedArtifacts(row.active_doc_id);
-    try {
-      this.database!.exec("BEGIN");
-      this.deleteChunksByDocId(row.active_doc_id);
-      this.database!.prepare("DELETE FROM documents WHERE doc_id = ?").run(row.active_doc_id);
-      this.database!.prepare(`
-        UPDATE clips
-        SET active_doc_id = NULL,
-            content_title = NULL,
-            capture_updated_at = ?,
-            parse_updated_at = NULL
-        WHERE url_hash = ?
-      `).run(now, row.url_hash);
-      this.database!.prepare(`
-        UPDATE knowledge_items
-        SET active_doc_id = NULL,
-            state = 'captured',
-            updated_at = ?,
-            parsed_at = NULL
-        WHERE active_doc_id = ?
-          AND source_type IN ('url', 'singlefile_html')
-      `).run(now, row.active_doc_id);
-      this.database!.exec("COMMIT");
-    } catch (error) {
-      this.database!.exec("ROLLBACK");
-      throw error;
+  private searchChunks(query: string, options: SearchOptions): SearchChunkRow[] {
+    const { ftsQuery, params } = buildFtsQuery(query);
+    let sql = "SELECT c.*, rank FROM chunks c JOIN chunks_fts fts ON c.rowid = fts.rowid WHERE chunks_fts MATCH ?";
+    const allParams: unknown[] = [ftsQuery];
+    if (options.docId) {
+      sql += " AND c.doc_id = ?";
+      allParams.push(options.docId);
     }
+    sql += " ORDER BY rank LIMIT ?";
+    allParams.push(Math.min(options.limit || 20, 50));
+    return this.database!.prepare(sql).all(...allParams as string[]) as unknown as SearchChunkRow[];
+  }
 
+  private buildTrace(query: string, chunk: SearchChunkRow) {
+    // simplified trace — matches original behavior
+    const terms = extractQueryTerms(query);
+    const matchedTerms = terms.filter((t) =>
+      (typeof chunk.title === "string" && chunk.title.toLowerCase().includes(t)) ||
+      (typeof chunk.text === "string" && chunk.text.toLowerCase().includes(t))
+    );
+    const titleMatches = terms.filter((t) => typeof chunk.title === "string" && chunk.title.toLowerCase().includes(t)).length;
+    const headingMatches = terms.filter((t) => typeof chunk.heading_path === "string" && (chunk.heading_path as string).toLowerCase().includes(t)).length;
+    const textLower = typeof chunk.text === "string" ? chunk.text.toLowerCase() : "";
+    const hasAll = terms.every((t) => textLower.includes(t));
     return {
-      normalizedUrl: row.normalized_url,
-      urlHash: row.url_hash,
-      state: "captured",
-      hasRawdoc: true,
-      hasDocument: false,
-      originalUrl: row.original_url ?? undefined,
-      canonicalUrl: row.canonical_url ?? undefined,
-      captureSavedAt: row.capture_saved_at,
-      captureUpdatedAt: now,
-      ...titleFields(row.page_title, null, row.normalized_url),
-      rawdocId: row.rawdoc_id,
-      deleted: true,
-      mode: "remove",
-      previousState: "parsed",
-      currentState: "captured",
-      deletedFiles,
-      removedDocId: row.active_doc_id
+      queryTerms: terms,
+      matchedTerms,
+      termCoverage: terms.length > 0 ? matchedTerms.length / terms.length : 1,
+      bm25Score: (chunk.score as number) ?? 0,
+      rankingScore: (chunk.score as number) ?? 0,
+      titleMatches,
+      headingMatches,
+      phraseMatched: hasAll
     };
   }
 
-  private async purgeByRow(row: ClipRow): Promise<ClipDeleteResponse> {
-    const deletedFiles: string[] = [];
-    if (row.active_doc_id) {
-      deletedFiles.push(...await this.deleteDerivedArtifacts(row.active_doc_id));
-    }
-    deletedFiles.push(...await this.deleteCaptureArtifacts(row.rawdoc_id));
-
-    try {
-      this.database!.exec("BEGIN");
-      this.database!.prepare("DELETE FROM clips WHERE url_hash = ?").run(row.url_hash);
-      if (row.active_doc_id) {
-        this.deleteChunksByDocId(row.active_doc_id);
-        this.database!.prepare("DELETE FROM documents WHERE doc_id = ?").run(row.active_doc_id);
-      }
-      this.database!.prepare("DELETE FROM rawdocs WHERE rawdoc_id = ?").run(row.rawdoc_id);
-      this.database!.prepare(`
-        DELETE FROM knowledge_items
-        WHERE active_rawdoc_id = ?
-          AND source_type IN ('url', 'singlefile_html')
-      `).run(row.rawdoc_id);
-      this.database!.exec("COMMIT");
-    } catch (error) {
-      this.database!.exec("ROLLBACK");
-      throw error;
-    }
-
-    return {
-      normalizedUrl: row.normalized_url,
-      urlHash: row.url_hash,
-      state: "empty",
-      hasRawdoc: false,
-      hasDocument: false,
-      originalUrl: row.original_url ?? undefined,
-      canonicalUrl: row.canonical_url ?? undefined,
-      deleted: true,
-      mode: "purge",
-      previousState: row.active_doc_id ? "parsed" : "captured",
-      currentState: "empty",
-      deletedFiles,
-      removedDocId: row.active_doc_id ?? undefined,
-      removedRawdocId: row.rawdoc_id
-    };
-  }
-
-  async deleteDerivedArtifacts(docId: string): Promise<string[]> {
-    const deletedFiles: string[] = [];
-    const assetPaths = await this.assetPathsForDocument(docId);
-    const relativePaths = [
-      documentJsonPath(docId),
-      markdownPath(docId),
-      ...assetPaths
-    ];
-    for (const relativePath of relativePaths) {
-      await this.deleteFile(relativePath);
-      deletedFiles.push(relativePath);
-    }
-    return deletedFiles;
-  }
-
-  private async assetPathsForDocument(docId: string): Promise<string[]> {
-    const document = await this.readText(documentJsonPath(docId))
-      .then((content) => JSON.parse(content) as KnowledgeDocument)
-      .catch(() => undefined);
-    if (!document) {
-      return [];
-    }
-
-    const paths = new Set<string>();
-    for (const section of document.sections) {
-      for (const asset of section.assets ?? []) {
-        const safeAssetId = asset.asset_id ? sanitizeAssetId(asset.asset_id) : undefined;
-        if (safeAssetId) {
-          paths.add(`assets/${safeAssetId}`);
-          continue;
-        }
-        if (asset.path?.startsWith("assets/")) {
-          const pathAssetId = sanitizeAssetId(asset.path.slice("assets/".length));
-          if (pathAssetId) {
-            paths.add(`assets/${pathAssetId}`);
-          }
-        }
-      }
-    }
-    return [...paths];
-  }
-
-  private async deleteCaptureArtifacts(rawdocId: string, contentExt?: string): Promise<string[]> {
-    const deletedFiles: string[] = [];
-    const relativePaths = [
-      rawContentPath(rawdocId, contentExt ?? this.rawdocContentExt(rawdocId)),
-      rawdocMetaPath(rawdocId)
-    ];
-    for (const relativePath of relativePaths) {
-      await this.deleteFile(relativePath);
-      deletedFiles.push(relativePath);
-    }
-    return deletedFiles;
-  }
+  // ── chunks ─────────────────────────────────────────────────────────────
 
   private replaceChunks(
     document: KnowledgeDocument,
     rawdoc: RawDoc,
-    normalizedUrl: string,
+    itemId: string,
+    captureId: string,
     parserInfo: { version: string; method: string; profile: string | null },
     now: string
   ): void {
-    const builtChunks = buildChunks(document);
-    this.deleteChunksByDocId(document.doc_id);
-
+    this.database!.prepare("DELETE FROM chunks WHERE doc_id = ?").run(document.doc_id);
+    const chunks = buildChunks(document);
     const insertChunk = this.database!.prepare(`
-      INSERT INTO chunks (
-        chunk_id,
-        doc_id,
-        rawdoc_id,
-        chunk_index,
-        title,
-        page_title,
-        source_url,
-        normalized_url,
-        heading_path,
-        section_ids_json,
-        text,
-        token_estimate,
-        char_count,
-        parser_version,
-        parser_method,
-        parser_profile,
-        content_hash,
-        created_at,
-        updated_at
-      )
+      INSERT INTO chunks (chunk_id, doc_id, item_id, capture_id, chunk_index, title, page_title, source_url, heading_path, section_ids_json, text, token_estimate, char_count, parser_version, parser_method, parser_profile, content_hash, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
-    const insertFts = this.database!.prepare("INSERT INTO chunks_fts (rowid, title, heading_path, text) VALUES (?, ?, ?, ?)");
-
-    for (const chunk of builtChunks) {
+    for (let i = 0; i < chunks.length; i++) {
+      const c = chunks[i];
       insertChunk.run(
-        chunk.chunkId,
-        document.doc_id,
-        rawdoc.rawdoc_id,
-        chunk.chunkIndex,
-        document.meta.title,
-        document.meta.page_title ?? null,
-        document.meta.source.url ?? rawdoc.source_uri,
-        normalizedUrl,
-        chunk.headingPath,
-        JSON.stringify(chunk.sectionIds),
-        chunk.text,
-        chunk.tokenEstimate,
-        chunk.charCount,
-        parserInfo.version,
-        parserInfo.method,
-        parserInfo.profile,
-        chunk.contentHash,
-        now,
-        now
-      );
-      const row = this.database!.prepare("SELECT rowid FROM chunks WHERE chunk_id = ?").get(chunk.chunkId) as { rowid: number };
-      insertFts.run(
-        row.rowid,
-        document.meta.title,
-        chunk.headingPath,
-        chunk.text
+        c.chunkId, document.doc_id, itemId, captureId, i,
+        document.meta.title, document.meta.page_title ?? null,
+        document.meta.source.url ?? null, c.headingPath ?? null,
+        JSON.stringify(c.sectionIds), c.text, c.tokenEstimate, c.charCount,
+        parserInfo.version, parserInfo.method, parserInfo.profile ?? null,
+        c.contentHash, now, now
       );
     }
+    this.database!.prepare("INSERT INTO chunks_fts(rowid, title, heading_path, text) SELECT rowid, title, heading_path, text FROM chunks WHERE doc_id = ?").run(document.doc_id);
   }
 
-  private deleteChunksByDocId(docId: string): void {
-    const rows = this.database!.prepare(`
-      SELECT rowid, title, heading_path, text
-      FROM chunks
-      WHERE doc_id = ?
-    `).all(docId) as unknown as ChunkIndexRow[];
-    const deleteFts = this.database!.prepare(`
-      INSERT INTO chunks_fts (chunks_fts, rowid, title, heading_path, text)
-      VALUES ('delete', ?, ?, ?, ?)
-    `);
-    for (const row of rows) {
-      deleteFts.run(row.rowid, row.title, row.heading_path, row.text);
+  // ── annotations ────────────────────────────────────────────────────────
+
+  async loadAnnotations(docId: string): Promise<Annotation[]> {
+    await this.ensure();
+    const rows = this.database!.prepare(
+      "SELECT * FROM annotations WHERE doc_id = ? AND orphaned = 0 ORDER BY created_at ASC"
+    ).all(docId) as unknown as Annotation[];
+    return rows;
+  }
+
+  async saveAnnotation(docId: string, annotation: Annotation): Promise<void> {
+    await this.ensure();
+    const now = new Date().toISOString();
+    const target = resolveInsideRoot(this.root, `annotations/${docId}.json`);
+    await mkdir(dirname(target), { recursive: true });
+    let file: AnnotationFile;
+    try {
+      const raw = JSON.parse(await readFile(target, "utf-8")) as AnnotationFile;
+      file = AnnotationFileSchema.parse(raw);
+    } catch {
+      file = { doc_id: docId, version: 0, updated_at: now, annotations: [] };
     }
-    this.database!.prepare("DELETE FROM chunks WHERE doc_id = ?").run(docId);
-  }
+    const existingIdx = file.annotations.findIndex((a) => a.annotation_id === annotation.annotation_id);
+    const nextAnnotation = { ...annotation, updated_at: now, ...(!annotation.created_at ? { created_at: now } : {}) };
+    if (existingIdx >= 0) {
+      file.annotations[existingIdx] = nextAnnotation;
+    } else {
+      file.annotations.push(nextAnnotation);
+    }
+    file.version++;
+    file.updated_at = now;
+    await writeFile(target, JSON.stringify(file), "utf-8");
 
-  private upsertAnnotationSqlite(docId: string, annotation: Annotation): void {
+    const dbAnnotation = {
+      annotation_id: nextAnnotation.annotation_id,
+      doc_id: docId,
+      section_id: nextAnnotation.section_id,
+      type: nextAnnotation.type,
+      text_ref: getTextRef(nextAnnotation),
+      note: getNote(nextAnnotation),
+      color: getColor(nextAnnotation),
+      label: getLabel(nextAnnotation),
+      ai_model: getAiModel(nextAnnotation),
+      summary_level: getSummaryLevel(nextAnnotation),
+      orphaned: nextAnnotation.orphaned ? 1 : 0,
+      created_at: nextAnnotation.created_at,
+      updated_at: nextAnnotation.updated_at
+    };
     this.database!.prepare(`
-      INSERT INTO annotations (
-        annotation_id, doc_id, section_id, type, text_ref, note,
-        color, label, ai_model, summary_level, orphaned, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO annotations (annotation_id, doc_id, section_id, type, text_ref, note, color, label, ai_model, summary_level, orphaned, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(annotation_id) DO UPDATE SET
-        doc_id = excluded.doc_id,
         section_id = excluded.section_id,
         type = excluded.type,
         text_ref = excluded.text_ref,
@@ -2918,131 +1644,94 @@ export class KnowledgeStore {
         orphaned = excluded.orphaned,
         updated_at = excluded.updated_at
     `).run(
-      annotation.annotation_id, docId, annotation.section_id,
-      annotation.type,
-      getTextRef(annotation), getNote(annotation),
-      getColor(annotation), getLabel(annotation),
-      getAiModel(annotation), getSummaryLevel(annotation),
-      annotation.orphaned ? 1 : 0,
-      annotation.created_at, annotation.updated_at
+      dbAnnotation.annotation_id, dbAnnotation.doc_id, dbAnnotation.section_id,
+      dbAnnotation.type, dbAnnotation.text_ref, dbAnnotation.note, dbAnnotation.color,
+      dbAnnotation.label, dbAnnotation.ai_model, dbAnnotation.summary_level,
+      dbAnnotation.orphaned, dbAnnotation.created_at, dbAnnotation.updated_at
     );
   }
 
-  private deleteAnnotationSqlite(annotationId: string): void {
-    this.database!.prepare("DELETE FROM annotations WHERE annotation_id = ?").run(annotationId);
+  async deleteAnnotation(docId: string, annotationId: string): Promise<void> {
+    await this.ensure();
+    this.database!.prepare("DELETE FROM annotations WHERE annotation_id = ? AND doc_id = ?").run(annotationId, docId);
+    const target = resolveInsideRoot(this.root, `annotations/${docId}.json`);
+    try {
+      const raw = JSON.parse(await readFile(target, "utf-8")) as AnnotationFile;
+      raw.annotations = raw.annotations.filter((a) => a.annotation_id !== annotationId);
+      raw.version++;
+      raw.updated_at = new Date().toISOString();
+      await writeFile(target, JSON.stringify(raw), "utf-8");
+    } catch { /* file might not exist */ }
   }
 
-  private deleteAnnotationSqliteForDoc(docId: string): void {
+  async deleteAnnotationsForDoc(docId: string): Promise<void> {
+    await this.ensure();
     this.database!.prepare("DELETE FROM annotations WHERE doc_id = ?").run(docId);
   }
 
-  private replaceAnnotationSqlite(
-    oldDocId: string,
-    newDocId: string,
-    annotations: Annotation[]
-  ): void {
-    this.database!.prepare("DELETE FROM annotations WHERE doc_id = ?").run(oldDocId);
-    for (const anno of annotations) {
-      this.upsertAnnotationSqlite(newDocId, anno);
+  async migrateAnnotations(oldDocId: string, newDocId: string, _document: KnowledgeDocument): Promise<number> {
+    await this.ensure();
+    const annotations = this.database!.prepare(
+      "SELECT * FROM annotations WHERE doc_id = ? AND orphaned = 0"
+    ).all(oldDocId) as unknown as Annotation[];
+    for (const a of annotations) {
+      this.database!.prepare("UPDATE annotations SET doc_id = ? WHERE annotation_id = ?").run(newDocId, a.annotation_id);
     }
+    return annotations.length;
   }
 
-  private rebuildChunksFtsIndex(): void {
-    this.database!.exec(`
-      DROP TABLE IF EXISTS chunks_fts;
-      CREATE VIRTUAL TABLE chunks_fts USING fts5(
-        title,
-        heading_path,
-        text,
-        content='chunks',
-        content_rowid='rowid'
-      );
-      INSERT INTO chunks_fts (rowid, title, heading_path, text)
-      SELECT rowid, title, heading_path, text
-      FROM chunks;
-    `);
+  async listAnnotationDocs(): Promise<
+    Array<{ doc_id: string; title?: string; page_title?: string; annotation_count: number }>
+  > {
+    await this.ensure();
+    const rows = this.database!.prepare(
+      "SELECT a.doc_id, d.title, d.page_title, COUNT(*) AS annotation_count FROM annotations a LEFT JOIN documents d ON d.doc_id = a.doc_id WHERE a.orphaned = 0 GROUP BY a.doc_id ORDER BY annotation_count DESC"
+    ).all() as { doc_id: string; title: string | null; page_title: string | null; annotation_count: number }[];
+    return rows.map((r) => ({
+      doc_id: r.doc_id,
+      title: r.title ?? undefined,
+      page_title: r.page_title ?? undefined,
+      annotation_count: r.annotation_count
+    }));
   }
 
-  private async writeText(relativePath: string, content: string): Promise<void> {
-    const path = resolveInsideRoot(this.root, relativePath);
-    await mkdir(dirname(path), { recursive: true });
-    await writeFile(path, content, "utf8");
-  }
+  // ── maintenance ────────────────────────────────────────────────────────
 
-  private async writeBuffer(relativePath: string, content: Buffer): Promise<void> {
-    const path = resolveInsideRoot(this.root, relativePath);
-    await mkdir(dirname(path), { recursive: true });
-    await writeFile(path, content);
-  }
-
-  private async readText(relativePath: string): Promise<string> {
-    const path = resolveInsideRoot(this.root, relativePath);
-    return readFile(path, "utf8");
-  }
-
-  private async readBuffer(relativePath: string): Promise<Buffer> {
-    const path = resolveInsideRoot(this.root, relativePath);
-    return readFile(path);
-  }
-
-  private async writeJson(relativePath: string, content: unknown): Promise<void> {
-    await this.writeText(relativePath, JSON.stringify(content, null, 2) + "\n");
-  }
-
-  private get databasePath(): string {
-    return join(this.root, "index.sqlite3");
-  }
-
-  private async scanMaintenanceWithoutEnsure(): Promise<StoreMaintenanceScan> {
-    const [databaseSize, rawdocFiles, documentFiles, markdownFiles, assetFiles] = await Promise.all([
-      fileSize(this.databasePath),
-      countFiles(join(this.root, "rawdocs")),
-      countFiles(join(this.root, "documents")),
-      countFiles(join(this.root, "markdown")),
-      countFiles(join(this.root, "assets"))
-    ]);
+  async scanMaintenance(): Promise<StoreMaintenanceScan> {
+    await this.ensure();
+    const databaseSize = (await stat(join(this.root, "index.sqlite3")).catch(() => ({ size: -1 }))).size;
+    const rawdocFiles = await countFiles(join(this.root, "rawdocs"));
+    const documentFiles = await countFiles(join(this.root, "documents"));
+    const markdownFiles = await countFiles(join(this.root, "markdown"));
+    const assetFiles = await countFiles(join(this.root, "assets"));
     const tables = {
-      knowledgeItems: this.countRows("knowledge_items"),
-      clips: this.countRows("clips"),
+      knowledgeItems: this.countRows("items"),
+      clips: 0,
       epubMetadata: this.countRows("epub_metadata"),
       rawdocs: this.countRows("rawdocs"),
       documents: this.countRows("documents"),
       chunks: this.countRows("chunks"),
-      collections: this.countRows("collections"),
-      collectionItems: this.countRows("collection_items"),
+      collections: this.countRowsWhere("items", "item_type = 'collection'"),
+      collectionItems: this.countRows("collection_memberships"),
       batchJobs: this.countRows("batch_jobs"),
       batchItems: this.countRows("batch_items")
     };
     const rows = Object.values(tables).reduce((sum, count) => sum + count, 0);
     const totalContentFiles = rawdocFiles + documentFiles + markdownFiles + assetFiles;
-    const parsedItems = this.countRowsWhere("knowledge_items", "active_doc_id IS NOT NULL");
-    const parsedClips = this.countRowsWhere("clips", "active_doc_id IS NOT NULL");
-    const collectionItemRefs = this.countRowsWhere("collection_items", "doc_id IS NOT NULL");
+    const parsedItems = this.countRowsWhere("items", "active_doc_id IS NOT NULL");
+    const collectionItemRefs = this.countRowsWhere("collection_memberships", "member_item_id IS NOT NULL");
     const batchItemRefs = this.countRowsWhere("batch_items", "doc_id IS NOT NULL");
 
     return {
       storeRoot: this.root,
       scannedAt: new Date().toISOString(),
-      database: {
-        exists: databaseSize >= 0,
-        path: "index.sqlite3",
-        sizeBytes: Math.max(databaseSize, 0)
-      },
+      database: { exists: databaseSize >= 0, path: "index.sqlite3", sizeBytes: Math.max(databaseSize, 0) },
       tables,
-      files: {
-        rawdocs: rawdocFiles,
-        documents: documentFiles,
-        markdown: markdownFiles,
-        assets: assetFiles,
-        totalContentFiles
-      },
-      totals: {
-        rows,
-        contentFiles: totalContentFiles
-      },
+      files: { rawdocs: rawdocFiles, documents: documentFiles, markdown: markdownFiles, assets: assetFiles, totalContentFiles },
+      totals: { rows, contentFiles: totalContentFiles },
       parsedResults: {
         parsedItems,
-        parsedClips,
+        parsedClips: 0,
         documentRows: tables.documents,
         chunkRows: tables.chunks,
         collectionItemRefs,
@@ -3052,410 +1741,166 @@ export class KnowledgeStore {
     };
   }
 
+  async clearAll(): Promise<StoreClearResponse> {
+    await this.ensure();
+    const before = await this.scanMaintenance();
+    this.database!.exec("BEGIN");
+    try {
+      this.database!.exec(`
+        DELETE FROM annotations;
+        DELETE FROM collection_memberships;
+        DELETE FROM batch_items;
+        DELETE FROM batch_jobs;
+        DELETE FROM chunks;
+        DELETE FROM documents;
+        DELETE FROM rawdocs;
+        DELETE FROM item_aliases;
+        DELETE FROM epub_metadata;
+        DELETE FROM items;
+      `);
+      this.database!.exec("COMMIT");
+    } catch (error) {
+      this.database!.exec("ROLLBACK");
+      throw error;
+    }
+    await rm(join(this.root, "rawdocs"), { recursive: true }).catch(ignoreMissing);
+    await rm(join(this.root, "documents"), { recursive: true }).catch(ignoreMissing);
+    await rm(join(this.root, "markdown"), { recursive: true }).catch(ignoreMissing);
+    await rm(join(this.root, "assets"), { recursive: true }).catch(ignoreMissing);
+    await rm(join(this.root, "annotations"), { recursive: true }).catch(ignoreMissing);
+    const after = await this.scanMaintenance();
+    return { cleared: true, mode: "all", before, after };
+  }
+
+  async clearParsedResults(): Promise<StoreClearParsedResponse> {
+    await this.ensure();
+    const before = await this.scanMaintenance();
+    this.database!.exec("BEGIN");
+    try {
+      this.database!.exec(`
+        DELETE FROM annotations;
+        DELETE FROM chunks;
+        DELETE FROM documents;
+        UPDATE items SET active_doc_id = NULL, state = 'captured', parsed_at = NULL, updated_at = datetime('now');
+      `);
+      this.database!.exec("COMMIT");
+    } catch (error) {
+      this.database!.exec("ROLLBACK");
+      throw error;
+    }
+    await rm(join(this.root, "documents"), { recursive: true }).catch(ignoreMissing);
+    await rm(join(this.root, "markdown"), { recursive: true }).catch(ignoreMissing);
+    await rm(join(this.root, "assets"), { recursive: true }).catch(ignoreMissing);
+    await rm(join(this.root, "annotations"), { recursive: true }).catch(ignoreMissing);
+    const after = await this.scanMaintenance();
+    return { cleared: true, mode: "parsed", before, after };
+  }
+
+  async deleteDerivedArtifacts(docId: string): Promise<string[]> {
+    const files: string[] = [];
+    const markdownPath = resolveInsideRoot(this.root, `markdown/${docId}.md`);
+    await unlink(markdownPath).then(() => files.push(`markdown/${docId}.md`)).catch(ignoreMissing);
+    const annotationsPath = resolveInsideRoot(this.root, `annotations/${docId}.json`);
+    await unlink(annotationsPath).then(() => files.push(`annotations/${docId}.json`)).catch(ignoreMissing);
+    // delete document json
+    const docPath = resolveInsideRoot(this.root, `documents/${docId}.json`);
+    await unlink(docPath).then(() => files.push(`documents/${docId}.json`)).catch(ignoreMissing);
+    return files;
+  }
+
+  async deleteCaptureArtifacts(captureId: string): Promise<string[]> {
+    const files: string[] = [];
+    const htmlPath = resolveInsideRoot(this.root, `rawdocs/${captureId}.html`);
+    await unlink(htmlPath).then(() => files.push(`rawdocs/${captureId}.html`)).catch(ignoreMissing);
+    const jsonPath = resolveInsideRoot(this.root, `rawdocs/${captureId}.json`);
+    await unlink(jsonPath).then(() => files.push(`rawdocs/${captureId}.json`)).catch(ignoreMissing);
+    return files;
+  }
+
+  // ── internal helpers ───────────────────────────────────────────────────
+
+  private async readText(relativePath: string): Promise<string> {
+    return readFile(resolveInsideRoot(this.root, relativePath), "utf-8");
+  }
+
+  private async readJson<T = unknown>(relativePath: string): Promise<T> {
+    return JSON.parse(await this.readText(relativePath)) as T;
+  }
+
+  private async writeText(relativePath: string, data: string): Promise<void> {
+    const path = resolveInsideRoot(this.root, relativePath);
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, data, "utf-8");
+  }
+
+  private async writeJson(relativePath: string, data: unknown): Promise<void> {
+    await this.writeText(relativePath, JSON.stringify(data));
+  }
+
   private countRows(table: string): number {
-    return (this.database!.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get() as { count: number }).count;
+    return (this.database!.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get() as unknown as { count: number }).count;
   }
 
   private countRowsWhere(table: string, where: string): number {
-    return (this.database!.prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE ${where}`).get() as {
-      count: number;
-    }).count;
-  }
-
-  private async deleteFile(relativePath: string): Promise<void> {
-    const path = resolveInsideRoot(this.root, relativePath);
-    await unlink(path).catch(ignoreMissing);
+    return (this.database!.prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE ${where}`).get() as unknown as { count: number }).count;
   }
 }
 
-async function countFiles(path: string): Promise<number> {
-  let entries;
-  try {
-    entries = await readdir(path, { withFileTypes: true });
-  } catch {
-    return 0;
-  }
+// ── Standalone functions ────────────────────────────────────────────────────
 
-  const counts = await Promise.all(entries.map(async (entry) => {
-    const child = join(path, entry.name);
-    if (entry.isDirectory()) {
-      return countFiles(child);
-    }
-    return entry.isFile() ? 1 : 0;
-  }));
-  return counts.reduce((sum, count) => sum + count, 0);
-}
-
-async function fileSize(path: string): Promise<number> {
-  try {
-    return (await stat(path)).size;
-  } catch {
-    return -1;
-  }
-}
-
-function pathsFor(docId: string, rawdocId: string): SavePaths {
-  return {
-    rawHtmlPath: rawContentPath(rawdocId, "html"),
-    rawdocPath: rawdocMetaPath(rawdocId),
-    documentPath: documentJsonPath(docId),
-    markdownPath: markdownPath(docId)
-  };
-}
-
-function importPathsFor(docId: string, rawdocId: string, contentExt: string): ImportSavePaths {
-  return {
-    rawContentPath: rawContentPath(rawdocId, contentExt),
-    rawdocPath: rawdocMetaPath(rawdocId),
-    documentPath: documentJsonPath(docId),
-    markdownPath: markdownPath(docId)
-  };
-}
-
-function pathsForActiveCapture(row: Pick<ClipRow, "rawdoc_id">): Pick<SavePaths, "rawHtmlPath" | "rawdocPath"> {
-  return {
-    rawHtmlPath: rawContentPath(row.rawdoc_id, "html"),
-    rawdocPath: rawdocMetaPath(row.rawdoc_id)
-  };
-}
-
-function toCollectionSummary(row: CollectionRow): CollectionSummary {
-  return {
-    collectionId: row.collection_id,
-    title: row.title,
-    rootUrl: row.root_url ?? undefined,
-    normalizedRootUrl: row.normalized_root_url ?? undefined,
-    sourceType: row.source_type,
-    state: row.state,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-    itemCount: row.item_count ?? 0
-  };
-}
-
-function toCollectionItem(row: CollectionItemRow): CollectionItemDetail {
-  const titles = titleFields(row.page_title, row.title, row.normalized_url);
-  return {
-    collectionItemId: row.collection_item_id,
-    collectionId: row.collection_id,
-    itemId: row.item_id ?? `url:sha256:${urlHash(row.normalized_url)}`,
-    normalizedUrl: row.normalized_url,
-    docId: row.doc_id ?? undefined,
-    rawdocId: row.rawdoc_id ?? undefined,
-    ...titles,
-    orderIndex: row.order_index,
-    depth: row.depth,
-    parentItemId: row.parent_item_id ?? undefined,
-    source: row.source ?? undefined,
-    state: row.state,
-    creators: safeJsonArray(row.creators_json ?? "[]"),
-    language: row.language ?? undefined,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at
-  };
-}
-
-function toKnowledgeItem(row: KnowledgeItemRow): KnowledgeItem {
+function toKnowledgeItem(row: ItemRow): KnowledgeItem {
   return {
     itemId: row.item_id,
-    sourceType: row.source_type,
-    identityHash: row.identity_hash,
-    activeRawdocId: row.active_rawdoc_id,
+    sourceType: row.source_type === "virtual_collection" ? "url" : row.source_type,
+    identityHash: row.identity_key ?? "",
+    activeRawdocId: row.active_capture_id ?? "",
     activeDocId: row.active_doc_id ?? undefined,
     title: row.title ?? undefined,
     subtitle: row.subtitle ?? undefined,
     creators: safeJsonArray(row.creators_json),
     language: row.language ?? undefined,
     tags: safeJsonArray(row.tags_json),
-    state: row.state,
+    state: row.state === "empty" ? "captured" : row.state === "stale" || row.state === "archived" ? "parsed" : row.state,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     parsedAt: row.parsed_at ?? undefined
   };
 }
 
-function pageTitleFor(document: KnowledgeDocument, rawdoc: RawDoc): string {
-  const metadata = rawdoc.metadata ?? {};
-  return stringMeta(metadata.pageTitle) ||
-    stringMeta(metadata.title) ||
-    document.meta.page_title ||
-    document.meta.title ||
-    rawdoc.source_uri;
+async function countFiles(path: string): Promise<number> {
+  let entries;
+  try { entries = await readdir(path, { withFileTypes: true }); } catch { return 0; }
+  const counts = await Promise.all(entries.map(async (entry) => {
+    const child = join(path, entry.name);
+    if (entry.isDirectory()) return countFiles(child);
+    return entry.isFile() ? 1 : 0;
+  }));
+  return counts.reduce((sum, count) => sum + count, 0);
 }
 
-function titleFields(
-  pageTitle: string | null | undefined,
-  contentTitle: string | null | undefined,
-  fallback: string
-): { title: string; pageTitle?: string; contentTitle?: string; displayTitle: string } {
-  const normalizedPageTitle = pageTitle?.trim() || undefined;
-  const normalizedContentTitle = contentTitle?.trim() || undefined;
-  const displayTitle = normalizedPageTitle || normalizedContentTitle || fallback;
-  return {
-    title: displayTitle,
-    pageTitle: normalizedPageTitle,
-    contentTitle: normalizedContentTitle,
-    displayTitle
+function guessContentType(assetId: string): string {
+  const ext = extname(assetId).toLowerCase();
+  const map: Record<string, string> = {
+    ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+    ".gif": "image/gif", ".svg": "image/svg+xml", ".webp": "image/webp",
+    ".pdf": "application/pdf"
   };
+  return map[ext] ?? "application/octet-stream";
 }
 
-function stringMeta(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
-}
+// ── Search/context helpers ─────────────────────────────────────────────────
 
-function firstAssetId(document: KnowledgeDocument): string | undefined {
-  for (const section of document.sections) {
-    for (const asset of section.assets ?? []) {
-      if (asset.asset_id) {
-        return asset.asset_id;
-      }
-    }
-  }
-  return undefined;
-}
-
-function documentStatistics(document: KnowledgeDocument): DocumentStatistics {
-  const assetCount = document.sections.reduce((sum, section) => sum + (section.assets?.length ?? 0), 0);
-  return {
-    sectionCount: document.sections.length,
-    headingCount: document.sections.filter((section) => section.type === "heading").length,
-    paragraphCount: document.sections.filter((section) => section.type === "paragraph").length,
-    tableCount: document.sections.filter((section) => section.type === "table").length,
-    figureCount: document.sections.filter((section) => section.type === "figure").length,
-    imageCount: assetCount,
-    assetCount,
-    charCount: document.sections.reduce((sum, section) => sum + sectionTextLength(section), 0)
-  };
-}
-
-function sectionTextLength(section: KnowledgeDocument["sections"][number]): number {
-  if (section.content) {
-    return section.content.length;
-  }
-  if (section.items) {
-    return section.items.reduce((sum, item) => sum + (typeof item === "string" ? item.length : item.text.length), 0);
-  }
-  if (section.rows) {
-    return JSON.stringify(section.rows).length;
-  }
-  return 0;
-}
-
-function toBatchJobItem(row: BatchItemRow): BatchJobItem {
-  return {
-    itemId: row.item_id,
-    jobId: row.job_id,
-    collectionId: row.collection_id ?? undefined,
-    url: row.url,
-    normalizedUrl: row.normalized_url ?? undefined,
-    source: row.source ?? undefined,
-    titleHint: row.title_hint ?? undefined,
-    state: row.state,
-    rawdocId: row.rawdoc_id ?? undefined,
-    docId: row.doc_id ?? undefined,
-    errorCode: row.error_code ?? undefined,
-    errorMessage: row.error_message ?? undefined,
-    attemptCount: row.attempt_count,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at
-  };
-}
-
-function toBatchJobResponse(row: BatchJobRow, items: BatchJobItem[]): BatchJobResponse {
-  return {
-    collectionId: row.collection_id ?? undefined,
-    jobId: row.job_id,
-    state: row.state,
-    total: row.total_count,
-    saved: row.saved_count,
-    skipped: row.skipped_count,
-    failed: row.failed_count,
-    cancelled: row.cancelled_count,
-    items
-  };
-}
-
-function rawContentPath(rawdocId: string, contentExt: string): string {
-  return `rawdocs/${rawdocId}.${sanitizeExtension(contentExt) || "bin"}`;
-}
-
-function rawdocMetaPath(rawdocId: string): string {
-  return `rawdocs/${rawdocId}.json`;
-}
-
-function documentJsonPath(docId: string): string {
-  return `documents/${docId}.json`;
-}
-
-function markdownPath(docId: string): string {
-  return `markdown/${docId}.md`;
-}
-
-function annotationsPath(docId: string): string {
-  return `annotations/${docId}.annotations.json`;
-}
-
-function parserInfoFor(document: KnowledgeDocument, rawdoc: RawDoc): { version: string; method: string; profile: string | null } {
-  const rawParserMethod = rawdoc.metadata?.parserMethod;
-  const combinedVersion = document.meta.parser_version ?? "knowledge-ingest-server/0.1";
-  const separatorIndex = combinedVersion.lastIndexOf(":");
-  const method = typeof rawParserMethod === "string"
-    ? rawParserMethod
-    : separatorIndex > -1
-      ? combinedVersion.slice(separatorIndex + 1)
-      : "unknown";
-  const version = separatorIndex > -1 ? combinedVersion.slice(0, separatorIndex) : combinedVersion;
-
-  return {
-    version,
-    method,
-    profile: typeof rawdoc.metadata?.parserProfile === "string" ? rawdoc.metadata.parserProfile : null
-  };
-}
-
-function sha256(content: string): string {
-  return createHash("sha256").update(content).digest("hex");
-}
-
-function sha256Buffer(content: Buffer): string {
-  return createHash("sha256").update(content).digest("hex");
-}
-
-function sanitizeExtension(input: string): string {
-  return input.replace(/^\./, "").toLowerCase().replace(/[^a-z0-9]+/g, "").slice(0, 12);
-}
-
-function sanitizeAssetId(input: string): string | undefined {
-  const value = input.trim();
-  if (!/^[a-f0-9]{8,64}\.[a-z0-9]{1,12}$/i.test(value)) {
-    return undefined;
-  }
-  return value;
-}
-
-function assetContentType(assetId: string): string {
-  const extension = assetId.split(".").pop()?.toLowerCase();
-  switch (extension) {
-    case "avif":
-      return "image/avif";
-    case "gif":
-      return "image/gif";
-    case "jpg":
-    case "jpeg":
-      return "image/jpeg";
-    case "png":
-      return "image/png";
-    case "svg":
-      return "image/svg+xml";
-    case "webp":
-      return "image/webp";
-    default:
-      return "application/octet-stream";
-  }
-}
-
-function safeJsonArray(input: string): string[] {
-  try {
-    const parsed = JSON.parse(input);
-    return Array.isArray(parsed) ? parsed.map(String) : [];
-  } catch {
-    return [];
-  }
-}
-
-function emptyContextPack(query: string, maxChars: number): ContextPackResponse {
-  return {
-    query,
-    retriever: "sqlite_fts",
-    packer: "section_chunk_v1",
-    budget: {
-      maxChars,
-      usedChars: 0
-    },
-    contextText: "",
-    citations: []
-  };
-}
-
-function contextHeader(marker: string, title: string, sourceUrl: string | null, headingPath: string | null): string {
-  return [
-    `${marker} ${title}`,
-    sourceUrl ? `Source: ${sourceUrl}` : undefined,
-    headingPath ? `Section: ${headingPath}` : undefined
-  ].filter(Boolean).join("\n");
-}
-
-function normalizeContextContent(input: string): string {
-  return input.replace(/\r\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
-}
-
-function clipContextContent(input: string, maxChars: number): { content: string; truncated: boolean } {
-  if (input.length <= maxChars) {
-    return { content: input, truncated: false };
-  }
-
-  const clipped = input.slice(0, Math.max(0, maxChars - CONTEXT_TRUNCATION_SUFFIX.length)).trimEnd();
-  return {
-    content: clipped ? `${clipped}${CONTEXT_TRUNCATION_SUFFIX}` : "",
-    truncated: true
-  };
-}
-
-function boundedSearchLimit(value: number): number {
-  return Math.min(Math.max(Math.trunc(value) || 10, 1), 50);
-}
-
-function boundedContextChars(value: number): number {
-  return Math.min(Math.max(Math.trunc(value) || 6000, 500), 20000);
-}
-
-function scoreSearchRow(row: SearchRow, query: string, queryTerms: string[]): SearchTrace {
-  const titleText = normalizeForRanking(row.title, row.page_title ?? "");
-  const headingText = normalizeForRanking(row.heading_path ?? "");
-  const bodyText = normalizeForRanking(row.text, row.snippet);
-  const combinedText = `${titleText} ${headingText} ${bodyText}`;
-  const matchedTerms = queryTerms.filter((term) => combinedText.includes(term));
-  const titleMatches = queryTerms.filter((term) => titleText.includes(term)).length;
-  const headingMatches = queryTerms.filter((term) => headingText.includes(term)).length;
-  const termCoverage = queryTerms.length ? matchedTerms.length / queryTerms.length : 0;
-  const phraseMatched = Boolean(normalizeForRanking(query)) && combinedText.includes(normalizeForRanking(query));
-  const allTermsMatched = queryTerms.length > 0 && matchedTerms.length === queryTerms.length;
-  const bm25Score = row.score;
-  const rankingScore =
-    bm25Score -
-    termCoverage * 4 -
-    titleMatches * 0.6 -
-    headingMatches * 0.4 -
-    (phraseMatched ? 1.5 : 0) -
-    (allTermsMatched ? 1 : 0);
-
-  return {
-    queryTerms,
-    matchedTerms,
-    termCoverage,
-    bm25Score,
-    rankingScore,
-    titleMatches,
-    headingMatches,
-    phraseMatched
-  };
-}
-
-function toFtsQuery(input: string): string {
-  const tokens = extractQueryTerms(input);
-
-  if (tokens.length === 0) {
-    return input.trim().replace(/"/g, " ");
-  }
-
-  return tokens.map((token) => `"${token}"`).join(" OR ");
+function buildFtsQuery(input: string): { ftsQuery: string; params: unknown[] } {
+  const trimmed = input.trim();
+  const tokens = trimmed.split(/\s+/).filter(Boolean).map((t) => `"${t}"`);
+  if (tokens.length === 0) return { ftsQuery: '""', params: [] };
+  return { ftsQuery: tokens.join(" OR "), params: [] };
 }
 
 function extractQueryTerms(input: string): string[] {
   const terms = Array.from(input.matchAll(/[A-Za-z][A-Za-z0-9_.-]*|[0-9]+/g))
     .map((match) => normalizeForRanking(match[0].replace(/"/g, "")))
     .filter((term) => term && !RANKING_STOPWORDS.has(term));
-
   return [...new Set(terms)];
 }
 
@@ -3470,35 +1915,16 @@ function normalizeForRanking(...parts: Array<string | null | undefined>): string
 }
 
 const RANKING_STOPWORDS = new Set([
-  "a",
-  "an",
-  "and",
-  "are",
-  "as",
-  "for",
-  "how",
-  "in",
-  "is",
-  "of",
-  "on",
-  "or",
-  "the",
-  "to",
-  "vs",
-  "what",
-  "when",
-  "with"
+  "a", "an", "and", "are", "as", "for", "how", "in", "is", "of", "on", "or", "the", "to", "vs", "what", "when", "with"
 ]);
 
 const CONTEXT_TRUNCATION_SUFFIX = "\n[truncated]";
-const MIN_CONTEXT_CONTENT_CHARS = 120;
 
 function ignoreMissing(error: unknown): void {
-  if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-    throw error;
-  }
+  if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
 }
 
+// Keep annotation helpers from original
 function getTextRef(annotation: Annotation): string | null {
   return annotation.type === "highlight"
     ? annotation.text_ref
@@ -3533,4 +1959,24 @@ function getAiModel(annotation: Annotation): string | null {
 
 function getSummaryLevel(_annotation: Annotation): string | null {
   return null;
+}
+
+function toBatchJobItem(row: BatchItemRow): BatchJobItem {
+  return {
+    itemId: row.item_id,
+    jobId: row.job_id,
+    collectionId: row.collection_id ?? undefined,
+    url: row.url,
+    normalizedUrl: row.normalized_url ?? undefined,
+    source: row.source ?? undefined,
+    titleHint: row.title_hint ?? undefined,
+    state: row.state as BatchItemState,
+    rawdocId: row.rawdoc_id ?? undefined,
+    docId: row.doc_id ?? undefined,
+    errorCode: row.error_code ?? undefined,
+    errorMessage: row.error_message ?? undefined,
+    attemptCount: row.attempt_count,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
 }

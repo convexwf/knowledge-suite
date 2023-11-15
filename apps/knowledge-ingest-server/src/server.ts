@@ -129,10 +129,7 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
   app.get("/api/items", async (request) => {
     const query = request.query as { sourceType?: string; limit?: string };
     return {
-      items: await store.listItems({
-        sourceType: query.sourceType,
-        limit: query.limit ? Number(query.limit) : undefined
-      })
+      items: await store.listItems(query.sourceType, query.limit ? Number(query.limit) : undefined)
     };
   });
 
@@ -518,7 +515,7 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
   app.post("/api/clip/reparse", async (request) => {
     const input = ClipReparseRequestSchema.parse(request.body);
     const capture = await store.loadCaptureByUrl(input.url);
-    const oldDocId = capture.clip.docId;
+    const oldDocId = capture.clip.activeDocId;
     const resolved = resolvedInputFromCapture(capture.rawdoc, capture.html);
     const parsed = await parsePage(resolved, { rawdocId: capture.rawdoc.rawdoc_id });
     const markdown = documentToMarkdown(parsed.document);
@@ -555,24 +552,26 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
     try {
       const documentWithAssets = await store.prepareDocumentAssets(parsed.document);
       const markdown = documentToMarkdown(documentWithAssets);
-      const paths = await store.saveImportItem({
+      const result = await store.saveImportItem({
         itemId: parsed.itemId,
-        identityHash: parsed.identityHash,
-        rawContent: input.file,
-        rawdoc: parsed.rawdoc,
+        sourceType: "epub",
+        sourceUri: parsed.rawdoc.source_uri ?? input.file,
+        rawdocId: parsed.rawdoc.rawdoc_id,
+        rawContentPath: input.file,
         document: documentWithAssets,
         markdown,
-        contentExt: "epub",
-        epubMetadata: parsed.epubMetadata
+        pageTitle: parsed.rawdoc.metadata?.pageTitle as string | undefined,
+        identityHash: parsed.identityHash,
+        content: input.file,
+        contentExt: "epub"
       });
-      const knowledgeItem = await store.loadItem(parsed.itemId);
       return {
-        knowledgeItem,
+        knowledgeItem: result.knowledgeItem,
         rawdoc: parsed.rawdoc,
         document: documentWithAssets,
         markdown,
         saved: true,
-        paths
+        paths: result.paths
       };
     } finally {
       await parsed.cleanup();
@@ -585,7 +584,7 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
     const oldDocId = capture.item.activeDocId;
 
     if (capture.rawdoc.source_type === "epub") {
-      const parsed = await parseEpub(capture.content, {
+      const parsed = await parseEpub(Buffer.from(capture.content), {
         rawdocId: capture.rawdoc.rawdoc_id,
         sourceUri: capture.rawdoc.source_uri,
         calibreMetadata: calibreMetadataFromRawdoc(capture.rawdoc),
@@ -604,27 +603,31 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
             reparsedFromItemId: capture.item.itemId
           }
         };
-        const paths = await store.saveImportItem({
+        const result = await store.saveImportItem({
           itemId: capture.item.itemId,
-          identityHash: capture.item.identityHash,
-          rawContent: capture.content,
-          rawdoc,
+          sourceType: capture.rawdoc.source_type as "pdf" | "epub",
+          sourceUri: capture.rawdoc.source_uri,
+          rawdocId: capture.rawdoc.rawdoc_id,
+          rawContentPath: capture.item.identityHash || capture.item.itemId,
           document: documentWithAssets,
           markdown,
-          contentExt: capture.contentExt,
-          epubMetadata: parsed.epubMetadata
+          pageTitle: capture.item.title,
+          language: capture.item.language,
+          creators: capture.item.creators,
+          identityHash: capture.item.identityHash,
+          content: capture.content,
+          contentExt: capture.contentExt
         });
-        const knowledgeItem = await store.loadItem(capture.item.itemId);
         const annotationWarnings = await migrateAnnotationsForReparse(
           store, oldDocId, documentWithAssets
         );
         return {
-          knowledgeItem,
+          knowledgeItem: result.knowledgeItem,
           rawdoc,
           document: documentWithAssets,
           markdown,
-          saved: true,
-          paths,
+          saved: true as const,
+          paths: result.paths,
           ...(annotationWarnings ? { annotationWarnings } : {})
         };
       } finally {
@@ -632,7 +635,7 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
       }
     }
 
-    const html = capture.content.toString("utf-8");
+    const html = capture.content;
     const resolved = resolvedInputFromCapture(capture.rawdoc, html);
     const parsed = await parsePage(resolved, { rawdocId: capture.rawdoc.rawdoc_id });
 
@@ -648,26 +651,31 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
         reparsedFromItemId: capture.item.itemId
       }
     };
-    const paths = await store.saveImportItem({
+    const result = await store.saveImportItem({
       itemId: capture.item.itemId,
-      identityHash: capture.item.identityHash,
-      rawContent: capture.content,
-      rawdoc,
+      sourceType: capture.rawdoc.source_type as "pdf" | "epub",
+      sourceUri: capture.rawdoc.source_uri,
+      rawdocId: capture.rawdoc.rawdoc_id,
+      rawContentPath: capture.item.identityHash || capture.item.itemId,
       document: documentWithAssets,
       markdown,
+      pageTitle: capture.item.title,
+      language: capture.item.language,
+      creators: capture.item.creators,
+      identityHash: capture.item.identityHash,
+      content: html,
       contentExt: capture.contentExt || "html"
     });
-    const knowledgeItem = await store.loadItem(capture.item.itemId);
     const annotationWarnings = await migrateAnnotationsForReparse(
       store, oldDocId, documentWithAssets
     );
     return {
-      knowledgeItem,
+      knowledgeItem: result.knowledgeItem,
       rawdoc,
       document: documentWithAssets,
       markdown,
-      saved: true,
-      paths,
+      saved: true as const,
+      paths: result.paths,
       ...(annotationWarnings ? { annotationWarnings } : {})
     };
   });
@@ -710,9 +718,9 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
         order: candidate.order ?? index,
         depth: candidate.depth ?? 0,
         selectedByDefault: url.pathname.startsWith(pathPrefix),
-        status: status.state,
-        docId: status.docId,
-        rawdocId: status.rawdocId
+        status: status?.state ?? "empty",
+        docId: status?.activeDocId,
+        rawdocId: status?.activeRawdocId
       });
     }
 
@@ -761,28 +769,21 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
       collectionId: input.collection.strategy === "update" ? input.collection.collectionId : undefined,
       title: input.collection.title,
       rootUrl: input.collection.rootUrl,
-      sourceType: "manual_section",
-      state: "draft"
+      sourceType: "manual_section"
     });
     await store.replaceCollectionItems(collection.collectionId, items.map((item, index) => ({
       normalizedUrl: item.normalizedUrl,
       title: item.titleHint,
       source: item.source,
       orderIndex: index,
-      depth: item.depth,
-      state: "pending"
+      depth: item.depth
     })));
     const job = await store.createBatchJob({
       collectionId: collection.collectionId,
       sourcePageUrl: input.sourcePageUrl,
       mode: input.mode,
-      options: input.options,
-      items: items.map((item) => ({
-        url: item.url,
-        normalizedUrl: item.normalizedUrl,
-        source: item.source,
-        titleHint: item.titleHint
-      }))
+      totalCount: items.length,
+      options: input.options
     });
 
     void runBatchJob(job.jobId, input.options ?? {});
@@ -845,15 +846,13 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
     try {
       if (skipExisting) {
         const existing = await store.status(lookupUrl);
-        if (existing.state === "parsed") {
+        if (existing && existing.state === "parsed") {
           await store.updateBatchItem({
             itemId: item.itemId,
             state: "skipped",
-            normalizedUrl: existing.normalizedUrl,
-            rawdocId: existing.rawdocId,
-            docId: existing.docId,
-            title: existing.contentTitle ?? existing.title,
-            pageTitle: existing.pageTitle
+            normalizedUrl: lookupUrl,
+            rawdocId: existing.activeRawdocId,
+            docId: existing.activeDocId
           });
           return;
         }
@@ -877,9 +876,7 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
         state: "saved",
         normalizedUrl: resolved.normalizedUrl,
         rawdocId: parsed.rawdoc.rawdoc_id,
-        docId: parsed.document.doc_id,
-        title: parsed.document.meta.title,
-        pageTitle: parsed.document.meta.page_title
+        docId: parsed.document.doc_id
       });
     } catch (error) {
       await store.updateBatchItem({
@@ -1184,21 +1181,6 @@ async function migrateAnnotationsForReparse(
   document: KnowledgeDocument
 ): Promise<Record<string, unknown> | null> {
   if (!oldDocId) return null;
-  const sectionIds = new Set(
-    document.sections.map((s) => s.section_id).filter(Boolean) as string[]
-  );
-  const result = await store.migrateAnnotations(oldDocId, document.doc_id, sectionIds);
-  if (result.orphanedCount === 0) return null;
-  return {
-    orphanedCount: result.orphanedCount,
-    orphanedAnnotations: result.annotations
-      .filter((a) => a.orphaned)
-      .map((a) => ({
-        annotation_id: a.annotation_id,
-        type: a.type,
-        section_id: a.section_id,
-        text_ref: a.type === "highlight" ? a.text_ref : a.type === "note" ? a.text_ref : undefined,
-        label: a.type === "tag" ? a.label : a.type === "bookmark" ? a.label : undefined,
-      }))
-  };
+  await store.migrateAnnotations(oldDocId, document.doc_id, document);
+  return null;
 }
