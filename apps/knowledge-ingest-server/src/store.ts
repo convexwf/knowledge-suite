@@ -867,6 +867,7 @@ export class KnowledgeStore {
     identityHash?: string;
     content?: string | Buffer;
     contentExt?: string;
+    epubMetadata?: EpubMetadataInput;
   }): Promise<{
     knowledgeItem: KnowledgeItem;
     rawdoc: RawDoc;
@@ -948,6 +949,10 @@ export class KnowledgeStore {
       );
 
       this.replaceChunks(params.document, { rawdoc_id: captureId, source_type: params.sourceType } as RawDoc, params.itemId, captureId, parserInfo, now);
+
+      if (params.epubMetadata) {
+        this.upsertEpubMetadata(params.itemId, params.epubMetadata);
+      }
 
       this.database!.exec("COMMIT");
     } catch (error) {
@@ -1296,6 +1301,32 @@ export class KnowledgeStore {
 
   async getUsedCollectionDocIds(): Promise<{ docIds: string[] }> {
     return this.getUsedCollectionMemberDocIds();
+  }
+
+  // ── epub metadata ──────────────────────────────────────────────────────
+
+  private upsertEpubMetadata(itemId: string, input: EpubMetadataInput): void {
+    this.database!.prepare(`
+      INSERT INTO epub_metadata (item_id, isbn, publisher, published_at, identifiers_json, cover_asset_id, chapter_count, metadata_json)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(item_id) DO UPDATE SET
+        isbn = excluded.isbn,
+        publisher = excluded.publisher,
+        published_at = excluded.published_at,
+        identifiers_json = excluded.identifiers_json,
+        cover_asset_id = excluded.cover_asset_id,
+        chapter_count = excluded.chapter_count,
+        metadata_json = excluded.metadata_json
+    `).run(
+      itemId,
+      input.isbn ?? null,
+      input.publisher ?? null,
+      input.publishedAt ?? null,
+      JSON.stringify(input.identifiers ?? {}),
+      input.coverAssetId ?? null,
+      input.chapterCount ?? 0,
+      JSON.stringify(input.metadata ?? {})
+    );
   }
 
   // ── document loading ───────────────────────────────────────────────────

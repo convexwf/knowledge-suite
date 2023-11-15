@@ -562,7 +562,8 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
         pageTitle: parsed.rawdoc.metadata?.pageTitle as string | undefined,
         identityHash: parsed.identityHash,
         content: input.file,
-        contentExt: "epub"
+        contentExt: "epub",
+        epubMetadata: parsed.epubMetadata
       });
       return {
         knowledgeItem: result.knowledgeItem,
