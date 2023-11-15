@@ -52,6 +52,7 @@ Priority labels:
 
 | Priority | TODO | Notes |
 | --- | --- | --- |
+| P0 | Refactor store and reader around the item-first model | → `doc-rules/doc/changes/knowledge-suite/2026-06-22-refactor-item-first-storage-model/` |
 | P1 | Improve local server offline UX | Show startup command and token guidance when unavailable. |
 | P1 | Complete badge states | Add transient `...` and `ERR` states. |
 | P1 | Add badge E2E assertion | Verify reload/re-enter saved URL shows `OK`. |
