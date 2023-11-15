@@ -111,19 +111,61 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
     }
   }));
 
-  app.get("/api/clip/status", async (request) => {
+  // ── Ingest routes (replaces legacy /api/clip/*) ───────────────────────
+
+  app.get("/api/ingest/status", async (request) => {
     const query = request.query as { url?: string };
-    if (!query.url) {
-      throw new Error("url is required");
-    }
+    if (!query.url) throw new Error("url is required");
     return store.status(query.url);
   });
 
-  app.get("/api/clips", async (request) => {
-    const query = request.query as { limit?: string };
-    return {
-      clips: await store.list(query.limit ? Number(query.limit) : undefined)
-    };
+  app.delete("/api/ingest", async (request) => {
+    const query = request.query as { url?: string; mode?: "purge" | "remove" };
+    if (!query.url) throw new Error("url is required");
+    return store.deleteByUrl(query.url, query.mode === "purge" ? "purge" : "remove");
+  });
+
+  app.post("/api/ingest/preview", { bodyLimit: config.maxHtmlBytes }, async (request) => {
+    const input = ClipInputSchema.parse(request.body);
+    const resolved = await resolveClipInput(input, effectiveConfig);
+    const parsed = await parsePage(resolved);
+    const status = await store.status(resolved.normalizedUrl);
+    return { ...previewPayload(parsed), status };
+  });
+
+  app.post("/api/ingest/save", { bodyLimit: config.maxHtmlBytes }, async (request) => {
+    const input = ClipSaveRequestSchema.parse(request.body);
+    const resolved = await resolveClipInput(input, effectiveConfig);
+    const parsed = await parsePage(resolved, { selectedCandidateId: input.candidateId });
+    const markdown = documentToMarkdown(parsed.document);
+    const paths = await store.save({
+      normalizedUrl: resolved.normalizedUrl,
+      html: resolved.html,
+      rawdoc: parsed.rawdoc,
+      document: parsed.document,
+      markdown
+    });
+    const status = await store.status(resolved.normalizedUrl);
+    return { ...previewPayload(parsed), status, saved: true, paths };
+  });
+
+  app.post("/api/ingest/reparse", async (request) => {
+    const input = ClipReparseRequestSchema.parse(request.body);
+    const capture = await store.loadCaptureByUrl(input.url);
+    const oldDocId = capture.clip.activeDocId;
+    const resolved = resolvedInputFromCapture(capture.rawdoc, capture.html);
+    const parsed = await parsePage(resolved, { rawdocId: capture.rawdoc.rawdoc_id });
+    const markdown = documentToMarkdown(parsed.document);
+    const paths = await store.save({
+      normalizedUrl: resolved.normalizedUrl,
+      html: resolved.html,
+      rawdoc: parsed.rawdoc,
+      document: parsed.document,
+      markdown
+    });
+    const status = await store.status(resolved.normalizedUrl);
+    const annotationWarnings = await migrateAnnotationsForReparse(store, oldDocId, parsed.document);
+    return { ...previewPayload(parsed), status, saved: true, paths, ...(annotationWarnings ? { annotationWarnings } : {}) };
   });
 
   app.get("/api/items", async (request) => {
@@ -470,73 +512,6 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
       throw new Error("store parsed-results clear confirmation is required");
     }
     return store.clearParsedResults();
-  });
-
-  app.delete("/api/clip", async (request) => {
-    const query = request.query as { url?: string; mode?: "purge" | "remove" };
-    if (!query.url) {
-      throw new Error("url is required");
-    }
-    return store.deleteByUrl(query.url, query.mode === "purge" ? "purge" : "remove");
-  });
-
-  app.post("/api/clip/preview", { bodyLimit: config.maxHtmlBytes }, async (request) => {
-    const input = ClipInputSchema.parse(request.body);
-    const resolved = await resolveClipInput(input, effectiveConfig);
-    const parsed = await parsePage(resolved);
-    const status = await store.status(resolved.normalizedUrl);
-    return {
-      ...previewPayload(parsed),
-      status
-    };
-  });
-
-  app.post("/api/clip/save", { bodyLimit: config.maxHtmlBytes }, async (request) => {
-    const input = ClipSaveRequestSchema.parse(request.body);
-    const resolved = await resolveClipInput(input, effectiveConfig);
-    const parsed = await parsePage(resolved, { selectedCandidateId: input.candidateId });
-    const markdown = documentToMarkdown(parsed.document);
-    const paths = await store.save({
-      normalizedUrl: resolved.normalizedUrl,
-      html: resolved.html,
-      rawdoc: parsed.rawdoc,
-      document: parsed.document,
-      markdown
-    });
-    const status = await store.status(resolved.normalizedUrl);
-    return {
-      ...previewPayload(parsed),
-      status,
-      saved: true,
-      paths
-    };
-  });
-
-  app.post("/api/clip/reparse", async (request) => {
-    const input = ClipReparseRequestSchema.parse(request.body);
-    const capture = await store.loadCaptureByUrl(input.url);
-    const oldDocId = capture.clip.activeDocId;
-    const resolved = resolvedInputFromCapture(capture.rawdoc, capture.html);
-    const parsed = await parsePage(resolved, { rawdocId: capture.rawdoc.rawdoc_id });
-    const markdown = documentToMarkdown(parsed.document);
-    const paths = await store.save({
-      normalizedUrl: resolved.normalizedUrl,
-      html: resolved.html,
-      rawdoc: parsed.rawdoc,
-      document: parsed.document,
-      markdown
-    });
-    const status = await store.status(resolved.normalizedUrl);
-    const annotationWarnings = await migrateAnnotationsForReparse(
-      store, oldDocId, parsed.document
-    );
-    return {
-      ...previewPayload(parsed),
-      status,
-      saved: true,
-      paths,
-      ...(annotationWarnings ? { annotationWarnings } : {})
-    };
   });
 
   app.post("/api/import/epub", async (request): Promise<EpubImportResponse> => {

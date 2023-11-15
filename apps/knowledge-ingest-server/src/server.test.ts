@@ -174,7 +174,7 @@ describe("knowledge ingest server", () => {
 
     const preview = await app.inject({
       method: "POST",
-      url: "/api/clip/preview",
+      url: "/api/ingest/preview",
       headers: { authorization: "Bearer test-token" },
       payload: body
     });
@@ -199,7 +199,7 @@ describe("knowledge ingest server", () => {
 
     const save = await app.inject({
       method: "POST",
-      url: "/api/clip/save",
+      url: "/api/ingest/save",
       headers: { authorization: "Bearer test-token" },
       payload: body
     });
@@ -215,7 +215,7 @@ describe("knowledge ingest server", () => {
 
     const status = await app.inject({
       method: "GET",
-      url: "/api/clip/status?url=https%3A%2F%2Fexample.com%2Fa%3Futm_source%3Dx%23top",
+      url: "/api/ingest/status?url=https%3A%2F%2Fexample.com%2Fa%3Futm_source%3Dx%23top",
       headers: { authorization: "Bearer test-token" }
     });
     expect(status.statusCode).toBe(200);
@@ -234,7 +234,7 @@ describe("knowledge ingest server", () => {
 
     const list = await app.inject({
       method: "GET",
-      url: "/api/clips",
+      url: "/api/items",
       headers: { authorization: "Bearer test-token" }
     });
     expect(list.statusCode).toBe(200);
@@ -330,7 +330,7 @@ describe("knowledge ingest server", () => {
 
     const deleted = await app.inject({
       method: "DELETE",
-      url: "/api/clip?url=https%3A%2F%2Fexample.com%2Fa%3Futm_source%3Dx%23top",
+      url: "/api/ingest?url=https%3A%2F%2Fexample.com%2Fa%3Futm_source%3Dx%23top",
       headers: { authorization: "Bearer test-token" }
     });
     expect(deleted.statusCode).toBe(200);
@@ -348,7 +348,7 @@ describe("knowledge ingest server", () => {
 
     const deletedStatus = await app.inject({
       method: "GET",
-      url: "/api/clip/status?url=https%3A%2F%2Fexample.com%2Fa",
+      url: "/api/ingest/status?url=https%3A%2F%2Fexample.com%2Fa",
       headers: { authorization: "Bearer test-token" }
     });
     expect(deletedStatus.statusCode).toBe(200);
@@ -361,7 +361,7 @@ describe("knowledge ingest server", () => {
 
     const reparsed = await app.inject({
       method: "POST",
-      url: "/api/clip/reparse",
+      url: "/api/ingest/reparse",
       headers: { authorization: "Bearer test-token" },
       payload: { url: "https://example.com/a" }
     });
@@ -379,7 +379,7 @@ describe("knowledge ingest server", () => {
 
     const purged = await app.inject({
       method: "DELETE",
-      url: "/api/clip?url=https%3A%2F%2Fexample.com%2Fa&mode=purge",
+      url: "/api/ingest?url=https%3A%2F%2Fexample.com%2Fa&mode=purge",
       headers: { authorization: "Bearer test-token" }
     });
     expect(purged.statusCode).toBe(200);
@@ -728,7 +728,7 @@ describe("knowledge ingest server", () => {
 
     const response = await app.inject({
       method: "POST",
-      url: "/api/clip/preview",
+      url: "/api/ingest/preview",
       headers: { authorization: "Bearer test-token" },
       payload: {
         inputMode: "browser_html",
@@ -795,7 +795,7 @@ describe("knowledge ingest server", () => {
 
     const preview = await app.inject({
       method: "POST",
-      url: "/api/clip/preview",
+      url: "/api/ingest/preview",
       headers: { authorization: "Bearer test-token" },
       payload: body
     });
@@ -810,7 +810,7 @@ describe("knowledge ingest server", () => {
 
     const save = await app.inject({
       method: "POST",
-      url: "/api/clip/save",
+      url: "/api/ingest/save",
       headers: { authorization: "Bearer test-token" },
       payload: {
         ...body,
@@ -841,7 +841,7 @@ describe("knowledge ingest server", () => {
 
     const response = await app.inject({
       method: "POST",
-      url: "/api/clip/preview",
+      url: "/api/ingest/preview",
       headers: { authorization: "Bearer test-token" },
       payload: {
         inputMode: "browser_html",
@@ -887,7 +887,7 @@ describe("knowledge ingest server", () => {
     };
     const save = await app.inject({
       method: "POST",
-      url: "/api/clip/save",
+      url: "/api/ingest/save",
       headers: { authorization: "Bearer test-token" },
       payload: body
     });
@@ -953,7 +953,7 @@ describe("knowledge ingest server", () => {
 
     const status = await app.inject({
       method: "GET",
-      url: "/api/clip/status?url=https%3A%2F%2Fexample.com%2Fmaintenance",
+      url: "/api/ingest/status?url=https%3A%2F%2Fexample.com%2Fmaintenance",
       headers: { authorization: "Bearer test-token" }
     });
     expect(status.statusCode).toBe(200);
@@ -989,7 +989,7 @@ describe("knowledge ingest server", () => {
     };
     const save = await app.inject({
       method: "POST",
-      url: "/api/clip/save",
+      url: "/api/ingest/save",
       headers: { authorization: "Bearer test-token" },
       payload: body
     });
@@ -1044,7 +1044,7 @@ describe("knowledge ingest server", () => {
 
     const status = await app.inject({
       method: "GET",
-      url: "/api/clip/status?url=https%3A%2F%2Fexample.com%2Fmaintenance-parsed",
+      url: "/api/ingest/status?url=https%3A%2F%2Fexample.com%2Fmaintenance-parsed",
       headers: { authorization: "Bearer test-token" }
     });
     expect(status.statusCode).toBe(200);
@@ -1069,7 +1069,7 @@ describe("knowledge ingest server", () => {
 
     const response = await app.inject({
       method: "POST",
-      url: "/api/clip/preview",
+      url: "/api/ingest/preview",
       headers: { authorization: "Bearer test-token" },
       payload: {
         inputMode: "browser_html",
@@ -1115,7 +1115,7 @@ describe("knowledge ingest server", () => {
 
     const response = await app.inject({
       method: "POST",
-      url: "/api/clip/preview",
+      url: "/api/ingest/preview",
       headers: { authorization: "Bearer test-token" },
       payload: {
         inputMode: "browser_html",
@@ -1173,7 +1173,7 @@ describe("knowledge ingest server", () => {
 
     const response = await app.inject({
       method: "POST",
-      url: "/api/clip/preview",
+      url: "/api/ingest/preview",
       headers: { authorization: "Bearer test-token" },
       payload: {
         inputMode: "browser_html",
@@ -1231,7 +1231,7 @@ describe("knowledge ingest server", () => {
 
     const response = await app.inject({
       method: "POST",
-      url: "/api/clip/preview",
+      url: "/api/ingest/preview",
       headers: { authorization: "Bearer test-token" },
       payload: {
         inputMode: "browser_html",
@@ -1326,7 +1326,7 @@ describe("knowledge ingest server", () => {
 
     const response = await app.inject({
       method: "POST",
-      url: "/api/clip/preview",
+      url: "/api/ingest/preview",
       headers: { authorization: "Bearer test-token" },
       payload: freediumPayload
     });
@@ -1369,7 +1369,7 @@ describe("knowledge ingest server", () => {
 
     const save = await app.inject({
       method: "POST",
-      url: "/api/clip/save",
+      url: "/api/ingest/save",
       headers: { authorization: "Bearer test-token" },
       payload: freediumPayload
     });
@@ -1388,7 +1388,7 @@ describe("knowledge ingest server", () => {
 
     const mirrorStatus = await app.inject({
       method: "GET",
-      url: "/api/clip/status?url=https%3A%2F%2Ffreedium-mirror.cfd%2Fhttps%3A%2F%2Fmedium.com%2Fin-fitness-and-in-health%2Fexample-a875f21bed2d",
+      url: "/api/ingest/status?url=https%3A%2F%2Ffreedium-mirror.cfd%2Fhttps%3A%2F%2Fmedium.com%2Fin-fitness-and-in-health%2Fexample-a875f21bed2d",
       headers: { authorization: "Bearer test-token" }
     });
     expect(mirrorStatus.statusCode).toBe(200);
@@ -1416,7 +1416,7 @@ describe("knowledge ingest server", () => {
 
     const response = await app.inject({
       method: "POST",
-      url: "/api/clip/preview",
+      url: "/api/ingest/preview",
       headers: { authorization: "Bearer test-token" },
       payload: {
         inputMode: "browser_html",
@@ -1452,7 +1452,7 @@ describe("knowledge ingest server", () => {
 
     const response = await app.inject({
       method: "POST",
-      url: "/api/clip/preview",
+      url: "/api/ingest/preview",
       headers: { authorization: "Bearer test-token" },
       payload: {
         inputMode: "browser_html",
@@ -1546,7 +1546,7 @@ describe("knowledge ingest server", () => {
 
     const response = await app.inject({
       method: "POST",
-      url: "/api/clip/preview",
+      url: "/api/ingest/preview",
       headers: { authorization: "Bearer test-token" },
       payload: {
         inputMode: "server_fetch",
@@ -1587,7 +1587,7 @@ describe("knowledge ingest server", () => {
 
     const response = await app.inject({
       method: "POST",
-      url: "/api/clip/preview",
+      url: "/api/ingest/preview",
       headers: { authorization: "Bearer test-token" },
       payload: {
         inputMode: "browser_html",
@@ -1636,7 +1636,7 @@ describe("knowledge ingest server", () => {
 
     const response = await app.inject({
       method: "POST",
-      url: "/api/clip/preview",
+      url: "/api/ingest/preview",
       headers: { authorization: "Bearer test-token" },
       payload: {
         inputMode: "browser_html",
@@ -1698,7 +1698,7 @@ describe("knowledge ingest server", () => {
 
     const response = await app.inject({
       method: "POST",
-      url: "/api/clip/preview",
+      url: "/api/ingest/preview",
       headers: { authorization: "Bearer test-token" },
       payload: {
         inputMode: "browser_html",
@@ -1773,7 +1773,7 @@ describe("knowledge ingest server", () => {
 
     const response = await app.inject({
       method: "POST",
-      url: "/api/clip/preview",
+      url: "/api/ingest/preview",
       headers: { authorization: "Bearer test-token" },
       payload: {
         inputMode: "server_fetch",
@@ -1805,7 +1805,7 @@ describe("knowledge ingest server", () => {
 
     const response = await app.inject({
       method: "POST",
-      url: "/api/clip/preview",
+      url: "/api/ingest/preview",
       headers: { authorization: "Bearer test-token" },
       payload: {
         inputMode: "server_fetch",
@@ -1843,7 +1843,7 @@ describe("knowledge ingest server", () => {
 
     const saveResponse = await app.inject({
       method: "POST",
-      url: "/api/clip/save",
+      url: "/api/ingest/save",
       headers: { authorization: "Bearer test-token" },
       payload: {
         inputMode: "server_fetch",
@@ -1864,7 +1864,7 @@ describe("knowledge ingest server", () => {
 
     const finalStatusResponse = await app.inject({
       method: "GET",
-      url: `/api/clip/status?url=${encodeURIComponent("https://docs.example.com/docs/reranking")}`,
+      url: `/api/ingest/status?url=${encodeURIComponent("https://docs.example.com/docs/reranking")}`,
       headers: { authorization: "Bearer test-token" }
     });
     expect(finalStatusResponse.statusCode).toBe(200);
@@ -1873,7 +1873,7 @@ describe("knowledge ingest server", () => {
 
     const originalStatusResponse = await app.inject({
       method: "GET",
-      url: `/api/clip/status?url=${encodeURIComponent("https://docs.example.com/docs/rerank-overview")}`,
+      url: `/api/ingest/status?url=${encodeURIComponent("https://docs.example.com/docs/rerank-overview")}`,
       headers: { authorization: "Bearer test-token" }
     });
     expect(originalStatusResponse.statusCode).toBe(200);
@@ -2007,7 +2007,7 @@ describe("knowledge ingest server", () => {
 
     const response = await app.inject({
       method: "POST",
-      url: "/api/clip/preview",
+      url: "/api/ingest/preview",
       headers: { authorization: "Bearer test-token" },
       payload: {
         inputMode: "server_fetch",

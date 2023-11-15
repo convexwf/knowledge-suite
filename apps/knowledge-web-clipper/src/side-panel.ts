@@ -1,4 +1,4 @@
-import { createKnowledgeApiClient } from "./api-client.js";
+import { createKnowledgeApiClient, type ItemListItem } from "./api-client.js";
 import { renderMarkdownPreview } from "./markdown-preview/render.js";
 import { getSettings, saveSettings } from "./settings.js";
 import { openKnowledgePage } from "./tabs.js";
@@ -10,12 +10,12 @@ import {
   BatchJobResult,
   CandidatePreview,
   ClipDeleteMode,
-  ClipListItem,
   ClipRequestBody,
   ClipSaveRequestBody,
   CollectionSummary,
   ExtensionSettings,
   InputMode,
+  KnowledgeItem,
   PanelView,
   PageSnapshot,
   PreviewResult
@@ -61,7 +61,7 @@ let settings: ExtensionSettings = await getSettings();
 let activeTab: ActiveTabInfo | undefined;
 let lastPreview: PreviewResult | undefined;
 let activeCandidateId: string | undefined;
-let savedClips: ClipListItem[] = [];
+let savedClips: ItemListItem[] = [];
 let batchDiscover: BatchDiscoverResult | undefined;
 let batchJob: BatchJobResult | undefined;
 let batchPollTimer: number | undefined;
@@ -616,7 +616,7 @@ async function loadSavedClips(): Promise<void> {
       createKnowledgeApiClient(settings).listCollections(),
       createKnowledgeApiClient(settings).usedCollectionDocIds()
     ]);
-    savedClips = clipsResult.clips;
+    savedClips = clipsResult.items;
 
     const collectionDocIds = new Set(usedDocIdsResult.docIds);
     const standaloneClips = savedClips.filter((clip) =>
@@ -635,7 +635,7 @@ async function loadSavedClips(): Promise<void> {
   }
 }
 
-function renderSavedList(collections: CollectionSummary[], standaloneClips: ClipListItem[]): void {
+function renderSavedList(collections: CollectionSummary[], standaloneClips: ItemListItem[]): void {
   if (collections.length === 0 && standaloneClips.length === 0) {
     savedList.replaceChildren(makeEmptyState("No saved clips"));
     return;

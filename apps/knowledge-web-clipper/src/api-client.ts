@@ -10,7 +10,6 @@ import {
   TaskState,
   ClipDeleteResult,
   ClipDeleteMode,
-  ClipListResult,
   ClipRequestBody,
   ClipSaveRequestBody,
   ClipStatusResult,
@@ -18,6 +17,7 @@ import {
   HealthResult,
   EpubImportResult,
   KnowledgeDocument,
+  KnowledgeItem,
   KnowledgeItemDeleteMode,
   KnowledgeItemDeleteResult,
   KnowledgeItemDetailResult,
@@ -37,13 +37,32 @@ import {
   STORE_CLEAR_PARSED_CONFIRMATION
 } from "./types.js";
 
+/** Side-panel list item enriched with URL info derived from item identity. */
+export interface ItemListItem extends KnowledgeItem {
+  normalizedUrl: string;
+  urlHash: string;
+  state: "captured" | "parsed";
+  hasRawdoc: true;
+  hasDocument: boolean;
+  captureSavedAt: string;
+  captureUpdatedAt: string;
+  parseUpdatedAt?: string;
+  docId?: string;
+  rawdocId?: string;
+}
+
+function normalizedUrlFromItem(item: KnowledgeItem): string {
+  if (item.identityHash) return item.identityHash;
+  return item.itemId;
+}
+
 export interface KnowledgeApiClient {
   health(): Promise<HealthResult>;
   scanStore(): Promise<StoreMaintenanceScan>;
   clearStore(): Promise<StoreClearResult>;
   clearParsedResults(): Promise<StoreClearParsedResult>;
   status(url: string): Promise<ClipStatusResult>;
-  list(limit?: number): Promise<ClipListResult>;
+  list(limit?: number): Promise<{ items: ItemListItem[] }>;
   listItems(sourceType?: KnowledgeSourceType, limit?: number): Promise<KnowledgeItemListResult>;
   item(itemId: string): Promise<KnowledgeItemDetailResult>;
   importEpub(body: {
@@ -150,22 +169,56 @@ export function createKnowledgeApiClient(settings: ExtensionSettings): Knowledge
       },
       options
     ),
-    status: (url) => request<ClipStatusResult>(
+    status: (url) => request<KnowledgeItem | null>(
       baseUrl,
       settings.token,
       "GET",
-      `/api/clip/status?url=${encodeURIComponent(url)}`,
+      `/api/ingest/status?url=${encodeURIComponent(url)}`,
       undefined,
       options
-    ),
-    list: (limit = settings.savedListLimit) => request<ClipListResult>(
-      baseUrl,
-      settings.token,
-      "GET",
-      `/api/clips?limit=${encodeURIComponent(String(limit))}`,
-      undefined,
-      options
-    ),
+    ).then((r) => {
+      if (!r) return { normalizedUrl: url, urlHash: "", state: "empty" as const, hasRawdoc: false, hasDocument: false };
+      return {
+        ...r,
+        normalizedUrl: r.identityHash || url,
+        urlHash: r.identityHash,
+        state: (r.state === "captured" ? "captured" : "parsed") as "empty" | "captured" | "parsed",
+        hasRawdoc: Boolean(r.activeRawdocId),
+        hasDocument: Boolean(r.activeDocId),
+        captureSavedAt: r.createdAt,
+        captureUpdatedAt: r.updatedAt,
+        parseUpdatedAt: r.parsedAt,
+        docId: r.activeDocId,
+        rawdocId: r.activeRawdocId
+      } as ClipStatusResult;
+    }),
+    list: (limit = settings.savedListLimit) => {
+      const params = new URLSearchParams();
+      if (limit > 0) params.set("limit", String(limit));
+      return request<{ items: KnowledgeItem[] }>(
+        baseUrl,
+        settings.token,
+        "GET",
+        `/api/items?${params.toString()}`,
+        undefined,
+        options
+      ).then((res) => ({
+        items: res.items.map((item) => ({
+          ...item,
+          // Derive URL info from itemId for url-type items
+          normalizedUrl: normalizedUrlFromItem(item),
+          urlHash: item.identityHash,
+          state: item.state === "captured" ? "captured" as const : "parsed" as const,
+          hasRawdoc: true as const,
+          hasDocument: Boolean(item.activeDocId),
+          captureSavedAt: item.createdAt,
+          captureUpdatedAt: item.updatedAt,
+          parseUpdatedAt: item.parsedAt,
+          docId: item.activeDocId,
+          rawdocId: item.activeRawdocId
+        }))
+      }));
+    },
     listItems: (sourceType, limit = settings.savedListLimit) => {
       const params = new URLSearchParams();
       if (sourceType) {
@@ -245,13 +298,13 @@ export function createKnowledgeApiClient(settings: ExtensionSettings): Knowledge
       baseUrl,
       settings.token,
       "DELETE",
-      `/api/clip?url=${encodeURIComponent(url)}&mode=${encodeURIComponent(mode)}`,
+      `/api/ingest?url=${encodeURIComponent(url)}&mode=${encodeURIComponent(mode)}`,
       undefined,
       options
     ),
-    reparse: (url) => request<PreviewResult>(baseUrl, settings.token, "POST", "/api/clip/reparse", { url }, options),
-    preview: (body) => request<PreviewResult>(baseUrl, settings.token, "POST", "/api/clip/preview", body, options),
-    save: (body) => request<PreviewResult>(baseUrl, settings.token, "POST", "/api/clip/save", {
+    reparse: (url) => request<PreviewResult>(baseUrl, settings.token, "POST", "/api/ingest/reparse", { url }, options),
+    preview: (body) => request<PreviewResult>(baseUrl, settings.token, "POST", "/api/ingest/preview", body, options),
+    save: (body) => request<PreviewResult>(baseUrl, settings.token, "POST", "/api/ingest/save", {
       ...body,
       overwrite: true
     }, options),
