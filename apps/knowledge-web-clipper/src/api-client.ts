@@ -98,12 +98,16 @@ export interface KnowledgeApiClient {
   collectionsByDoc(docId: string): Promise<{ collections: Array<{ collectionId: string; title: string }> }>;
   usedCollectionDocIds(): Promise<{ docIds: string[] }>;
   annotations(docId: string): Promise<AnnotationListResult>;
+  itemAnnotations(itemId: string): Promise<AnnotationListResult>;
   saveAnnotation(docId: string, annotation: Annotation): Promise<AnnotationSaveResult>;
+  saveItemAnnotation(itemId: string, annotation: Annotation): Promise<AnnotationSaveResult>;
   deleteAnnotation(docId: string, annotationId: string): Promise<AnnotationDeleteResult>;
+  deleteItemAnnotation(itemId: string, annotationId: string): Promise<AnnotationDeleteResult>;
   deleteAnnotationsForDoc(docId: string): Promise<AnnotationDeleteAllResult>;
   listAnnotationDocs(): Promise<AnnotationDocListResult>;
   generateAIAnnotations(docId: string, body: AIAnnotationGenerateRequest, signal?: AbortSignal): Promise<AIAnnotationGenerateResult>;
   createAITask(docId: string, body: AIAnnotationGenerateRequest): Promise<TaskState>;
+  createItemAITask(itemId: string, body: AIAnnotationGenerateRequest): Promise<TaskState>;
   getTask(taskId: string): Promise<TaskState>;
   cancelTask(taskId: string): Promise<{ cancelled: boolean; task_id: string; completed: number }>;
 }
@@ -374,6 +378,14 @@ export function createKnowledgeApiClient(settings: ExtensionSettings): Knowledge
       undefined,
       options
     ),
+    itemAnnotations: (itemId) => request<AnnotationListResult>(
+      baseUrl,
+      settings.token,
+      "GET",
+      `/api/items/${encodeURIComponent(itemId)}/annotations`,
+      undefined,
+      options
+    ),
     saveAnnotation: (docId, annotation) => request<AnnotationSaveResult>(
       baseUrl,
       settings.token,
@@ -382,11 +394,27 @@ export function createKnowledgeApiClient(settings: ExtensionSettings): Knowledge
       annotation,
       options
     ),
+    saveItemAnnotation: (itemId, annotation) => request<AnnotationSaveResult>(
+      baseUrl,
+      settings.token,
+      "POST",
+      `/api/items/${encodeURIComponent(itemId)}/annotations`,
+      annotation,
+      options
+    ),
     deleteAnnotation: (docId, annotationId) => request<AnnotationDeleteResult>(
       baseUrl,
       settings.token,
       "DELETE",
       `/api/documents/${encodeURIComponent(docId)}/annotations/${encodeURIComponent(annotationId)}`,
+      undefined,
+      options
+    ),
+    deleteItemAnnotation: (itemId, annotationId) => request<AnnotationDeleteResult>(
+      baseUrl,
+      settings.token,
+      "DELETE",
+      `/api/items/${encodeURIComponent(itemId)}/annotations/${encodeURIComponent(annotationId)}`,
       undefined,
       options
     ),
@@ -419,6 +447,14 @@ export function createKnowledgeApiClient(settings: ExtensionSettings): Knowledge
       settings.token,
       "POST",
       `/api/documents/${encodeURIComponent(docId)}/ai-annotations`,
+      body,
+      { timeoutMs: 30000 }
+    ),
+    createItemAITask: (itemId, body) => request<TaskState>(
+      baseUrl,
+      settings.token,
+      "POST",
+      `/api/items/${encodeURIComponent(itemId)}/ai-annotations`,
       body,
       { timeoutMs: 30000 }
     ),

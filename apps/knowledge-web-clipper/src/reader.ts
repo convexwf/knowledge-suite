@@ -41,7 +41,7 @@ const settings = await getSettings();
 const client = createKnowledgeApiClient(settings);
 const query = new URLSearchParams(globalThis.location.search);
 const itemId = query.get("itemId") || undefined;
-const docId = query.get("docId") || undefined;
+let currentItemId = itemId || "";
 let currentMarkdown = "";
 let currentDocument: KnowledgeDocument | undefined;
 let currentItem: KnowledgeItem | undefined;
@@ -171,17 +171,15 @@ async function loadReader(): Promise<void> {
     if (itemId) {
       const detail = await client.item(itemId);
       currentItem = detail.item;
+      currentItemId = detail.item.itemId;
       currentDocument = detail.document;
       reparseButton.disabled = detail.item.sourceType !== "epub";
       if (!currentDocument && detail.item.activeDocId) {
         currentDocument = await client.document(detail.item.activeDocId);
       }
       currentMarkdown = detail.item.activeDocId ? await client.documentMarkdown(detail.item.activeDocId) : "";
-    } else if (docId) {
-      currentDocument = await client.document(docId);
-      currentMarkdown = await client.documentMarkdown(docId);
     } else {
-      showMessage("Open the reader from a saved item or document link.");
+      showMessage("Open the reader from a saved item.");
       copyButton.disabled = true;
       return;
     }
@@ -862,7 +860,7 @@ function mustGet<T extends HTMLElement>(id: string): T {
 async function loadAndApplyAnnotations(): Promise<void> {
   if (!currentDocId) return;
   try {
-    const result = await client.annotations(currentDocId);
+    const result = await client.itemAnnotations(currentItemId);
     currentAnnotations = result.annotations.filter((a) => !a.orphaned);
     readerAnnotationCountOutput.textContent = String(currentAnnotations.length);
     applyHighlightOverlays(contentOutput, currentAnnotations);
@@ -1004,7 +1002,7 @@ async function startTaskPolling(sectionIds: string[]): Promise<void> {
   aiCancelBtn.disabled = false;
 
   try {
-    const task = await client.createAITask(currentDocId, {
+    const task = await client.createItemAITask(currentItemId, {
       types: ["summary"],
       section_ids: sectionIds,
       force: false,
@@ -1244,7 +1242,7 @@ function showAnnotationPopup(annotationId: string, anchor: HTMLElement): void {
   popup.querySelector(".annotation-popup-close")?.addEventListener("click", closePopup);
 
   popup.querySelector(".annotation-popup-delete")?.addEventListener("click", async () => {
-    await client.deleteAnnotation(currentDocId, anno.annotation_id);
+    await client.deleteItemAnnotation(currentItemId, anno.annotation_id);
     currentAnnotations = currentAnnotations.filter((a) => a.annotation_id !== anno.annotation_id);
     popup.remove();
     const marks = Array.from(document.querySelectorAll(`mark[data-annotation-id="${anno.annotation_id}"]`));
@@ -1625,7 +1623,7 @@ async function createAnnotationFromSelection(
     };
   }
   try {
-    await client.saveAnnotation(currentDocId, annotation);
+    await client.saveItemAnnotation(currentItemId, annotation);
   } catch {
     return;
   }
@@ -1662,10 +1660,6 @@ async function loadCollectionContext(): Promise<void> {
     if (currentItem?.itemId) {
       const detail = await client.item(currentItem.itemId);
       collectionIds = detail.collectionIds ?? [];
-    } else if (currentDocId) {
-      const result = await client.collectionsByDoc(currentDocId);
-      collectionIds = result.collections.map((c) => c.collectionId);
-      collectionLinks = result.collections;
     } else {
       readerCollectionOutput.textContent = "-";
       setCollectionNavigation(null);
@@ -1740,10 +1734,7 @@ function setCollectionNavigation(
 async function navigateInCollection(direction: "prev" | "next"): Promise<void> {
   const target = direction === "prev" ? collectionNavData.previous : collectionNavData.next;
   if (!target) return;
-  // Use itemId when available (preserves full reader context), fallback to docId
-  if (target.itemId) {
-    await openKnowledgePage(`reader.html?itemId=${encodeURIComponent(target.itemId)}`);
-  } else {
-    await openKnowledgePage(`reader.html?docId=${encodeURIComponent(target.docId)}`);
-  }
+  const navId = target.itemId || target.docId;
+  const paramName = target.itemId ? "itemId" : "docId";
+  await openKnowledgePage(`reader.html?${paramName}=${encodeURIComponent(navId)}`);
 }

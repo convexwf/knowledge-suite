@@ -208,6 +208,7 @@ export interface ClipListItem {
   pageTitle?: string;
   contentTitle?: string;
   displayTitle?: string;
+  itemId?: string;
   docId?: string;
   rawdocId?: string;
 }
@@ -483,6 +484,7 @@ export interface ClipStatusResult {
   pageTitle?: string;
   contentTitle?: string;
   displayTitle?: string;
+  itemId?: string;
   docId?: string;
   rawdocId?: string;
 }

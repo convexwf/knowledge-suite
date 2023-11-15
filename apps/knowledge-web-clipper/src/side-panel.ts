@@ -619,7 +619,10 @@ async function loadSavedClips(): Promise<void> {
     savedClips = clipsResult.clips;
 
     const collectionDocIds = new Set(usedDocIdsResult.docIds);
-    const standaloneClips = savedClips.filter((clip) => !(clip.docId && collectionDocIds.has(clip.docId)));
+    const standaloneClips = savedClips.filter((clip) =>
+      !(clip.docId && collectionDocIds.has(clip.docId)) &&
+      !(clip.itemId && collectionDocIds.has(clip.itemId))
+    );
 
     if (activeView === "saved") {
       renderSavedList(collectionsResult.collections, standaloneClips);
@@ -755,7 +758,9 @@ function renderSavedList(collections: CollectionSummary[], standaloneClips: Clip
       openReaderButton.title = "Open in Reader";
       openReaderButton.addEventListener("click", (event) => {
         event.stopPropagation();
-        void openKnowledgePage(`reader.html?docId=${encodeURIComponent(clip.docId!)}`);
+        const navId = clip.itemId || clip.docId;
+        const paramName = clip.itemId ? "itemId" : "docId";
+        void openKnowledgePage(`reader.html?${paramName}=${encodeURIComponent(navId!)}`);
       });
       item.append(openReaderButton);
     }
