@@ -51,8 +51,10 @@ export interface ItemListItem extends KnowledgeItem {
   rawdocId?: string;
 }
 
-function normalizedUrlFromItem(item: KnowledgeItem): string {
+function normalizedUrlFromItem(item: KnowledgeItem & { normalizedUrl?: string }): string {
+  if (item.normalizedUrl) return item.normalizedUrl;
   if (item.identityHash) return item.identityHash;
+  if (item.itemId.startsWith("url:sha256:")) return item.itemId.slice(10);
   return item.itemId;
 }
 
@@ -177,7 +179,8 @@ export function createKnowledgeApiClient(settings: ExtensionSettings): Knowledge
       undefined,
       options
     ).then((r) => {
-      if (!r) return { normalizedUrl: url, urlHash: "", state: "empty" as const, hasRawdoc: false, hasDocument: false };
+      if (!r) return { normalizedUrl: url, urlHash: "", state: "empty" as const, hasRawdoc: false, hasDocument: false, itemId: undefined, originalUrl: undefined, canonicalUrl: undefined };
+      const title = r.title;
       return {
         ...r,
         normalizedUrl: r.identityHash || url,
@@ -185,6 +188,10 @@ export function createKnowledgeApiClient(settings: ExtensionSettings): Knowledge
         state: (r.state === "captured" ? "captured" : "parsed") as "empty" | "captured" | "parsed",
         hasRawdoc: Boolean(r.activeRawdocId),
         hasDocument: Boolean(r.activeDocId),
+        title: title,
+        pageTitle: title,
+        contentTitle: title,
+        displayTitle: title || new URL(url).hostname,
         captureSavedAt: r.createdAt,
         captureUpdatedAt: r.updatedAt,
         parseUpdatedAt: r.parsedAt,
@@ -195,7 +202,7 @@ export function createKnowledgeApiClient(settings: ExtensionSettings): Knowledge
     list: (limit = settings.savedListLimit) => {
       const params = new URLSearchParams();
       if (limit > 0) params.set("limit", String(limit));
-      return request<{ items: KnowledgeItem[] }>(
+      return request<{ items: (KnowledgeItem & { normalizedUrl?: string })[] }>(
         baseUrl,
         settings.token,
         "GET",
@@ -205,8 +212,7 @@ export function createKnowledgeApiClient(settings: ExtensionSettings): Knowledge
       ).then((res) => ({
         items: res.items.map((item) => ({
           ...item,
-          // Derive URL info from itemId for url-type items
-          normalizedUrl: normalizedUrlFromItem(item),
+          normalizedUrl: item.normalizedUrl || normalizedUrlFromItem(item),
           urlHash: item.identityHash,
           state: item.state === "captured" ? "captured" as const : "parsed" as const,
           hasRawdoc: true as const,

@@ -29,16 +29,19 @@ export async function importUrl(
   if (!store) {
     throw new Error("Knowledge store is required for import");
   }
-  if (options.skipExisting && (await store.status(normalizedUrl)).state === "parsed") {
-    return {
-      type: "url",
-      url: candidate.url,
-      state: "skipped",
-      itemId,
-      identityHash,
-      errorCode: "already_exists",
-      errorMessage: "URL item already exists and is parsed"
-    };
+  if (options.skipExisting) {
+    const existing = await store.status(normalizedUrl);
+    if (existing && existing.state === "parsed") {
+      return {
+        type: "url",
+        url: candidate.url,
+        state: "skipped",
+        itemId,
+        identityHash,
+        errorCode: "already_exists",
+        errorMessage: "URL item already exists and is parsed"
+      };
+    }
   }
 
   const resolved = await resolveClipInput({ inputMode: "server_fetch", url: candidate.url }, config);

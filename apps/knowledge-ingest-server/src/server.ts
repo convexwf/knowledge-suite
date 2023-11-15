@@ -10,11 +10,13 @@ import {
   ClipReparseRequestSchema,
   ClipSaveRequestSchema,
   KnowledgeDocument,
+  KnowledgeItem,
   normalizeUrlForKnowledge,
   RawDoc,
   EpubImportResponse,
   StoreClearParsedRequestSchema,
-  StoreClearRequestSchema
+  StoreClearRequestSchema,
+  urlHash
 } from "@uknowledge/knowledge-schema";
 import { createAIProvider } from "./ai-annotation/provider.js";
 import { taskManager } from "./ai-annotation/task.js";
@@ -113,10 +115,36 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
 
   // ── Ingest routes (replaces legacy /api/clip/*) ───────────────────────
 
+  function itemStatus(item: KnowledgeItem | null, fallbackUrl: string) {
+    if (!item) return {
+      normalizedUrl: fallbackUrl, urlHash: urlHash(fallbackUrl),
+      state: "empty", hasRawdoc: false, hasDocument: false,
+      itemId: undefined, docId: undefined, rawdocId: undefined
+    };
+    const title = item.title ?? undefined;
+    return {
+      normalizedUrl: item.identityHash || fallbackUrl,
+      urlHash: item.identityHash,
+      state: item.state === "captured" ? "captured" as const : "parsed" as const,
+      hasRawdoc: Boolean(item.activeRawdocId),
+      hasDocument: Boolean(item.activeDocId),
+      itemId: item.itemId,
+      docId: item.activeDocId,
+      rawdocId: item.activeRawdocId,
+      title,
+      pageTitle: title,
+      contentTitle: title,
+      displayTitle: title || new URL(fallbackUrl).hostname,
+      captureSavedAt: item.createdAt,
+      captureUpdatedAt: item.updatedAt,
+      parseUpdatedAt: item.parsedAt
+    };
+  }
+
   app.get("/api/ingest/status", async (request) => {
     const query = request.query as { url?: string };
     if (!query.url) throw new Error("url is required");
-    return store.status(query.url);
+    return itemStatus(await store.status(query.url), query.url);
   });
 
   app.delete("/api/ingest", async (request) => {
@@ -129,7 +157,7 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
     const input = ClipInputSchema.parse(request.body);
     const resolved = await resolveClipInput(input, effectiveConfig);
     const parsed = await parsePage(resolved);
-    const status = await store.status(resolved.normalizedUrl);
+    const status = itemStatus(await store.status(resolved.normalizedUrl), resolved.normalizedUrl);
     return { ...previewPayload(parsed), status };
   });
 
@@ -145,7 +173,7 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
       document: parsed.document,
       markdown
     });
-    const status = await store.status(resolved.normalizedUrl);
+    const status = itemStatus(await store.status(resolved.normalizedUrl), resolved.normalizedUrl);
     return { ...previewPayload(parsed), status, saved: true, paths };
   });
 
@@ -163,16 +191,14 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
       document: parsed.document,
       markdown
     });
-    const status = await store.status(resolved.normalizedUrl);
+    const status = itemStatus(await store.status(resolved.normalizedUrl), resolved.normalizedUrl);
     const annotationWarnings = await migrateAnnotationsForReparse(store, oldDocId, parsed.document);
     return { ...previewPayload(parsed), status, saved: true, paths, ...(annotationWarnings ? { annotationWarnings } : {}) };
   });
 
   app.get("/api/items", async (request) => {
     const query = request.query as { sourceType?: string; limit?: string };
-    return {
-      items: await store.listItems(query.sourceType, query.limit ? Number(query.limit) : undefined)
-    };
+    return store.listItems(query.sourceType, query.limit ? Number(query.limit) : undefined);
   });
 
   app.get("/api/items/:itemId", async (request) => {
@@ -402,9 +428,7 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
 
   app.get("/api/collections", async (request) => {
     const query = request.query as { limit?: string };
-    return {
-      collections: await store.listCollections(query.limit ? Number(query.limit) : undefined)
-    };
+    return store.listCollections(query.limit ? Number(query.limit) : undefined);
   });
 
   app.get("/api/collections/by-doc", async (request) => {
@@ -412,11 +436,11 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
     if (!query.docId) {
       return { collections: [] };
     }
-    return { collections: await store.getCollectionsByDocId(query.docId) };
+    return store.getCollectionsByDocId(query.docId);
   });
 
   app.get("/api/collections/used-doc-ids", async () => {
-    return { docIds: await store.getUsedCollectionDocIds() };
+    return store.getUsedCollectionDocIds();
   });
 
   app.get("/api/collections/:collectionId/navigation", async (request) => {

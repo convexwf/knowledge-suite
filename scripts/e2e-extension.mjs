@@ -157,7 +157,7 @@ try {
     throw new Error(`Expected toast save feedback not to shift preview layout, got top ${previewTopBeforeSave} -> ${previewTopAfterSave}`);
   }
 
-  const status = await get(`/api/clip/status?url=${encodeURIComponent(`http://127.0.0.1:${pagePort}/article?utm_source=e2e#top`)}`);
+  const status = await get(`/api/ingest/status?url=${encodeURIComponent(`http://127.0.0.1:${pagePort}/article?utm_source=e2e#top`)}`);
   if (status.state !== "parsed" || status.hasDocument !== true) {
     throw new Error(`Expected parsed saved document from backend status, got ${JSON.stringify(status)}`);
   }

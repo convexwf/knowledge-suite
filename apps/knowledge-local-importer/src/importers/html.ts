@@ -54,16 +54,19 @@ async function importUrlBackedHtml(
   if (!store) {
     throw new Error("Knowledge store is required for import");
   }
-  if (options.skipExisting && (await store.status(normalizedUrl)).state === "parsed") {
-    return {
-      type: "html_file",
-      inputPath: candidate.filePath,
-      state: "skipped",
-      itemId,
-      identityHash,
-      errorCode: "already_exists",
-      errorMessage: "URL item already exists and is parsed"
-    };
+  if (options.skipExisting) {
+    const existing = await store.status(normalizedUrl);
+    if (existing && existing.state === "parsed") {
+      return {
+        type: "html_file",
+        inputPath: candidate.filePath,
+        state: "skipped",
+        itemId,
+        identityHash,
+        errorCode: "already_exists",
+        errorMessage: "URL item already exists and is parsed"
+      };
+    }
   }
 
   const resolved = resolvedHtmlInput({
@@ -156,13 +159,17 @@ async function importLocalHtml(
   };
   parsed.document.meta.tags = [...new Set([...(parsed.document.meta.tags ?? []), ...options.tags])];
   const markdown = documentToMarkdown(parsed.document);
-  const paths = await store.saveImportItem({
+  const result = await store.saveImportItem({
     itemId,
-    identityHash,
-    rawContent: Buffer.from(html, "utf8"),
-    rawdoc: parsed.rawdoc,
+    sourceType: "singlefile_html",
+    sourceUri: parsed.rawdoc.source_uri,
+    rawdocId: parsed.rawdoc.rawdoc_id,
+    rawContentPath: html,
     document: parsed.document,
     markdown,
+    pageTitle: parsed.rawdoc.metadata?.pageTitle as string | undefined,
+    identityHash,
+    content: Buffer.from(html, "utf8"),
     contentExt: "html"
   });
   return {
@@ -173,7 +180,7 @@ async function importLocalHtml(
     identityHash,
     rawdocId: parsed.rawdoc.rawdoc_id,
     docId: parsed.document.doc_id,
-    paths
+    paths: result.paths
   };
 }
 

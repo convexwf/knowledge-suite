@@ -65,15 +65,18 @@ export async function importCalibreBook(
   try {
     const document = await store.prepareDocumentAssets(parsed.document);
     const markdown = documentToMarkdown(document);
-    const paths = await store.saveImportItem({
+    const result = await store.saveImportItem({
       itemId: parsed.itemId,
-      identityHash: parsed.identityHash,
-      rawContent: epubBytes,
-      rawdoc: parsed.rawdoc,
+      sourceType: "epub",
+      sourceUri: epubBytes ? String(epubBytes) : "epub-import",
+      rawdocId: parsed.rawdoc.rawdoc_id,
+      rawContentPath: epubBytes,
       document,
       markdown,
-      contentExt: "epub",
-      epubMetadata: parsed.epubMetadata
+      pageTitle: parsed.rawdoc.metadata?.pageTitle as string | undefined,
+      identityHash: parsed.identityHash,
+      content: epubBytes,
+      contentExt: "epub"
     });
     return {
       type: "calibre_book",
@@ -83,7 +86,7 @@ export async function importCalibreBook(
       identityHash: parsed.identityHash,
       rawdocId: parsed.rawdoc.rawdoc_id,
       docId: document.doc_id,
-      paths
+      paths: result.paths
     };
   } finally {
     await parsed.cleanup();

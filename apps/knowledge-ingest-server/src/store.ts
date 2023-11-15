@@ -546,24 +546,24 @@ export class KnowledgeStore {
   async listItems(
     sourceType?: string,
     limit = 50
-  ): Promise<{ items: KnowledgeItem[] }> {
+  ): Promise<{ items: (KnowledgeItem & { normalizedUrl?: string })[] }> {
     await this.ensure();
     const boundedLimit = Math.min(Math.max(Math.trunc(limit) || 50, 1), 500);
-    let query = "SELECT * FROM items WHERE item_type = 'document'";
-    const params: unknown[] = [];
+    let query = "SELECT i.*, a.alias_value AS normalized_url FROM items i LEFT JOIN item_aliases a ON a.item_id = i.item_id AND a.alias_type = 'normalized_url' WHERE i.item_type = 'document'";
+    const params: string[] = [];
     if (sourceType) {
-      query += " AND source_type = ?";
+      query += " AND i.source_type = ?";
       params.push(sourceType);
     }
-    query += " ORDER BY COALESCE(parsed_at, updated_at) DESC LIMIT ?";
-    params.push(boundedLimit);
-    const rows = this.database!.prepare(query).all(...params as string[]) as unknown as ItemRow[];
-    return { items: rows.map(toKnowledgeItem) };
+    query += " ORDER BY COALESCE(i.parsed_at, i.updated_at) DESC LIMIT ?";
+    params.push(String(boundedLimit));
+    const rows = this.database!.prepare(query).all(...params) as unknown as (ItemRow & { normalized_url: string | null })[];
+    return { items: rows.map((r) => ({ ...toKnowledgeItem(r), normalizedUrl: r.normalized_url ?? undefined })) };
   }
 
   async loadItem(itemId: string): Promise<KnowledgeItem | undefined> {
     await this.ensure();
-    const row = this.database!.prepare("SELECT * FROM items WHERE item_id = ?").get(itemId) as unknown as unknown as ItemRow | undefined;
+    const row = this.database!.prepare("SELECT * FROM items WHERE item_id = ?").get(itemId) as unknown as ItemRow | undefined;
     return row ? toKnowledgeItem(row) : undefined;
   }
 
@@ -574,7 +574,7 @@ export class KnowledgeStore {
     collectionIds?: string[];
   }> {
     await this.ensure();
-    const row = this.database!.prepare("SELECT * FROM items WHERE item_id = ?").get(itemId) as unknown as unknown as ItemRow | undefined;
+    const row = this.database!.prepare("SELECT * FROM items WHERE item_id = ?").get(itemId) as unknown as ItemRow | undefined;
     if (!row) throw new Error("Item not found");
     const item = toKnowledgeItem(row);
     let rawdoc: RawDoc | undefined;
@@ -601,7 +601,7 @@ export class KnowledgeStore {
     mode: KnowledgeItemDeleteMode
   ): Promise<KnowledgeItemDeleteResponse> {
     await this.ensure();
-    const row = this.database!.prepare("SELECT * FROM items WHERE item_id = ?").get(itemId) as unknown as unknown as ItemRow | undefined;
+    const row = this.database!.prepare("SELECT * FROM items WHERE item_id = ?").get(itemId) as unknown as ItemRow | undefined;
     if (!row) throw new Error("Item not found");
     return mode === "remove" ? this.removeItem(row) : this.purgeItem(row);
   }
@@ -687,7 +687,7 @@ export class KnowledgeStore {
       "SELECT item_id FROM item_aliases WHERE alias_type = ? AND alias_value = ?"
     ).get(aliasType, aliasValue) as { item_id: string } | undefined;
     if (!aliasRow) return undefined;
-    return this.database!.prepare("SELECT * FROM items WHERE item_id = ?").get(aliasRow.item_id) as unknown as unknown as ItemRow | undefined;
+    return this.database!.prepare("SELECT * FROM items WHERE item_id = ?").get(aliasRow.item_id) as unknown as ItemRow | undefined;
   }
 
   private upsertAlias(itemId: string, aliasType: string, aliasValue: string, isPrimary: boolean): void {
@@ -854,7 +854,7 @@ export class KnowledgeStore {
 
   async saveImportItem(params: {
     itemId: string;
-    sourceType: "pdf" | "epub";
+    sourceType: "pdf" | "epub" | "singlefile_html" | "url";
     sourceUri: string;
     rawdocId: string;
     rawContentPath: string | Buffer;
@@ -883,7 +883,7 @@ export class KnowledgeStore {
     const now = new Date().toISOString();
     const contentHash = sha256(params.markdown);
     const authorsJson = JSON.stringify(params.creators ?? []);
-    const previous = this.database!.prepare("SELECT * FROM items WHERE item_id = ?").get(params.itemId) as unknown as unknown as ItemRow | undefined;
+    const previous = this.database!.prepare("SELECT * FROM items WHERE item_id = ?").get(params.itemId) as unknown as ItemRow | undefined;
 
     await Promise.all([
       this.writeJson(paths.rawdocPath, { rawdoc_id: captureId, source_type: params.sourceType, source_uri: params.sourceUri, fetch_time: now }),
@@ -955,6 +955,9 @@ export class KnowledgeStore {
       throw error;
     }
 
+    // Create file_path alias for EPUB/PDF imports so they're findable
+    this.upsertAlias(params.itemId, "file_path", params.sourceUri, true);
+
     const item = toKnowledgeItem(this.database!.prepare("SELECT * FROM items WHERE item_id = ?").get(params.itemId) as unknown as ItemRow);
     const rawdoc: RawDoc = { rawdoc_id: captureId, source_type: params.sourceType, source_uri: params.sourceUri, fetch_time: now };
     return {
@@ -983,7 +986,7 @@ export class KnowledgeStore {
 
   async loadRawContentForItem(itemId: string): Promise<{ item: KnowledgeItem; html: string; rawdoc: RawDoc; content: string; contentExt: string }> {
     await this.ensure();
-    const row = this.database!.prepare("SELECT * FROM items WHERE item_id = ?").get(itemId) as unknown as unknown as ItemRow | undefined;
+    const row = this.database!.prepare("SELECT * FROM items WHERE item_id = ?").get(itemId) as unknown as ItemRow | undefined;
     if (!row || !row.active_capture_id) {
       throw new Error("Item has no active capture");
     }
@@ -1128,7 +1131,7 @@ export class KnowledgeStore {
     if (idx < 0) return { previous: null, next: null };
 
     const toNav = (m: { member_item_id: string; order_index: number }) => {
-      const item = this.database!.prepare("SELECT item_id, title, identity_key FROM items WHERE item_id = ?").get(m.member_item_id) as unknown as unknown as ItemRow | undefined;
+      const item = this.database!.prepare("SELECT item_id, title, identity_key FROM items WHERE item_id = ?").get(m.member_item_id) as unknown as ItemRow | undefined;
       return item ? {
         itemId: item.item_id,
         title: item.title ?? undefined,
@@ -1178,7 +1181,7 @@ export class KnowledgeStore {
   private loadCollectionSummary(collectionItemId: string): CollectionSummary {
     const row = this.database!.prepare(
       "SELECT item_id, title, identity_key, source_type, state, created_at, updated_at FROM items WHERE item_id = ? AND item_type = 'collection'"
-    ).get(collectionItemId) as unknown as unknown as ItemRow | undefined;
+    ).get(collectionItemId) as unknown as ItemRow | undefined;
     if (!row) throw new Error("Collection not found");
     const memberCount = (this.database!.prepare(
       "SELECT COUNT(*) AS count FROM collection_memberships WHERE collection_item_id = ?"
