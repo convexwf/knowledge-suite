@@ -899,11 +899,7 @@ export class KnowledgeStore {
     await Promise.all([
       this.writeJson(paths.rawdocPath, { rawdoc_id: captureId, source_type: params.sourceType, source_uri: params.sourceUri, fetch_time: now }),
       this.writeJson(paths.documentPath, params.document),
-      this.writeText(paths.markdownPath, params.markdown),
-      // Persist raw content for reparse
-      ...(params.content != null
-        ? [this.writeBuffer(`rawdocs/${captureId}.bin`, Buffer.isBuffer(params.content) ? params.content : Buffer.from(params.content))]
-        : [])
+      this.writeText(paths.markdownPath, params.markdown)
     ]);
 
     this.database!.exec("BEGIN");
@@ -1018,29 +1014,10 @@ export class KnowledgeStore {
     if (!row || !row.active_capture_id) {
       throw new Error("Item has no active capture");
     }
+    const htmlPath = `rawdocs/${row.active_capture_id}.html`;
+    const html = await this.readText(htmlPath);
     const rawdoc = JSON.parse(await this.readText(`rawdocs/${row.active_capture_id}.json`)) as RawDoc;
-    // Read raw binary content if available (EPUB/PDF), otherwise fall back to HTML
-    let html: string;
-    let content: string;
-    let contentExt: string;
-    try {
-      const bin = await readFile(resolveInsideRoot(this.root, `rawdocs/${row.active_capture_id}.bin`));
-      html = bin.toString("utf-8").slice(0, 1000); // preview only
-      content = bin.toString("utf-8");
-      contentExt = "bin";
-    } catch {
-      html = await this.readText(`rawdocs/${row.active_capture_id}.html`);
-      content = html;
-      contentExt = "html";
-    }
-    return { item: toKnowledgeItem(row) as KnowledgeItem, html, rawdoc, content, contentExt };
-  }
-
-  async readRawBuffer(itemId: string): Promise<Buffer> {
-    await this.ensure();
-    const row = this.database!.prepare("SELECT * FROM items WHERE item_id = ?").get(itemId) as unknown as ItemRow | undefined;
-    if (!row || !row.active_capture_id) throw new Error("Item has no active capture");
-    return readFile(resolveInsideRoot(this.root, `rawdocs/${row.active_capture_id}.bin`));
+    return { item: toKnowledgeItem(row) as KnowledgeItem, html, rawdoc, content: html, contentExt: "html" };
   }
 
   // ── collection membership ──────────────────────────────────────────────
@@ -1888,8 +1865,6 @@ export class KnowledgeStore {
     const files: string[] = [];
     const htmlPath = resolveInsideRoot(this.root, `rawdocs/${captureId}.html`);
     await unlink(htmlPath).then(() => files.push(`rawdocs/${captureId}.html`)).catch(ignoreMissing);
-    const binPath = resolveInsideRoot(this.root, `rawdocs/${captureId}.bin`);
-    await unlink(binPath).then(() => files.push(`rawdocs/${captureId}.bin`)).catch(ignoreMissing);
     const jsonPath = resolveInsideRoot(this.root, `rawdocs/${captureId}.json`);
     await unlink(jsonPath).then(() => files.push(`rawdocs/${captureId}.json`)).catch(ignoreMissing);
     return files;
@@ -1931,12 +1906,6 @@ export class KnowledgeStore {
 
   private async writeJson(relativePath: string, data: unknown): Promise<void> {
     await this.writeText(relativePath, JSON.stringify(data));
-  }
-
-  private async writeBuffer(relativePath: string, data: Buffer): Promise<void> {
-    const path = resolveInsideRoot(this.root, relativePath);
-    await mkdir(dirname(path), { recursive: true });
-    await writeFile(path, data);
   }
 
   private countRows(table: string): number {
