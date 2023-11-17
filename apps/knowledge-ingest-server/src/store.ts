@@ -891,6 +891,10 @@ export class KnowledgeStore {
     const contentHash = sha256(params.markdown);
     const authorsJson = JSON.stringify(params.creators ?? []);
     const previous = this.database!.prepare("SELECT * FROM items WHERE item_id = ?").get(params.itemId) as unknown as ItemRow | undefined;
+    const replacedDocId = previous?.active_doc_id && previous.active_doc_id !== docId
+      ? previous.active_doc_id : undefined;
+    const replacedCaptureId = previous?.active_capture_id && previous.active_capture_id !== captureId
+      ? previous.active_capture_id : undefined;
 
     await Promise.all([
       this.writeJson(paths.rawdocPath, { rawdoc_id: captureId, source_type: params.sourceType, source_uri: params.sourceUri, fetch_time: now }),
@@ -959,6 +963,15 @@ export class KnowledgeStore {
       );
 
       this.replaceChunks(params.document, { rawdoc_id: captureId, source_type: params.sourceType } as RawDoc, params.itemId, captureId, parserInfo, now);
+
+      // Cleanup replaced versions
+      if (replacedDocId) {
+        this.database!.prepare("DELETE FROM chunks WHERE doc_id = ?").run(replacedDocId);
+        this.database!.prepare("DELETE FROM documents WHERE doc_id = ?").run(replacedDocId);
+      }
+      if (replacedCaptureId) {
+        this.database!.prepare("DELETE FROM rawdocs WHERE capture_id = ?").run(replacedCaptureId);
+      }
 
       if (params.epubMetadata) {
         this.upsertEpubMetadata(params.itemId, params.epubMetadata);
