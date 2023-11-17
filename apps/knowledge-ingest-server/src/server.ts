@@ -584,7 +584,10 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
     const oldDocId = capture.item.activeDocId;
 
     if (capture.rawdoc.source_type === "epub") {
-      const parsed = await parseEpub(Buffer.from(capture.content), {
+      const epubBuffer = capture.contentExt === "epub"
+        ? Buffer.from(capture.content, "base64")
+        : Buffer.from(capture.content);
+      const parsed = await parseEpub(epubBuffer, {
         rawdocId: capture.rawdoc.rawdoc_id,
         sourceUri: capture.rawdoc.source_uri,
         calibreMetadata: calibreMetadataFromRawdoc(capture.rawdoc),

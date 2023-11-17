@@ -899,7 +899,11 @@ export class KnowledgeStore {
     await Promise.all([
       this.writeJson(paths.rawdocPath, { rawdoc_id: captureId, source_type: params.sourceType, source_uri: params.sourceUri, fetch_time: now }),
       this.writeJson(paths.documentPath, params.document),
-      this.writeText(paths.markdownPath, params.markdown)
+      this.writeText(paths.markdownPath, params.markdown),
+      // Save raw content for reparse (EPUB/PDF import)
+      ...(params.content != null
+        ? [this.writeBuffer(`rawdocs/${captureId}.${params.sourceType}`, Buffer.isBuffer(params.content) ? params.content : Buffer.from(params.content))]
+        : [])
     ]);
 
     this.database!.exec("BEGIN");
@@ -1014,9 +1018,23 @@ export class KnowledgeStore {
     if (!row || !row.active_capture_id) {
       throw new Error("Item has no active capture");
     }
-    const htmlPath = `rawdocs/${row.active_capture_id}.html`;
-    const html = await this.readText(htmlPath);
-    const rawdoc = JSON.parse(await this.readText(`rawdocs/${row.active_capture_id}.json`)) as RawDoc;
+    const captureId = row.active_capture_id;
+    const rawdoc = JSON.parse(await this.readText(`rawdocs/${captureId}.json`)) as RawDoc;
+
+    // EPUB/PDF: read raw binary from .epub/.pdf, return as Buffer for reparse
+    if (rawdoc.source_type === "epub" || rawdoc.source_type === "pdf") {
+      const ext = rawdoc.source_type;
+      const bin = await readFile(resolveInsideRoot(this.root, `rawdocs/${captureId}.${ext}`));
+      return {
+        item: toKnowledgeItem(row) as KnowledgeItem,
+        html: "",
+        rawdoc,
+        content: bin.toString("base64"),
+        contentExt: ext
+      };
+    }
+
+    const html = await this.readText(`rawdocs/${captureId}.html`);
     return { item: toKnowledgeItem(row) as KnowledgeItem, html, rawdoc, content: html, contentExt: "html" };
   }
 
@@ -1863,10 +1881,10 @@ export class KnowledgeStore {
 
   async deleteCaptureArtifacts(captureId: string): Promise<string[]> {
     const files: string[] = [];
-    const htmlPath = resolveInsideRoot(this.root, `rawdocs/${captureId}.html`);
-    await unlink(htmlPath).then(() => files.push(`rawdocs/${captureId}.html`)).catch(ignoreMissing);
-    const jsonPath = resolveInsideRoot(this.root, `rawdocs/${captureId}.json`);
-    await unlink(jsonPath).then(() => files.push(`rawdocs/${captureId}.json`)).catch(ignoreMissing);
+    for (const ext of ["html", "epub", "pdf", "json"]) {
+      const p = resolveInsideRoot(this.root, `rawdocs/${captureId}.${ext}`);
+      await unlink(p).then(() => files.push(`rawdocs/${captureId}.${ext}`)).catch(ignoreMissing);
+    }
     return files;
   }
 
@@ -1906,6 +1924,12 @@ export class KnowledgeStore {
 
   private async writeJson(relativePath: string, data: unknown): Promise<void> {
     await this.writeText(relativePath, JSON.stringify(data));
+  }
+
+  private async writeBuffer(relativePath: string, data: Buffer): Promise<void> {
+    const path = resolveInsideRoot(this.root, relativePath);
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, data);
   }
 
   private countRows(table: string): number {
