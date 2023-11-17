@@ -53,8 +53,8 @@ export interface ItemListItem extends KnowledgeItem {
 
 function normalizedUrlFromItem(item: KnowledgeItem & { normalizedUrl?: string }): string {
   if (item.normalizedUrl) return item.normalizedUrl;
-  if (item.identityHash) return item.identityHash;
-  if (item.itemId.startsWith("url:sha256:")) return item.itemId.slice(10);
+  if (item.canonicalUrl) return item.canonicalUrl;
+  if (item.originalUrl) return item.originalUrl;
   return item.itemId;
 }
 
@@ -171,34 +171,14 @@ export function createKnowledgeApiClient(settings: ExtensionSettings): Knowledge
       },
       options
     ),
-    status: (url) => request<KnowledgeItem | null>(
+    status: (url) => request<ClipStatusResult>(
       baseUrl,
       settings.token,
       "GET",
       `/api/ingest/status?url=${encodeURIComponent(url)}`,
       undefined,
       options
-    ).then((r) => {
-      if (!r) return { normalizedUrl: url, urlHash: "", state: "empty" as const, hasRawdoc: false, hasDocument: false, itemId: undefined, originalUrl: undefined, canonicalUrl: undefined };
-      const title = r.title;
-      return {
-        ...r,
-        normalizedUrl: r.identityHash || url,
-        urlHash: r.identityHash,
-        state: (r.state === "captured" ? "captured" : "parsed") as "empty" | "captured" | "parsed",
-        hasRawdoc: Boolean(r.activeRawdocId),
-        hasDocument: Boolean(r.activeDocId),
-        title: title,
-        pageTitle: title,
-        contentTitle: title,
-        displayTitle: title || new URL(url).hostname,
-        captureSavedAt: r.createdAt,
-        captureUpdatedAt: r.updatedAt,
-        parseUpdatedAt: r.parsedAt,
-        docId: r.activeDocId,
-        rawdocId: r.activeRawdocId
-      } as ClipStatusResult;
-    }),
+    ),
     list: (limit = settings.savedListLimit) => {
       const params = new URLSearchParams();
       if (limit > 0) params.set("limit", String(limit));
@@ -303,11 +283,31 @@ export function createKnowledgeApiClient(settings: ExtensionSettings): Knowledge
     deleteClip: (url, mode = "remove") => request<ClipDeleteResult>(
       baseUrl,
       settings.token,
-      "DELETE",
-      `/api/ingest?url=${encodeURIComponent(url)}&mode=${encodeURIComponent(mode)}`,
+      "GET",
+      `/api/ingest/status?url=${encodeURIComponent(url)}`,
       undefined,
       options
-    ),
+    ).then(async (before) => {
+      const result = await request<KnowledgeItemDeleteResult>(
+        baseUrl,
+        settings.token,
+        "DELETE",
+        `/api/ingest?url=${encodeURIComponent(url)}&mode=${encodeURIComponent(mode)}`,
+        undefined,
+        options
+      );
+      return {
+        ...before,
+        deleted: result.deleted,
+        mode: mode as ClipDeleteMode,
+        previousState: result.previousState,
+        currentState: result.currentState,
+        state: result.currentState,
+        removedDocId: result.removedDocId,
+        removedRawdocId: result.removedRawdocId,
+        deletedFiles: result.deletedFiles
+      };
+    }),
     reparse: (url) => request<PreviewResult>(baseUrl, settings.token, "POST", "/api/ingest/reparse", { url }, options),
     preview: (body) => request<PreviewResult>(baseUrl, settings.token, "POST", "/api/ingest/preview", body, options),
     save: (body) => request<PreviewResult>(baseUrl, settings.token, "POST", "/api/ingest/save", {

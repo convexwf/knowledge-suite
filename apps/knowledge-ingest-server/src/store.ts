@@ -14,6 +14,7 @@ import {
   CollectionState,
   CollectionSummary,
   ContextCitation,
+  ContextPackResponse,
   KnowledgeItem,
   KnowledgeItemDeleteMode,
   KnowledgeItemDeleteResponse,
@@ -60,6 +61,14 @@ interface ItemAliasRow {
   created_at: string;
 }
 
+interface ItemAliasInfo {
+  normalizedUrl?: string;
+  originalUrl?: string;
+  canonicalUrl?: string;
+  rootUrl?: string;
+  normalizedRootUrl?: string;
+}
+
 interface RawdocRow {
   capture_id: string;
   item_id: string;
@@ -92,6 +101,11 @@ interface DocumentRow {
   content_hash: string | null;
   created_at: string;
   updated_at: string;
+}
+
+interface ActiveDocumentInfo {
+  page_title: string | null;
+  content_title: string | null;
 }
 
 interface CollectionMembershipRow {
@@ -259,9 +273,13 @@ function parserInfoFor(document: KnowledgeDocument, rawdoc: RawDoc): {
   profile: string | null;
 } {
   const meta = rawdoc.metadata as Record<string, unknown> | undefined;
+  const parserVersion = document.meta.parser_version ?? "0.0.0";
+  const inferredMethod = parserVersion.includes(":")
+    ? parserVersion.slice(parserVersion.lastIndexOf(":") + 1)
+    : "unknown";
   return {
-    version: (meta?.parserVersion as string) ?? document.meta.parser_version ?? "0.0.0",
-    method: (meta?.parserMethod as string) ?? "unknown",
+    version: (meta?.parserVersion as string) ?? parserVersion,
+    method: (meta?.parserMethod as string) ?? inferredMethod,
     profile: (meta?.parserProfile as string | undefined) ?? null
   };
 }
@@ -545,11 +563,11 @@ export class KnowledgeStore {
 
   async listItems(
     sourceType?: string,
-    limit = 50
+  limit = 50
   ): Promise<{ items: (KnowledgeItem & { normalizedUrl?: string })[] }> {
     await this.ensure();
     const boundedLimit = Math.min(Math.max(Math.trunc(limit) || 50, 1), 500);
-    let query = "SELECT i.*, a.alias_value AS normalized_url FROM items i LEFT JOIN item_aliases a ON a.item_id = i.item_id AND a.alias_type = 'normalized_url' WHERE i.item_type = 'document'";
+    let query = "SELECT i.* FROM items i WHERE i.item_type = 'document'";
     const params: string[] = [];
     if (sourceType) {
       query += " AND i.source_type = ?";
@@ -557,14 +575,16 @@ export class KnowledgeStore {
     }
     query += " ORDER BY COALESCE(i.parsed_at, i.updated_at) DESC LIMIT ?";
     params.push(String(boundedLimit));
-    const rows = this.database!.prepare(query).all(...params) as unknown as (ItemRow & { normalized_url: string | null })[];
-    return { items: rows.map((r) => ({ ...toKnowledgeItem(r), normalizedUrl: r.normalized_url ?? undefined })) };
+    const rows = this.database!.prepare(query).all(...params) as unknown as ItemRow[];
+    return {
+      items: rows.map((row) => this.buildKnowledgeItem(row))
+    };
   }
 
   async loadItem(itemId: string): Promise<KnowledgeItem | undefined> {
     await this.ensure();
     const row = this.database!.prepare("SELECT * FROM items WHERE item_id = ?").get(itemId) as unknown as ItemRow | undefined;
-    return row ? toKnowledgeItem(row) : undefined;
+    return row ? this.buildKnowledgeItem(row) : undefined;
   }
 
   async loadItemDetail(itemId: string): Promise<{
@@ -576,7 +596,7 @@ export class KnowledgeStore {
     await this.ensure();
     const row = this.database!.prepare("SELECT * FROM items WHERE item_id = ?").get(itemId) as unknown as ItemRow | undefined;
     if (!row) throw new Error("Item not found");
-    const item = toKnowledgeItem(row);
+    const item = this.buildKnowledgeItem(row);
     let rawdoc: RawDoc | undefined;
     let document: KnowledgeDocument | undefined;
     if (row.active_capture_id) {
@@ -646,15 +666,14 @@ export class KnowledgeStore {
   private async purgeItem(row: ItemRow): Promise<KnowledgeItemDeleteResponse> {
     const deletedFiles: string[] = [];
     if (row.active_doc_id) {
-      deletedFiles.push(...await this.deleteDerivedArtifacts(row.active_doc_id));
       deletedFiles.push(...await this.deleteAssetsForDoc(row.active_doc_id));
+      deletedFiles.push(...await this.deleteDerivedArtifacts(row.active_doc_id));
     }
     if (row.active_capture_id) {
       deletedFiles.push(...await this.deleteCaptureArtifacts(row.active_capture_id));
     }
     this.database!.exec("BEGIN");
     try {
-      this.database!.prepare("DELETE FROM items WHERE item_id = ?").run(row.item_id);
       this.database!.prepare("DELETE FROM item_aliases WHERE item_id = ?").run(row.item_id);
       this.database!.prepare("DELETE FROM epub_metadata WHERE item_id = ?").run(row.item_id);
       this.database!.prepare("DELETE FROM collection_memberships WHERE member_item_id = ? OR collection_item_id = ?").run(row.item_id, row.item_id);
@@ -666,6 +685,7 @@ export class KnowledgeStore {
       if (row.active_capture_id) {
         this.database!.prepare("DELETE FROM rawdocs WHERE capture_id = ?").run(row.active_capture_id);
       }
+      this.database!.prepare("DELETE FROM items WHERE item_id = ?").run(row.item_id);
       this.database!.exec("COMMIT");
     } catch (error) {
       this.database!.exec("ROLLBACK");
@@ -693,6 +713,15 @@ export class KnowledgeStore {
     return this.database!.prepare("SELECT * FROM items WHERE item_id = ?").get(aliasRow.item_id) as unknown as ItemRow | undefined;
   }
 
+  private findItemByUrlLikeAlias(inputUrl: string): ItemRow | undefined {
+    const normalized = normalizeUrlForKnowledge(inputUrl);
+    return this.findItemByAlias("normalized_url", normalized)
+      ?? this.findItemByAlias("canonical_url", normalized)
+      ?? this.findItemByAlias("canonical_url", inputUrl)
+      ?? this.findItemByAlias("original_url", normalized)
+      ?? this.findItemByAlias("original_url", inputUrl);
+  }
+
   private upsertAlias(itemId: string, aliasType: string, aliasValue: string, isPrimary: boolean): void {
     this.database!.prepare(`
       INSERT INTO item_aliases (alias_id, item_id, alias_type, alias_value, is_primary, created_at)
@@ -703,6 +732,69 @@ export class KnowledgeStore {
     `).run(makeId(), itemId, aliasType, aliasValue, isPrimary ? 1 : 0, new Date().toISOString());
   }
 
+  private loadAliasInfo(itemId: string): ItemAliasInfo {
+    const rows = this.database!.prepare(
+      "SELECT alias_type, alias_value FROM item_aliases WHERE item_id = ?"
+    ).all(itemId) as unknown as Pick<ItemAliasRow, "alias_type" | "alias_value">[];
+    const info: ItemAliasInfo = {};
+    for (const row of rows) {
+      switch (row.alias_type) {
+        case "normalized_url":
+          info.normalizedUrl = row.alias_value;
+          break;
+        case "original_url":
+          info.originalUrl = row.alias_value;
+          break;
+        case "canonical_url":
+          info.canonicalUrl = row.alias_value;
+          break;
+        case "root_url":
+          info.rootUrl = row.alias_value;
+          break;
+        case "normalized_root_url":
+          info.normalizedRootUrl = row.alias_value;
+          break;
+        default:
+          break;
+      }
+    }
+    return info;
+  }
+
+  private loadActiveDocumentInfo(docId: string | null): ActiveDocumentInfo | undefined {
+    if (!docId) return undefined;
+    const row = this.database!.prepare(
+      "SELECT page_title, title AS content_title FROM documents WHERE doc_id = ?"
+    ).get(docId) as ActiveDocumentInfo | undefined;
+    return row;
+  }
+
+  private buildKnowledgeItem(row: ItemRow): KnowledgeItem {
+    const aliases = this.loadAliasInfo(row.item_id);
+    const documentInfo = this.loadActiveDocumentInfo(row.active_doc_id);
+    const contentTitle = documentInfo?.content_title ?? row.title ?? null;
+    const pageTitle = documentInfo?.page_title ?? row.title ?? null;
+    const normalizedUrl = aliases.normalizedUrl;
+    return toKnowledgeItem(row, {
+      normalizedUrl,
+      originalUrl: aliases.originalUrl,
+      canonicalUrl: aliases.canonicalUrl,
+      pageTitle,
+      contentTitle,
+      displayTitle: pageTitle || contentTitle || (normalizedUrl ? tryHostnameTitle(normalizedUrl) : row.item_id)
+    });
+  }
+
+  private resolveSearchNormalizedUrl(itemId: string, sourceUrl: string | null): string | undefined {
+    const aliases = this.loadAliasInfo(itemId);
+    if (aliases.normalizedUrl) return aliases.normalizedUrl;
+    const row = this.database!.prepare("SELECT source_type FROM items WHERE item_id = ?").get(itemId) as { source_type?: string } | undefined;
+    if (row?.source_type === "url" || row?.source_type === "singlefile_html") {
+      return sourceUrl ?? undefined;
+    }
+    return itemId;
+  }
+
   // ── save (web clip) ────────────────────────────────────────────────────
 
   async save(params: {
@@ -711,7 +803,7 @@ export class KnowledgeStore {
     rawdoc: RawDoc;
     document: KnowledgeDocument;
     markdown: string;
-  }): Promise<{ paths: ReturnType<typeof pathsFor> }> {
+  }): Promise<ReturnType<typeof pathsFor>> {
     await this.ensure();
     const normalized = normalizeUrlForKnowledge(params.normalizedUrl);
     const hash = urlHash(normalized);
@@ -771,13 +863,11 @@ export class KnowledgeStore {
       // aliases — on reparse, only update the primary normalized_url alias
       // to avoid accumulating stale canonical/original URL aliases
       this.upsertAlias(itemId, "normalized_url", normalized, true);
-      if (!previous) {
-        if (canonicalUrl && canonicalUrl !== normalized) {
-          this.upsertAlias(itemId, "canonical_url", canonicalUrl, false);
-        }
-        if (originalUrl && originalUrl !== normalized) {
-          this.upsertAlias(itemId, "original_url", originalUrl, false);
-        }
+      if (canonicalUrl) {
+        this.upsertAlias(itemId, "canonical_url", canonicalUrl, false);
+      }
+      if (originalUrl) {
+        this.upsertAlias(itemId, "original_url", originalUrl, false);
       }
 
       // rawdocs
@@ -853,7 +943,7 @@ export class KnowledgeStore {
       await this.deleteCaptureArtifacts(replacedCaptureId);
     }
 
-    return { paths };
+    return paths;
   }
 
   // ── save import (EPUB) ─────────────────────────────────────────────────
@@ -863,6 +953,7 @@ export class KnowledgeStore {
     sourceType: "pdf" | "epub" | "singlefile_html" | "url";
     sourceUri: string;
     rawdocId: string;
+    rawdoc?: RawDoc;
     rawContentPath: string | Buffer;
     document: KnowledgeDocument;
     markdown: string;
@@ -889,15 +980,24 @@ export class KnowledgeStore {
     const parserInfo = parserInfoFor(params.document, {} as RawDoc);
     const now = new Date().toISOString();
     const contentHash = sha256(params.markdown);
-    const authorsJson = JSON.stringify(params.creators ?? []);
+    const creators = params.creators ?? params.document.meta.authors ?? [];
+    const language = params.language ?? params.document.meta.language ?? null;
+    const tags = params.tags ?? params.document.meta.tags ?? [];
+    const authorsJson = JSON.stringify(creators);
     const previous = this.database!.prepare("SELECT * FROM items WHERE item_id = ?").get(params.itemId) as unknown as ItemRow | undefined;
     const replacedDocId = previous?.active_doc_id && previous.active_doc_id !== docId
       ? previous.active_doc_id : undefined;
     const replacedCaptureId = previous?.active_capture_id && previous.active_capture_id !== captureId
       ? previous.active_capture_id : undefined;
 
+    const rawdoc = params.rawdoc ?? {
+      rawdoc_id: captureId,
+      source_type: params.sourceType,
+      source_uri: params.sourceUri,
+      fetch_time: now
+    };
     await Promise.all([
-      this.writeJson(paths.rawdocPath, { rawdoc_id: captureId, source_type: params.sourceType, source_uri: params.sourceUri, fetch_time: now }),
+      this.writeJson(paths.rawdocPath, rawdoc),
       this.writeJson(paths.documentPath, params.document),
       this.writeText(paths.markdownPath, params.markdown),
       // Save raw content for reparse (EPUB/PDF import)
@@ -923,8 +1023,8 @@ export class KnowledgeStore {
           updated_at = excluded.updated_at,
           parsed_at = excluded.parsed_at
       `).run(
-        params.itemId, params.sourceType, null, params.pageTitle ?? params.document.meta.title,
-        authorsJson, params.language ?? null, JSON.stringify(params.tags ?? []),
+        params.itemId, params.sourceType, params.identityHash ?? null, params.pageTitle ?? params.document.meta.title,
+        authorsJson, language, JSON.stringify(tags),
         captureId, docId, previous?.created_at ?? now, now, now
       );
 
@@ -958,7 +1058,7 @@ export class KnowledgeStore {
           updated_at = excluded.updated_at
       `).run(
         docId, params.itemId, captureId, params.document.meta.title,
-        params.pageTitle ?? null, params.language ?? null, authorsJson,
+        params.pageTitle ?? null, language, authorsJson,
         parserInfo.version, parserInfo.method, parserInfo.profile, contentHash, now, now
       );
 
@@ -977,6 +1077,11 @@ export class KnowledgeStore {
         this.upsertEpubMetadata(params.itemId, params.epubMetadata);
       }
 
+      if (params.sourceType === "url" || params.sourceType === "singlefile_html") {
+        const normalizedUrl = normalizeUrlForKnowledge(params.sourceUri);
+        this.upsertAlias(params.itemId, "normalized_url", normalizedUrl, true);
+      }
+
       this.database!.exec("COMMIT");
     } catch (error) {
       this.database!.exec("ROLLBACK");
@@ -986,15 +1091,20 @@ export class KnowledgeStore {
     // Create file_path alias for EPUB/PDF imports so they're findable
     this.upsertAlias(params.itemId, "file_path", params.sourceUri, true);
 
-    const item = toKnowledgeItem(this.database!.prepare("SELECT * FROM items WHERE item_id = ?").get(params.itemId) as unknown as ItemRow);
-    const rawdoc: RawDoc = { rawdoc_id: captureId, source_type: params.sourceType, source_uri: params.sourceUri, fetch_time: now };
+    const item = this.buildKnowledgeItem(
+      this.database!.prepare("SELECT * FROM items WHERE item_id = ?").get(params.itemId) as unknown as ItemRow
+    );
+    const returnedRawdoc: RawDoc = rawdoc;
+    const storedRawContentPath = params.content != null
+      ? `rawdocs/${captureId}.${params.contentExt ?? params.sourceType}`
+      : String(params.rawContentPath);
     return {
       knowledgeItem: item!,
-      rawdoc,
+      rawdoc: returnedRawdoc,
       document: params.document,
       markdown: params.markdown,
       saved: true,
-      paths: { rawContentPath: params.rawContentPath as string, rawdocPath: paths.rawdocPath, documentPath: paths.documentPath, markdownPath: paths.markdownPath }
+      paths: { rawContentPath: storedRawContentPath, rawdocPath: paths.rawdocPath, documentPath: paths.documentPath, markdownPath: paths.markdownPath }
     };
   }
 
@@ -1002,14 +1112,13 @@ export class KnowledgeStore {
 
   async loadCaptureByUrl(inputUrl: string): Promise<{ clip: KnowledgeItem; html: string; rawdoc: RawDoc; itemId: string }> {
     await this.ensure();
-    const normalized = normalizeUrlForKnowledge(inputUrl);
-    const row = this.findItemByAlias("normalized_url", normalized);
+    const row = this.findItemByUrlLikeAlias(inputUrl);
     if (!row || !row.active_capture_id) {
       throw new Error("Capture does not exist for this URL");
     }
     const html = await this.readText(`rawdocs/${row.active_capture_id}.html`);
     const rawdoc = JSON.parse(await this.readText(`rawdocs/${row.active_capture_id}.json`)) as RawDoc;
-    return { clip: toKnowledgeItem(row), html, rawdoc, itemId: row.item_id };
+    return { clip: this.buildKnowledgeItem(row), html, rawdoc, itemId: row.item_id };
   }
 
   async loadRawContentForItem(itemId: string): Promise<{ item: KnowledgeItem; html: string; rawdoc: RawDoc; content: string; contentExt: string }> {
@@ -1026,7 +1135,7 @@ export class KnowledgeStore {
       const ext = rawdoc.source_type;
       const bin = await readFile(resolveInsideRoot(this.root, `rawdocs/${captureId}.${ext}`));
       return {
-        item: toKnowledgeItem(row) as KnowledgeItem,
+        item: this.buildKnowledgeItem(row) as KnowledgeItem,
         html: "",
         rawdoc,
         content: bin.toString("base64"),
@@ -1035,7 +1144,7 @@ export class KnowledgeStore {
     }
 
     const html = await this.readText(`rawdocs/${captureId}.html`);
-    return { item: toKnowledgeItem(row) as KnowledgeItem, html, rawdoc, content: html, contentExt: "html" };
+    return { item: this.buildKnowledgeItem(row) as KnowledgeItem, html, rawdoc, content: html, contentExt: "html" };
   }
 
   // ── collection membership ──────────────────────────────────────────────
@@ -1064,7 +1173,7 @@ export class KnowledgeStore {
       }
       if (members.length > 0) {
         this.database!.prepare(
-          "UPDATE items SET state = 'parsed', updated_at = ? WHERE item_id = ?"
+          "UPDATE items SET state = 'active', updated_at = ? WHERE item_id = ?"
         ).run(now, collectionItemId);
       }
       this.database!.exec("COMMIT");
@@ -1090,7 +1199,12 @@ export class KnowledgeStore {
         cm.membership_id,
         cm.collection_item_id AS collection_id,
         COALESCE(i.item_id, cm.member_item_id) AS item_id,
-        COALESCE(i.identity_key, '') AS normalized_url,
+        COALESCE((
+          SELECT alias_value
+          FROM item_aliases ia
+          WHERE ia.item_id = i.item_id AND ia.alias_type = 'normalized_url'
+          LIMIT 1
+        ), '') AS normalized_url,
         i.active_doc_id AS doc_id,
         i.active_capture_id AS rawdoc_id,
         i.title,
@@ -1173,11 +1287,14 @@ export class KnowledgeStore {
     if (idx < 0) return { previous: null, next: null };
 
     const toNav = (m: { member_item_id: string; order_index: number }) => {
-      const item = this.database!.prepare("SELECT item_id, title, identity_key FROM items WHERE item_id = ?").get(m.member_item_id) as unknown as ItemRow | undefined;
+      const item = this.database!.prepare("SELECT item_id, title, active_doc_id FROM items WHERE item_id = ?").get(m.member_item_id) as unknown as Pick<ItemRow, "item_id" | "title" | "active_doc_id"> | undefined;
+      const alias = this.database!.prepare(
+        "SELECT alias_value FROM item_aliases WHERE item_id = ? AND alias_type = 'normalized_url' LIMIT 1"
+      ).get(m.member_item_id) as { alias_value: string } | undefined;
       return item ? {
         itemId: item.item_id,
         title: item.title ?? undefined,
-        normalizedUrl: item.identity_key ?? undefined,
+        normalizedUrl: alias?.alias_value,
         docId: item.active_doc_id ?? undefined
       } : { itemId: m.member_item_id };
     };
@@ -1208,7 +1325,9 @@ export class KnowledgeStore {
     await this.ensure();
     const now = new Date().toISOString();
     const id = params.collectionId ?? makeId();
-    const identityKey = params.normalizedRootUrl ? urlHash(params.normalizedRootUrl) : null;
+    const normalizedRootUrl = params.normalizedRootUrl
+      ?? (params.rootUrl ? normalizeUrlForKnowledge(params.rootUrl) : undefined);
+    const identityKey = normalizedRootUrl ? urlHash(normalizedRootUrl) : null;
     this.database!.prepare(`
       INSERT INTO items (item_id, item_type, source_type, identity_key, title, creators_json, tags_json, state, member_visibility_mode, created_at, updated_at)
       VALUES (?, 'collection', ?, ?, ?, '[]', '[]', 'active', 'show_members', ?, ?)
@@ -1217,6 +1336,12 @@ export class KnowledgeStore {
         identity_key = excluded.identity_key,
         updated_at = excluded.updated_at
     `).run(id, params.sourceType ?? "virtual_collection", identityKey, params.title, now, now);
+    if (params.rootUrl) {
+      this.upsertAlias(id, "root_url", params.rootUrl, true);
+    }
+    if (normalizedRootUrl) {
+      this.upsertAlias(id, "normalized_root_url", normalizedRootUrl, true);
+    }
     return { collectionId: id, collection: this.loadCollectionSummary(id) };
   }
 
@@ -1228,11 +1353,12 @@ export class KnowledgeStore {
     const memberCount = (this.database!.prepare(
       "SELECT COUNT(*) AS count FROM collection_memberships WHERE collection_item_id = ?"
     ).get(collectionItemId) as unknown as { count: number }).count;
+    const aliases = this.loadAliasInfo(collectionItemId);
     return {
       collectionId: row.item_id,
       title: row.title ?? "",
-      rootUrl: row.identity_key ?? undefined,
-      normalizedRootUrl: row.identity_key ?? undefined,
+      rootUrl: aliases.rootUrl ?? aliases.normalizedRootUrl,
+      normalizedRootUrl: aliases.normalizedRootUrl,
       sourceType: row.source_type,
       state: row.state as CollectionState,
       createdAt: row.created_at,
@@ -1276,10 +1402,9 @@ export class KnowledgeStore {
 
   async status(inputUrl: string): Promise<KnowledgeItem | null> {
     await this.ensure();
-    const normalized = normalizeUrlForKnowledge(inputUrl);
-    const row = this.findItemByAlias("normalized_url", normalized);
+    const row = this.findItemByUrlLikeAlias(inputUrl);
     if (!row) return null;
-    return toKnowledgeItem(row);
+    return this.buildKnowledgeItem(row);
   }
 
   async list(limit = 50): Promise<KnowledgeItem[]> {
@@ -1290,8 +1415,7 @@ export class KnowledgeStore {
 
   async deleteByUrl(inputUrl: string, mode: KnowledgeItemDeleteMode): Promise<KnowledgeItemDeleteResponse> {
     await this.ensure();
-    const normalized = normalizeUrlForKnowledge(inputUrl);
-    const row = this.findItemByAlias("normalized_url", normalized);
+    const row = this.findItemByUrlLikeAlias(inputUrl);
     if (!row) throw new Error("Item not found for this URL");
     return this.deleteItem(row.item_id, mode);
   }
@@ -1388,6 +1512,7 @@ export class KnowledgeStore {
   async prepareDocumentAssets(document: KnowledgeDocument): Promise<KnowledgeDocument> {
     await this.ensure();
     const next: KnowledgeDocument = JSON.parse(JSON.stringify(document)) as KnowledgeDocument;
+    let firstAssetId: string | undefined;
     for (const section of next.sections) {
       for (const asset of section.assets ?? []) {
         if (!asset.path || !isAbsolute(asset.path)) continue;
@@ -1401,9 +1526,12 @@ export class KnowledgeStore {
           if (error.code !== "EEXIST") throw error;
         });
         asset.asset_id = assetId;
-        asset.path = undefined;
+        asset.path = `assets/${assetId}`;
+        firstAssetId ??= assetId;
       }
     }
+    next.meta.cover_asset_id ??= firstAssetId;
+    next.meta.statistics = computeDocumentStatistics(next);
     return next;
   }
 
@@ -1433,6 +1561,12 @@ export class KnowledgeStore {
     collectionId?: string;
     mode: string;
     totalCount: number;
+    items?: Array<{
+      url: string;
+      normalizedUrl: string;
+      source?: string;
+      titleHint?: string;
+    }>;
     options?: Record<string, unknown>;
   }): Promise<{ jobId: string }> {
     await this.ensure();
@@ -1442,6 +1576,15 @@ export class KnowledgeStore {
       INSERT INTO batch_jobs (job_id, collection_id, source_page_url, mode, state, total_count, options_json, created_at)
       VALUES (?, ?, ?, ?, 'queued', ?, ?, ?)
     `).run(jobId, params.collectionId ?? null, params.sourcePageUrl, params.mode, params.totalCount, params.options ? JSON.stringify(params.options) : null, now);
+    if (params.items?.length) {
+      const insertItem = this.database!.prepare(`
+        INSERT INTO batch_items (item_id, job_id, collection_id, url, normalized_url, source, title_hint, state, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+      `);
+      for (const item of params.items) {
+        insertItem.run(makeId(), jobId, params.collectionId ?? null, item.url, item.normalizedUrl, item.source ?? null, item.titleHint ?? null, now, now);
+      }
+    }
     return { jobId };
   }
 
@@ -1523,39 +1666,60 @@ export class KnowledgeStore {
     const trimmed = query.trim();
     if (!trimmed) return [];
     const searchResults = this.searchChunks(trimmed, options);
-    const results = await Promise.all(searchResults.map(async (c) => ({
-      chunkId: c.chunk_id,
-      docId: c.doc_id,
-      rawdocId: c.capture_id,
-      sectionIds: safeJsonArray(c.section_ids_json ?? "[]"),
-      title: c.title,
-      pageTitle: c.page_title ?? undefined,
-      contentTitle: c.title,
-      displayTitle: c.page_title ?? c.title,
-      sourceUrl: c.source_url ?? undefined,
-      normalizedUrl: c.source_url ?? undefined,
-      headingPath: c.heading_path ?? undefined,
-      snippet: c.text.slice(0, 300),
-      score: c.score ?? 0,
-      parserVersion: c.parser_version ?? undefined,
-      parserMethod: c.parser_method ?? undefined,
-      parserProfile: c.parser_profile ?? undefined,
-      ...(options.trace ? { trace: this.buildTrace(query, c) } : {})
-    })));
+    const results = await Promise.all(searchResults.map(async (c) => {
+      const normalizedUrl = this.resolveSearchNormalizedUrl(c.item_id, c.source_url ?? null);
+      return {
+        chunkId: c.chunk_id,
+        docId: c.doc_id,
+        rawdocId: c.capture_id,
+        sectionIds: safeJsonArray(c.section_ids_json ?? "[]"),
+        title: c.title,
+        pageTitle: c.page_title ?? undefined,
+        contentTitle: c.title,
+        displayTitle: c.page_title ?? c.title,
+        sourceUrl: c.source_url ?? undefined,
+        normalizedUrl,
+        headingPath: c.heading_path ?? undefined,
+        snippet: c.text.slice(0, 300),
+        score: c.score ?? 0,
+        parserVersion: c.parser_version ?? undefined,
+        parserMethod: c.parser_method ?? undefined,
+        parserProfile: c.parser_profile ?? undefined,
+        ...(options.trace ? { trace: this.buildTrace(query, c) } : {})
+      };
+    }));
     return results;
   }
 
-  async retrieveContext(query: string, options: ContextOptions = {}): Promise<ContextCitation[]> {
+  async retrieveContext(query: string, options: ContextOptions = {}): Promise<ContextPackResponse> {
     await this.ensure();
     const trimmed = query.trim();
-    if (!trimmed) return [];
-    const searchResults = this.searchChunks(trimmed, { ...options, limit: options.limit ?? 10 }) as unknown as SearchChunkRow[];
     const maxChars = options.maxChars ?? 6000;
+    if (!trimmed) {
+      return {
+        query: "",
+        retriever: "sqlite_fts",
+        packer: "section_chunk_v1",
+        budget: { maxChars, usedChars: 0 },
+        contextText: "",
+        citations: []
+      };
+    }
+    const searchResults = this.searchChunks(trimmed, { ...options, limit: options.limit ?? 10 }) as unknown as SearchChunkRow[];
     let usedChars = 0;
     const citations: ContextCitation[] = [];
     for (const c of searchResults) {
-      const content = c.text.length > 800 ? c.text.slice(0, 800) + CONTEXT_TRUNCATION_SUFFIX : c.text;
+      const normalizedUrl = this.resolveSearchNormalizedUrl(c.item_id, c.source_url ?? null);
+      const baseContent = c.text.length > 800 ? c.text.slice(0, 800) + CONTEXT_TRUNCATION_SUFFIX : c.text;
       const marker: string = `[${citations.length + 1}]`;
+      const displayTitle = c.page_title ?? c.title;
+      const sourceLabel = c.source_url ?? "unknown";
+      const prefix = `${marker} ${displayTitle}\nSource: ${sourceLabel}\n`;
+      const remainingChars = maxChars - usedChars - prefix.length;
+      if (remainingChars <= 0 && citations.length > 0) break;
+      const content = baseContent.length > remainingChars && remainingChars > CONTEXT_TRUNCATION_SUFFIX.length
+        ? `${baseContent.slice(0, remainingChars - CONTEXT_TRUNCATION_SUFFIX.length)}${CONTEXT_TRUNCATION_SUFFIX}`
+        : baseContent;
       const citation: ContextCitation = {
         citationId: c.chunk_id,
         marker,
@@ -1567,9 +1731,9 @@ export class KnowledgeStore {
         title: c.title,
         pageTitle: c.page_title ?? undefined,
         contentTitle: c.title,
-        displayTitle: c.page_title ?? c.title,
+        displayTitle,
         sourceUrl: c.source_url ?? undefined,
-        normalizedUrl: c.source_url ?? undefined,
+        normalizedUrl,
         headingPath: c.heading_path ?? undefined,
         content,
         score: c.score ?? 0,
@@ -1579,11 +1743,26 @@ export class KnowledgeStore {
         truncated: c.text.length > 800,
         ...(options.trace ? { trace: this.buildTrace(query, c) } : {})
       };
-      if (usedChars + content.length > maxChars && citations.length > 0) break;
+      if ((usedChars + prefix.length + content.length) > maxChars && citations.length > 0) break;
       citations.push(citation);
-      usedChars += content.length;
+      usedChars += prefix.length + content.length;
     }
-    return citations as ContextCitation[];
+    const contextText = citations.map((citation) => (
+      `${citation.marker} ${citation.displayTitle || citation.title}\n`
+      + `Source: ${citation.normalizedUrl || citation.sourceUrl || "unknown"}\n`
+      + `${citation.content}`
+    )).join("\n\n");
+    return {
+      query: trimmed,
+      retriever: "sqlite_fts",
+      packer: "section_chunk_v1",
+      budget: {
+        maxChars,
+        usedChars: contextText.length
+      },
+      contextText,
+      citations
+    };
   }
 
   private searchChunks(query: string, options: SearchOptions): SearchChunkRow[] {
@@ -1777,7 +1956,7 @@ export class KnowledgeStore {
     const assetFiles = await countFiles(join(this.root, "assets"));
     const tables = {
       knowledgeItems: this.countRows("items"),
-      clips: 0,
+      clips: this.countRowsWhere("items", "item_type = 'document' AND source_type IN ('url', 'singlefile_html')"),
       epubMetadata: this.countRows("epub_metadata"),
       rawdocs: this.countRows("rawdocs"),
       documents: this.countRows("documents"),
@@ -1802,7 +1981,7 @@ export class KnowledgeStore {
       totals: { rows, contentFiles: totalContentFiles },
       parsedResults: {
         parsedItems,
-        parsedClips: 0,
+        parsedClips: this.countRowsWhere("items", "item_type = 'document' AND source_type IN ('url', 'singlefile_html') AND active_doc_id IS NOT NULL"),
         documentRows: tables.documents,
         chunkRows: tables.chunks,
         collectionItemRefs,
@@ -1943,14 +2122,30 @@ export class KnowledgeStore {
 
 // ── Standalone functions ────────────────────────────────────────────────────
 
-function toKnowledgeItem(row: ItemRow): KnowledgeItem {
+function toKnowledgeItem(
+  row: ItemRow,
+  extras: {
+    normalizedUrl?: string;
+    originalUrl?: string;
+    canonicalUrl?: string;
+    pageTitle?: string | null;
+    contentTitle?: string | null;
+    displayTitle?: string;
+  } = {}
+): KnowledgeItem {
   return {
     itemId: row.item_id,
     sourceType: row.source_type === "virtual_collection" ? "url" : row.source_type,
     identityHash: row.identity_key ?? "",
     activeRawdocId: row.active_capture_id ?? "",
     activeDocId: row.active_doc_id ?? undefined,
+    normalizedUrl: extras.normalizedUrl,
+    originalUrl: extras.originalUrl,
+    canonicalUrl: extras.canonicalUrl,
     title: row.title ?? undefined,
+    pageTitle: extras.pageTitle ?? undefined,
+    contentTitle: extras.contentTitle ?? undefined,
+    displayTitle: extras.displayTitle,
     subtitle: row.subtitle ?? undefined,
     creators: safeJsonArray(row.creators_json),
     language: row.language ?? undefined,
@@ -1960,6 +2155,43 @@ function toKnowledgeItem(row: ItemRow): KnowledgeItem {
     updatedAt: row.updated_at,
     parsedAt: row.parsed_at ?? undefined
   };
+}
+
+function computeDocumentStatistics(document: KnowledgeDocument): DocumentStatistics {
+  const statistics: DocumentStatistics = {
+    sectionCount: document.sections.length,
+    headingCount: 0,
+    paragraphCount: 0,
+    tableCount: 0,
+    figureCount: 0,
+    imageCount: 0,
+    assetCount: 0,
+    charCount: 0
+  };
+
+  for (const section of document.sections) {
+    if (section.type === "heading") statistics.headingCount += 1;
+    if (section.type === "paragraph") statistics.paragraphCount += 1;
+    if (section.type === "table") statistics.tableCount += 1;
+    if (section.type === "figure") statistics.figureCount += 1;
+
+    if (typeof section.content === "string") {
+      statistics.charCount += section.content.length;
+    }
+    for (const item of section.items ?? []) {
+      statistics.charCount += typeof item === "string" ? item.length : item.text.length;
+    }
+    if (Array.isArray(section.rows)) {
+      statistics.charCount += JSON.stringify(section.rows).length;
+    }
+    for (const asset of section.assets ?? []) {
+      statistics.assetCount += 1;
+      statistics.imageCount += 1;
+      statistics.charCount += (asset.alt ?? "").length + (asset.caption ?? "").length;
+    }
+  }
+
+  return statistics;
 }
 
 async function countFiles(path: string): Promise<number> {

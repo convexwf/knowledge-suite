@@ -145,7 +145,13 @@ export interface KnowledgeItem {
   identityHash: string;
   activeRawdocId: string;
   activeDocId?: string;
+  normalizedUrl?: string;
+  originalUrl?: string;
+  canonicalUrl?: string;
   title?: string;
+  pageTitle?: string;
+  contentTitle?: string;
+  displayTitle?: string;
   subtitle?: string;
   creators: string[];
   language?: string;
@@ -235,6 +241,7 @@ export interface CollectionSummary {
   collectionId: string;
   title: string;
   rootUrl?: string;
+  normalizedRootUrl?: string;
   sourceType: string;
   state: string;
   itemCount: number;

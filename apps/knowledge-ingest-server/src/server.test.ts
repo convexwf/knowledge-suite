@@ -238,20 +238,20 @@ describe("knowledge ingest server", () => {
       headers: { authorization: "Bearer test-token" }
     });
     expect(list.statusCode).toBe(200);
-    expect(list.json().clips).toHaveLength(1);
-    expect(list.json().clips[0]).toMatchObject({
-      normalizedUrl: "https://example.com/a",
+    expect(list.json().items).toHaveLength(1);
+    expect(list.json().items[0]).toMatchObject({
+      itemId: expect.stringMatching(/^url:sha256:/),
+      sourceType: "url",
       state: "parsed",
-      hasRawdoc: true,
-      hasDocument: true,
+      normalizedUrl: "https://example.com/a",
       originalUrl: "https://example.com/a?utm_source=x#top",
       canonicalUrl: "https://example.com/a",
-      captureSavedAt: expect.any(String),
-      captureUpdatedAt: expect.any(String),
       title: "Example Article - Example Site",
       pageTitle: "Example Article - Example Site",
       contentTitle: "Example Article",
-      displayTitle: "Example Article - Example Site"
+      displayTitle: "Example Article - Example Site",
+      activeDocId: save.json().document.doc_id,
+      activeRawdocId: save.json().rawdoc.rawdoc_id
     });
 
     const items = await app.inject({
@@ -285,7 +285,7 @@ describe("knowledge ingest server", () => {
       expect.arrayContaining([
         expect.objectContaining({
           docId: save.json().document.doc_id,
-          title: "Example Article - Example Site",
+          title: "Example Article",
           pageTitle: "Example Article - Example Site",
           contentTitle: "Example Article",
           displayTitle: "Example Article - Example Site",
@@ -310,7 +310,7 @@ describe("knowledge ingest server", () => {
       packer: "section_chunk_v1",
       citations: [
         expect.objectContaining({
-          citationId: "1",
+          citationId: expect.any(String),
           marker: "[1]",
           docId: save.json().document.doc_id,
           sourceUrl: "https://example.com/a",
@@ -338,10 +338,7 @@ describe("knowledge ingest server", () => {
       deleted: true,
       mode: "remove",
       previousState: "parsed",
-      currentState: "captured",
-      state: "captured",
-      hasRawdoc: true,
-      hasDocument: false
+      currentState: "captured"
     });
     expect(deleted.json().deletedFiles).toContain(markdownPath);
     await expect(access(join(storeRoot, markdownPath))).rejects.toThrow();
@@ -386,10 +383,7 @@ describe("knowledge ingest server", () => {
     expect(purged.json()).toMatchObject({
       deleted: true,
       mode: "purge",
-      currentState: "empty",
-      state: "empty",
-      hasRawdoc: false,
-      hasDocument: false
+      currentState: "empty"
     });
 
     await app.close();

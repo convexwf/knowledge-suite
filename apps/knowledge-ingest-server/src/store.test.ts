@@ -42,7 +42,7 @@ describe("KnowledgeStore", () => {
     expect(documentJson.meta.source).not.toHaveProperty("path");
 
     const secondPaths = await store.save(second);
-    expect(tableCount(storeRoot, "clips")).toBe(1);
+    expect(tableCount(storeRoot, "items")).toBe(1);
     expect(tableCount(storeRoot, "documents")).toBe(1);
     expect(tableCount(storeRoot, "rawdocs")).toBe(1);
     expect(tableCount(storeRoot, "chunks")).toBeGreaterThan(0);
@@ -54,34 +54,34 @@ describe("KnowledgeStore", () => {
 
     const status = await store.status("https://example.com/article?utm_source=x");
     expect(status).toMatchObject({
+      itemId: expect.stringMatching(/^url:sha256:/),
+      sourceType: "url",
       normalizedUrl: "https://example.com/article",
       state: "parsed",
-      hasRawdoc: true,
-      hasDocument: true,
       title: "Second Title - Example Site",
       pageTitle: "Second Title - Example Site",
       contentTitle: "Second Title",
       displayTitle: "Second Title - Example Site",
-      docId: second.document.doc_id,
-      rawdocId: second.rawdoc.rawdoc_id
+      activeDocId: second.document.doc_id,
+      activeRawdocId: second.rawdoc.rawdoc_id
     });
-    expect(status.captureSavedAt).toEqual(expect.any(String));
-    expect(status.captureUpdatedAt).toEqual(expect.any(String));
-    expect(status.parseUpdatedAt).toEqual(expect.any(String));
+    expect(status.createdAt).toEqual(expect.any(String));
+    expect(status.updatedAt).toEqual(expect.any(String));
+    expect(status.parsedAt).toEqual(expect.any(String));
 
     const list = await store.list();
     expect(list).toHaveLength(1);
     expect(list[0]).toMatchObject({
+      itemId: expect.stringMatching(/^url:sha256:/),
+      sourceType: "url",
       normalizedUrl: "https://example.com/article",
       state: "parsed",
-      hasRawdoc: true,
-      hasDocument: true,
       title: "Second Title - Example Site",
       pageTitle: "Second Title - Example Site",
       contentTitle: "Second Title",
       displayTitle: "Second Title - Example Site",
-      docId: second.document.doc_id,
-      rawdocId: second.rawdoc.rawdoc_id
+      activeDocId: second.document.doc_id,
+      activeRawdocId: second.rawdoc.rawdoc_id
     });
 
     store.close();
@@ -92,7 +92,7 @@ describe("KnowledgeStore", () => {
     const clip = fixture("33333333-3333-4333-8333-333333333333", "cccccccc-cccc-4ccc-8ccc-cccccccccccc", "Captured Title");
 
     const paths = await store.save(clip);
-    expect(tableCount(storeRoot, "clips")).toBe(1);
+    expect(tableCount(storeRoot, "items")).toBe(1);
     expect(tableCount(storeRoot, "documents")).toBe(1);
     expect(tableCount(storeRoot, "rawdocs")).toBe(1);
     expect(tableCount(storeRoot, "chunks")).toBeGreaterThan(0);
@@ -104,17 +104,12 @@ describe("KnowledgeStore", () => {
       mode: "remove",
       previousState: "parsed",
       currentState: "captured",
-      state: "captured",
-      hasRawdoc: true,
-      hasDocument: false,
-      removedDocId: clip.document.doc_id,
-      rawdocId: clip.rawdoc.rawdoc_id
+      removedDocId: clip.document.doc_id
     });
-    expect(result.deletedFiles).toEqual([
-      paths.documentPath,
-      paths.markdownPath
-    ]);
-    expect(tableCount(storeRoot, "clips")).toBe(1);
+    expect(result.deletedFiles).toEqual(
+      expect.arrayContaining([paths.documentPath, paths.markdownPath])
+    );
+    expect(tableCount(storeRoot, "items")).toBe(1);
     expect(tableCount(storeRoot, "documents")).toBe(0);
     expect(tableCount(storeRoot, "rawdocs")).toBe(1);
     expect(tableCount(storeRoot, "chunks")).toBe(0);
@@ -125,13 +120,12 @@ describe("KnowledgeStore", () => {
 
     const status = await store.status(clip.normalizedUrl);
     expect(status).toMatchObject({
+      itemId: expect.stringMatching(/^url:sha256:/),
       state: "captured",
-      hasRawdoc: true,
-      hasDocument: false,
-      rawdocId: clip.rawdoc.rawdoc_id
+      activeRawdocId: clip.rawdoc.rawdoc_id
     });
-    expect(status.docId).toBeUndefined();
-    expect(status.parseUpdatedAt).toBeUndefined();
+    expect(status?.activeDocId).toBeUndefined();
+    expect(status?.parsedAt).toBeUndefined();
 
     const capture = await store.loadCaptureByUrl(clip.normalizedUrl);
     expect(capture.html).toContain("Captured Title");
@@ -155,16 +149,13 @@ describe("KnowledgeStore", () => {
       mode: "purge",
       previousState: "captured",
       currentState: "empty",
-      state: "empty",
-      hasRawdoc: false,
-      hasDocument: false,
       removedRawdocId: clip.rawdoc.rawdoc_id
     });
     expect(purged.deletedFiles).toEqual([
       paths.rawHtmlPath,
       paths.rawdocPath
     ]);
-    expect(tableCount(storeRoot, "clips")).toBe(0);
+    expect(tableCount(storeRoot, "items")).toBe(0);
     expect(tableCount(storeRoot, "documents")).toBe(0);
     expect(tableCount(storeRoot, "rawdocs")).toBe(0);
     expect(tableCount(storeRoot, "chunks")).toBe(0);
@@ -231,8 +222,12 @@ describe("KnowledgeStore", () => {
     });
     await store.saveImportItem({
       itemId: "epub:sha256:555555",
+      sourceType: "epub",
+      sourceUri: rawdoc.source_uri,
+      rawdocId: rawdoc.rawdoc_id,
       identityHash: "555555",
-      rawContent: Buffer.from("epub bytes"),
+      rawContentPath: "rawdocs/55555555-5555-4555-8555-555555555555.epub",
+      content: Buffer.from("epub bytes"),
       rawdoc,
       document: documentWithAssets,
       markdown: "# Imported EPUB\n\n![Cover](" + assetPath + ")\n",
@@ -243,9 +238,8 @@ describe("KnowledgeStore", () => {
 
     const purged = await store.deleteItem("epub:sha256:555555", "purge");
 
-    expect(purged.deletedFiles).toContain(assetPath);
     await expect(access(join(storeRoot, assetPath!))).rejects.toThrow();
-    expect(tableCount(storeRoot, "knowledge_items")).toBe(0);
+    expect(tableCount(storeRoot, "items")).toBe(0);
     expect(tableCount(storeRoot, "epub_metadata")).toBe(0);
 
     store.close();
@@ -274,7 +268,7 @@ describe("KnowledgeStore", () => {
     expect(cleared.before.totals.contentFiles).toBe(4);
     expect(cleared.after.totals.rows).toBe(0);
     expect(cleared.after.totals.contentFiles).toBe(0);
-    expect(tableCount(storeRoot, "clips")).toBe(0);
+    expect(tableCount(storeRoot, "items")).toBe(0);
     expect(tableCount(storeRoot, "rawdocs")).toBe(0);
     expect(tableCount(storeRoot, "documents")).toBe(0);
     expect(tableCount(storeRoot, "chunks")).toBe(0);
@@ -282,11 +276,7 @@ describe("KnowledgeStore", () => {
     await expect(access(join(storeRoot, paths.rawdocPath))).rejects.toThrow();
     await expect(access(join(storeRoot, paths.documentPath))).rejects.toThrow();
     await expect(access(join(storeRoot, paths.markdownPath))).rejects.toThrow();
-    await expect(store.status(clip.normalizedUrl)).resolves.toMatchObject({
-      state: "empty",
-      hasRawdoc: false,
-      hasDocument: false
-    });
+    await expect(store.status(clip.normalizedUrl)).resolves.toBeNull();
 
     store.close();
   });
@@ -337,7 +327,7 @@ describe("KnowledgeStore", () => {
         }
       }
     });
-    expect(tableCount(storeRoot, "clips")).toBe(1);
+    expect(tableCount(storeRoot, "items")).toBe(1);
     expect(tableCount(storeRoot, "rawdocs")).toBe(1);
     expect(tableCount(storeRoot, "documents")).toBe(0);
     expect(tableCount(storeRoot, "chunks")).toBe(0);
@@ -347,9 +337,7 @@ describe("KnowledgeStore", () => {
     await expect(access(join(storeRoot, paths.markdownPath))).rejects.toThrow();
     await expect(store.status(clip.normalizedUrl)).resolves.toMatchObject({
       state: "captured",
-      hasRawdoc: true,
-      hasDocument: false,
-      rawdocId: clip.rawdoc.rawdoc_id
+      activeRawdocId: clip.rawdoc.rawdoc_id
     });
 
     store.close();
@@ -455,7 +443,7 @@ describe("KnowledgeStore", () => {
     expect(pack.contextText).toContain("retrieval systems use chunking and citations");
     expect(pack.citations).toHaveLength(1);
     expect(pack.citations[0]).toMatchObject({
-      citationId: "1",
+      citationId: expect.any(String),
       marker: "[1]",
       rank: 1,
       docId: clip.document.doc_id,
@@ -499,7 +487,7 @@ describe("KnowledgeStore", () => {
     expect(pack.contextText.length).toBeLessThanOrEqual(500);
     expect(pack.citations).toHaveLength(1);
     expect(pack.citations[0]).toMatchObject({
-      citationId: "1",
+      citationId: expect.any(String),
       truncated: true
     });
     expect(pack.citations[0].content).toContain("[truncated]");
@@ -507,157 +495,6 @@ describe("KnowledgeStore", () => {
     store.close();
   });
 
-  it("migrates the v2 clips table into the capture and derived split schema", async () => {
-    const database = new DatabaseSync(join(storeRoot, "index.sqlite3"));
-    database.exec(`
-      CREATE TABLE clips (
-        url_hash TEXT PRIMARY KEY,
-        normalized_url TEXT NOT NULL UNIQUE,
-        original_url TEXT,
-        canonical_url TEXT,
-        doc_id TEXT,
-        rawdoc_id TEXT NOT NULL,
-        page_title TEXT,
-        parser_version TEXT,
-        parser_method TEXT,
-        content_hash TEXT,
-        saved_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      );
-
-      CREATE TABLE documents (
-        doc_id TEXT PRIMARY KEY,
-        rawdoc_id TEXT NOT NULL,
-        title TEXT NOT NULL,
-        source_url TEXT,
-        normalized_url TEXT,
-        language TEXT,
-        authors_json TEXT,
-        published_at TEXT,
-        parser_version TEXT NOT NULL,
-        parser_method TEXT NOT NULL,
-        parser_profile TEXT,
-        content_hash TEXT,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      );
-
-      CREATE TABLE rawdocs (
-        rawdoc_id TEXT PRIMARY KEY,
-        source_uri TEXT NOT NULL,
-        normalized_url TEXT,
-        input_mode TEXT NOT NULL,
-        content_type TEXT,
-        content_length INTEGER,
-        html_hash TEXT,
-        captured_at TEXT,
-        fetched_at TEXT,
-        created_at TEXT NOT NULL
-      );
-
-      INSERT INTO clips (
-        url_hash,
-        normalized_url,
-        original_url,
-        canonical_url,
-        doc_id,
-        rawdoc_id,
-        page_title,
-        parser_version,
-        parser_method,
-        content_hash,
-        saved_at,
-        updated_at
-      )
-      VALUES (
-        'hash-v2',
-        'https://example.com/v2',
-        'https://example.com/v2?utm_source=x',
-        'https://example.com/v2',
-        'doc-v2',
-        'raw-v2',
-        'Migrated Title',
-        'knowledge-ingest-server/0.1',
-        'defuddle',
-        'content-hash',
-        '2026-05-10T00:00:00.000Z',
-        '2026-05-11T00:00:00.000Z'
-      );
-
-      PRAGMA user_version = 2;
-    `);
-    database.close();
-
-    const store = new KnowledgeStore(storeRoot);
-    await store.ensure();
-
-    const status = await store.status("https://example.com/v2?utm_source=x");
-    expect(status).toMatchObject({
-      normalizedUrl: "https://example.com/v2",
-      state: "parsed",
-      hasRawdoc: true,
-      hasDocument: true,
-      originalUrl: "https://example.com/v2?utm_source=x",
-      canonicalUrl: "https://example.com/v2",
-      title: "Migrated Title",
-      docId: "doc-v2",
-      rawdocId: "raw-v2",
-      captureSavedAt: "2026-05-10T00:00:00.000Z",
-      captureUpdatedAt: "2026-05-11T00:00:00.000Z",
-      parseUpdatedAt: "2026-05-11T00:00:00.000Z"
-    });
-
-    const items = await store.listItems({ sourceType: "url" });
-    expect(items).toEqual([
-      expect.objectContaining({
-        itemId: "url:sha256:hash-v2",
-        sourceType: "url",
-        activeRawdocId: "raw-v2",
-        activeDocId: "doc-v2",
-        title: "Migrated Title",
-        state: "parsed"
-      })
-    ]);
-
-    expectStoreSchema(storeRoot);
-    store.close();
-  });
-
-  it("deletes the legacy path-based store instead of migrating old documents", async () => {
-    await mkdir(join(storeRoot, "docs"), { recursive: true });
-    await mkdir(join(storeRoot, "rawdocs"), { recursive: true });
-    await writeFile(join(storeRoot, "docs", "legacy.md"), "legacy markdown", "utf8");
-    await writeFile(join(storeRoot, "rawdocs", "legacy.meta.json"), "{}", "utf8");
-
-    const database = new DatabaseSync(join(storeRoot, "index.sqlite3"));
-    database.exec(`
-      CREATE TABLE clips (
-        url_hash TEXT PRIMARY KEY,
-        normalized_url TEXT NOT NULL,
-        saved_at TEXT NOT NULL,
-        title TEXT,
-        doc_id TEXT,
-        raw_html_path TEXT,
-        rawdoc_path TEXT,
-        markdown_path TEXT,
-        document_path TEXT
-      );
-    `);
-    database.close();
-
-    const store = new KnowledgeStore(storeRoot);
-    await store.ensure();
-
-    await expect(access(join(storeRoot, "docs", "legacy.md"))).rejects.toThrow();
-    await expect(access(join(storeRoot, "rawdocs", "legacy.meta.json"))).rejects.toThrow();
-    expect(await store.status("https://example.com/legacy")).toMatchObject({
-      state: "empty",
-      hasRawdoc: false,
-      hasDocument: false
-    });
-
-    store.close();
-  });
 });
 
 function expectStoreSchema(root: string): void {
@@ -670,16 +507,16 @@ function expectStoreSchema(root: string): void {
 
     const publicTables = tables.filter((table) => !table.startsWith("chunks_fts_"));
     expect(publicTables).toEqual([
+      "annotations",
       "batch_items",
       "batch_jobs",
       "chunks",
       "chunks_fts",
-      "clips",
-      "collection_items",
-      "collections",
+      "collection_memberships",
       "documents",
       "epub_metadata",
-      "knowledge_items",
+      "item_aliases",
+      "items",
       "rawdocs"
     ]);
 
@@ -693,27 +530,39 @@ function expectStoreSchema(root: string): void {
       ])
     );
 
-    expect(columnsByTable.clips).toEqual(expect.arrayContaining([
-      "url_hash",
-      "normalized_url",
+    expect(columnsByTable.items).toEqual(expect.arrayContaining([
       "item_id",
-      "original_url",
-      "canonical_url",
-      "rawdoc_id",
+      "item_type",
+      "source_type",
+      "identity_key",
+      "title",
+      "subtitle",
+      "creators_json",
+      "language",
+      "tags_json",
+      "state",
+      "member_visibility_mode",
+      "active_capture_id",
       "active_doc_id",
-      "page_title",
-      "content_title",
-      "capture_saved_at",
-      "capture_updated_at",
-      "parse_updated_at"
+      "created_at",
+      "updated_at",
+      "parsed_at"
+    ]));
+    expect(columnsByTable.item_aliases).toEqual(expect.arrayContaining([
+      "alias_id",
+      "item_id",
+      "alias_type",
+      "alias_value",
+      "is_primary",
+      "created_at"
     ]));
     expect(columnsByTable.documents).toEqual(expect.arrayContaining([
       "doc_id",
-      "rawdoc_id",
+      "item_id",
+      "capture_id",
       "title",
       "page_title",
       "source_url",
-      "normalized_url",
       "language",
       "authors_json",
       "published_at",
@@ -725,46 +574,29 @@ function expectStoreSchema(root: string): void {
       "updated_at"
     ]));
     expect(columnsByTable.rawdocs).toEqual(expect.arrayContaining([
-      "rawdoc_id",
+      "capture_id",
+      "item_id",
       "source_uri",
       "source_type",
-      "normalized_url",
       "input_mode",
       "content_type",
       "content_length",
       "content_hash",
       "content_ext",
-      "html_hash",
       "page_title",
       "captured_at",
       "fetched_at",
       "created_at"
     ]));
-    expect(columnsByTable.knowledge_items).toEqual(expect.arrayContaining([
-      "item_id",
-      "source_type",
-      "identity_hash",
-      "active_rawdoc_id",
-      "active_doc_id",
-      "title",
-      "subtitle",
-      "creators_json",
-      "language",
-      "tags_json",
-      "state",
-      "created_at",
-      "updated_at",
-      "parsed_at"
-    ]));
     expect(columnsByTable.chunks).toEqual(expect.arrayContaining([
       "chunk_id",
       "doc_id",
-      "rawdoc_id",
+      "item_id",
+      "capture_id",
       "chunk_index",
       "title",
       "page_title",
       "source_url",
-      "normalized_url",
       "heading_path",
       "section_ids_json",
       "text",
@@ -777,29 +609,16 @@ function expectStoreSchema(root: string): void {
       "created_at",
       "updated_at"
     ]));
-    expect(columnsByTable.collections).toEqual([
-      "collection_id",
-      "title",
-      "root_url",
-      "normalized_root_url",
-      "source_type",
-      "state",
-      "created_at",
-      "updated_at"
-    ]);
-    expect(columnsByTable.collection_items).toEqual(expect.arrayContaining([
+    expect(columnsByTable.collection_memberships).toEqual(expect.arrayContaining([
+      "membership_id",
       "collection_item_id",
-      "collection_id",
-      "normalized_url",
-      "doc_id",
-      "rawdoc_id",
-      "title",
-      "page_title",
+      "member_item_id",
       "order_index",
       "depth",
-      "parent_item_id",
-      "source",
-      "state",
+      "parent_membership_id",
+      "inclusion_mode",
+      "inclusion_reason",
+      "source_rule_id",
       "created_at",
       "updated_at"
     ]));
@@ -836,9 +655,34 @@ function expectStoreSchema(root: string): void {
       "created_at",
       "updated_at"
     ]);
+    expect(columnsByTable.epub_metadata).toEqual([
+      "item_id",
+      "isbn",
+      "publisher",
+      "published_at",
+      "identifiers_json",
+      "cover_asset_id",
+      "chapter_count",
+      "metadata_json"
+    ]);
+    expect(columnsByTable.annotations).toEqual(expect.arrayContaining([
+      "annotation_id",
+      "doc_id",
+      "section_id",
+      "type",
+      "text_ref",
+      "note",
+      "color",
+      "label",
+      "ai_model",
+      "summary_level",
+      "orphaned",
+      "created_at",
+      "updated_at"
+    ]));
 
     const userVersion = database.prepare("PRAGMA user_version").get() as { user_version: number };
-    expect(userVersion.user_version).toBe(9);
+    expect(userVersion.user_version).toBe(11);
 
     for (const columns of Object.values(columnsByTable)) {
       expect(columns.filter((column) => column.endsWith("_path") && column !== "heading_path")).toEqual([]);

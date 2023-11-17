@@ -40,6 +40,8 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
     bodyLimit: Math.max(config.maxHtmlBytes, maxImportBytes)
   });
   const store = new KnowledgeStore(config.storeRoot);
+  const activeBatchRuns = new Set<Promise<void>>();
+  let shuttingDown = false;
   await store.ensure();
   const recovered = await store.recoverStaleJobs();
   if (recovered > 0) {
@@ -58,6 +60,8 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
   });
 
   app.addHook("onClose", async () => {
+    shuttingDown = true;
+    await Promise.allSettled([...activeBatchRuns]);
     store.close();
   });
 
@@ -122,19 +126,22 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
       itemId: undefined, docId: undefined, rawdocId: undefined
     };
     const title = item.title ?? undefined;
+    const normalizedUrl = item.normalizedUrl || fallbackUrl;
     return {
-      normalizedUrl: item.identityHash || fallbackUrl,
+      normalizedUrl,
       urlHash: item.identityHash,
       state: item.state === "captured" ? "captured" as const : "parsed" as const,
       hasRawdoc: Boolean(item.activeRawdocId),
       hasDocument: Boolean(item.activeDocId),
+      originalUrl: item.originalUrl,
+      canonicalUrl: item.canonicalUrl,
       itemId: item.itemId,
       docId: item.activeDocId,
       rawdocId: item.activeRawdocId,
       title,
-      pageTitle: title,
-      contentTitle: title,
-      displayTitle: title || new URL(fallbackUrl).hostname,
+      pageTitle: item.pageTitle ?? title,
+      contentTitle: item.contentTitle ?? title,
+      displayTitle: item.displayTitle || title || new URL(normalizedUrl).hostname,
       captureSavedAt: item.createdAt,
       captureUpdatedAt: item.updatedAt,
       parseUpdatedAt: item.parsedAt
@@ -556,6 +563,7 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
         sourceType: "epub",
         sourceUri: parsed.rawdoc.source_uri ?? input.file,
         rawdocId: parsed.rawdoc.rawdoc_id,
+        rawdoc: parsed.rawdoc,
         rawContentPath: input.file,
         document: documentWithAssets,
         markdown,
@@ -611,6 +619,7 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
           sourceType: capture.rawdoc.source_type as "pdf" | "epub",
           sourceUri: capture.rawdoc.source_uri,
           rawdocId: capture.rawdoc.rawdoc_id,
+          rawdoc,
           rawContentPath: capture.item.identityHash || capture.item.itemId,
           document: documentWithAssets,
           markdown,
@@ -659,6 +668,7 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
       sourceType: capture.rawdoc.source_type as "pdf" | "epub",
       sourceUri: capture.rawdoc.source_uri,
       rawdocId: capture.rawdoc.rawdoc_id,
+      rawdoc,
       rawContentPath: capture.item.identityHash || capture.item.itemId,
       document: documentWithAssets,
       markdown,
@@ -772,6 +782,7 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
       collectionId: input.collection.strategy === "update" ? input.collection.collectionId : undefined,
       title: input.collection.title,
       rootUrl: input.collection.rootUrl,
+      normalizedRootUrl: normalizeUrlForKnowledge(input.collection.rootUrl),
       sourceType: "manual_section"
     });
     await store.replaceCollectionItems(collection.collectionId, items.map((item, index) => ({
@@ -786,11 +797,20 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
       sourcePageUrl: input.sourcePageUrl,
       mode: input.mode,
       totalCount: items.length,
+      items: items.map((item) => ({
+        url: item.url,
+        normalizedUrl: item.normalizedUrl,
+        source: item.source,
+        titleHint: item.titleHint
+      })),
       options: input.options
     });
 
-    void runBatchJob(job.jobId, input.options ?? {});
-    return job;
+    const run = runBatchJob(job.jobId, input.options ?? {}).finally(() => {
+      activeBatchRuns.delete(run);
+    });
+    activeBatchRuns.add(run);
+    return { ...job, collectionId: collection.collectionId };
   });
 
   app.get("/api/batch/jobs/:jobId", async (request) => {
@@ -820,6 +840,7 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
 
   async function runBatchJob(jobId: string, options: { skipExisting?: boolean; maxConcurrency?: number }): Promise<void> {
     try {
+      if (shuttingDown) return;
       await store.updateBatchJobState(jobId, "running");
       const concurrency = Math.min(Math.max(Math.trunc(options.maxConcurrency ?? 3) || 3, 1), 10);
       const pendingItems = await store.listPendingBatchItems(jobId);
@@ -827,6 +848,7 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
 
       const worker = async () => {
         while (cursor < pendingItems.length) {
+          if (shuttingDown) return;
           const item = pendingItems[cursor];
           cursor += 1;
           await processBatchItem(item, Boolean(options.skipExisting ?? true));
@@ -845,6 +867,7 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
   }
 
   async function processBatchItem(item: BatchJobItem, skipExisting: boolean): Promise<void> {
+    if (shuttingDown) return;
     const lookupUrl = item.normalizedUrl ?? item.url;
     try {
       if (skipExisting) {
