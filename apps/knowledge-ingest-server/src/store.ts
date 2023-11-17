@@ -621,6 +621,7 @@ export class KnowledgeStore {
     const deletedFiles = await this.deleteDerivedArtifacts(row.active_doc_id);
     this.database!.exec("BEGIN");
     try {
+      this.database!.prepare("DELETE FROM annotations WHERE doc_id = ?").run(row.active_doc_id);
       this.database!.prepare("DELETE FROM chunks WHERE doc_id = ?").run(row.active_doc_id);
       this.database!.prepare("DELETE FROM documents WHERE doc_id = ?").run(row.active_doc_id);
       this.database!.prepare(
@@ -646,6 +647,7 @@ export class KnowledgeStore {
     const deletedFiles: string[] = [];
     if (row.active_doc_id) {
       deletedFiles.push(...await this.deleteDerivedArtifacts(row.active_doc_id));
+      deletedFiles.push(...await this.deleteAssetsForDoc(row.active_doc_id));
     }
     if (row.active_capture_id) {
       deletedFiles.push(...await this.deleteCaptureArtifacts(row.active_capture_id));
@@ -657,6 +659,7 @@ export class KnowledgeStore {
       this.database!.prepare("DELETE FROM epub_metadata WHERE item_id = ?").run(row.item_id);
       this.database!.prepare("DELETE FROM collection_memberships WHERE member_item_id = ? OR collection_item_id = ?").run(row.item_id, row.item_id);
       if (row.active_doc_id) {
+        this.database!.prepare("DELETE FROM annotations WHERE doc_id = ?").run(row.active_doc_id);
         this.database!.prepare("DELETE FROM chunks WHERE doc_id = ?").run(row.active_doc_id);
         this.database!.prepare("DELETE FROM documents WHERE doc_id = ?").run(row.active_doc_id);
       }
@@ -765,13 +768,16 @@ export class KnowledgeStore {
         previous?.created_at ?? nowIso, nowIso, nowIso
       );
 
-      // aliases
+      // aliases — on reparse, only update the primary normalized_url alias
+      // to avoid accumulating stale canonical/original URL aliases
       this.upsertAlias(itemId, "normalized_url", normalized, true);
-      if (canonicalUrl && canonicalUrl !== normalized) {
-        this.upsertAlias(itemId, "canonical_url", canonicalUrl, false);
-      }
-      if (originalUrl && originalUrl !== normalized) {
-        this.upsertAlias(itemId, "original_url", originalUrl, false);
+      if (!previous) {
+        if (canonicalUrl && canonicalUrl !== normalized) {
+          this.upsertAlias(itemId, "canonical_url", canonicalUrl, false);
+        }
+        if (originalUrl && originalUrl !== normalized) {
+          this.upsertAlias(itemId, "original_url", originalUrl, false);
+        }
       }
 
       // rawdocs
@@ -889,7 +895,11 @@ export class KnowledgeStore {
     await Promise.all([
       this.writeJson(paths.rawdocPath, { rawdoc_id: captureId, source_type: params.sourceType, source_uri: params.sourceUri, fetch_time: now }),
       this.writeJson(paths.documentPath, params.document),
-      this.writeText(paths.markdownPath, params.markdown)
+      this.writeText(paths.markdownPath, params.markdown),
+      // Persist raw content for reparse
+      ...(params.content != null
+        ? [this.writeBuffer(`rawdocs/${captureId}.bin`, Buffer.isBuffer(params.content) ? params.content : Buffer.from(params.content))]
+        : [])
     ]);
 
     this.database!.exec("BEGIN");
@@ -995,10 +1005,29 @@ export class KnowledgeStore {
     if (!row || !row.active_capture_id) {
       throw new Error("Item has no active capture");
     }
-    const htmlPath = `rawdocs/${row.active_capture_id}.html`;
-    const html = await this.readText(htmlPath);
     const rawdoc = JSON.parse(await this.readText(`rawdocs/${row.active_capture_id}.json`)) as RawDoc;
-    return { item: toKnowledgeItem(row), html, rawdoc, content: html, contentExt: "html" };
+    // Read raw binary content if available (EPUB/PDF), otherwise fall back to HTML
+    let html: string;
+    let content: string;
+    let contentExt: string;
+    try {
+      const bin = await readFile(resolveInsideRoot(this.root, `rawdocs/${row.active_capture_id}.bin`));
+      html = bin.toString("utf-8").slice(0, 1000); // preview only
+      content = bin.toString("utf-8");
+      contentExt = "bin";
+    } catch {
+      html = await this.readText(`rawdocs/${row.active_capture_id}.html`);
+      content = html;
+      contentExt = "html";
+    }
+    return { item: toKnowledgeItem(row) as KnowledgeItem, html, rawdoc, content, contentExt };
+  }
+
+  async readRawBuffer(itemId: string): Promise<Buffer> {
+    await this.ensure();
+    const row = this.database!.prepare("SELECT * FROM items WHERE item_id = ?").get(itemId) as unknown as ItemRow | undefined;
+    if (!row || !row.active_capture_id) throw new Error("Item has no active capture");
+    return readFile(resolveInsideRoot(this.root, `rawdocs/${row.active_capture_id}.bin`));
   }
 
   // ── collection membership ──────────────────────────────────────────────
@@ -1846,8 +1875,28 @@ export class KnowledgeStore {
     const files: string[] = [];
     const htmlPath = resolveInsideRoot(this.root, `rawdocs/${captureId}.html`);
     await unlink(htmlPath).then(() => files.push(`rawdocs/${captureId}.html`)).catch(ignoreMissing);
+    const binPath = resolveInsideRoot(this.root, `rawdocs/${captureId}.bin`);
+    await unlink(binPath).then(() => files.push(`rawdocs/${captureId}.bin`)).catch(ignoreMissing);
     const jsonPath = resolveInsideRoot(this.root, `rawdocs/${captureId}.json`);
     await unlink(jsonPath).then(() => files.push(`rawdocs/${captureId}.json`)).catch(ignoreMissing);
+    return files;
+  }
+
+  async deleteAssetsForDoc(docId: string): Promise<string[]> {
+    const files: string[] = [];
+    try {
+      const doc = JSON.parse(await readFile(resolveInsideRoot(this.root, `documents/${docId}.json`), "utf-8")) as KnowledgeDocument;
+      for (const section of doc.sections) {
+        for (const asset of section.assets ?? []) {
+          if (asset.asset_id) {
+            const assetPath = resolveInsideRoot(this.root, `assets/${asset.asset_id}`);
+            await unlink(assetPath).then(() => files.push(`assets/${asset.asset_id}`)).catch(ignoreMissing);
+          }
+        }
+      }
+    } catch {
+      // document JSON might already be deleted — ignore
+    }
     return files;
   }
 
@@ -1869,6 +1918,12 @@ export class KnowledgeStore {
 
   private async writeJson(relativePath: string, data: unknown): Promise<void> {
     await this.writeText(relativePath, JSON.stringify(data));
+  }
+
+  private async writeBuffer(relativePath: string, data: Buffer): Promise<void> {
+    const path = resolveInsideRoot(this.root, relativePath);
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, data);
   }
 
   private countRows(table: string): number {
