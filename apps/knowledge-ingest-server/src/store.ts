@@ -1991,7 +1991,7 @@ export class KnowledgeStore {
     }
     file.version++;
     file.updated_at = now;
-    await writeFile(target, JSON.stringify(file), "utf-8");
+    await writeFile(target, JSON.stringify(file, null, 2), "utf-8");
 
     const dbAnnotation = {
       annotation_id: nextAnnotation.annotation_id,
@@ -2039,7 +2039,7 @@ export class KnowledgeStore {
       raw.annotations = raw.annotations.filter((a) => a.annotation_id !== annotationId);
       raw.version++;
       raw.updated_at = new Date().toISOString();
-      await writeFile(target, JSON.stringify(raw), "utf-8");
+      await writeFile(target, JSON.stringify(raw, null, 2), "utf-8");
     } catch { /* file might not exist */ }
   }
 
@@ -2231,7 +2231,7 @@ export class KnowledgeStore {
   }
 
   private async writeJson(relativePath: string, data: unknown): Promise<void> {
-    await this.writeText(relativePath, JSON.stringify(data));
+    await this.writeText(relativePath, JSON.stringify(data, null, 2));
   }
 
   private async writeBuffer(relativePath: string, data: Buffer): Promise<void> {
