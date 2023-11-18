@@ -614,21 +614,18 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
             reparsedFromItemId: capture.item.itemId
           }
         };
-        const result = await store.saveImportItem({
+        const result = await store.saveReparseResult({
           itemId: capture.item.itemId,
-          sourceType: capture.rawdoc.source_type as "pdf" | "epub",
+          sourceType: capture.rawdoc.source_type,
           sourceUri: capture.rawdoc.source_uri,
           rawdocId: capture.rawdoc.rawdoc_id,
           rawdoc,
-          rawContentPath: capture.item.identityHash || capture.item.itemId,
           document: documentWithAssets,
           markdown,
           pageTitle: capture.item.title,
           language: capture.item.language,
           creators: capture.item.creators,
-          identityHash: capture.item.identityHash,
-          content: capture.content,
-          contentExt: capture.contentExt
+          identityHash: capture.item.identityHash
         });
         const annotationWarnings = await migrateAnnotationsForReparse(
           store, oldDocId, documentWithAssets
@@ -663,21 +660,18 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
         reparsedFromItemId: capture.item.itemId
       }
     };
-    const result = await store.saveImportItem({
+    const result = await store.saveReparseResult({
       itemId: capture.item.itemId,
-      sourceType: capture.rawdoc.source_type as "pdf" | "epub",
+      sourceType: capture.rawdoc.source_type,
       sourceUri: capture.rawdoc.source_uri,
       rawdocId: capture.rawdoc.rawdoc_id,
       rawdoc,
-      rawContentPath: capture.item.identityHash || capture.item.itemId,
       document: documentWithAssets,
       markdown,
       pageTitle: capture.item.title,
       language: capture.item.language,
       creators: capture.item.creators,
-      identityHash: capture.item.identityHash,
-      content: html,
-      contentExt: capture.contentExt || "html"
+      identityHash: capture.item.identityHash
     });
     const annotationWarnings = await migrateAnnotationsForReparse(
       store, oldDocId, documentWithAssets

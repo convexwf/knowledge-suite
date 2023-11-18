@@ -1110,6 +1110,135 @@ export class KnowledgeStore {
 
   // ── reparse ────────────────────────────────────────────────────────────
 
+  async saveReparseResult(params: {
+    itemId: string;
+    sourceType: string;
+    sourceUri: string;
+    rawdocId: string;
+    rawdoc: RawDoc;
+    document: KnowledgeDocument;
+    markdown: string;
+    pageTitle?: string;
+    language?: string;
+    creators?: string[];
+    tags?: string[];
+    identityHash?: string;
+    epubMetadata?: EpubMetadataInput;
+  }): Promise<{
+    knowledgeItem: KnowledgeItem;
+    rawdoc: RawDoc;
+    document: KnowledgeDocument;
+    markdown: string;
+    saved: true;
+    paths: { rawContentPath: string; rawdocPath: string; documentPath: string; markdownPath: string };
+  }> {
+    await this.ensure();
+    const captureId = params.rawdocId;
+    const docId = params.document.doc_id;
+    const paths = pathsFor(docId, captureId);
+    const parserInfo = parserInfoFor(params.document, {} as RawDoc);
+    const now = new Date().toISOString();
+    const contentHash = sha256(params.markdown);
+    const creators = params.creators ?? params.document.meta.authors ?? [];
+    const language = params.language ?? params.document.meta.language ?? null;
+    const tags = params.tags ?? params.document.meta.tags ?? [];
+    const authorsJson = JSON.stringify(creators);
+    const previous = this.database!.prepare("SELECT * FROM items WHERE item_id = ?").get(params.itemId) as unknown as ItemRow | undefined;
+    const replacedDocId = previous?.active_doc_id && previous.active_doc_id !== docId
+      ? previous.active_doc_id : undefined;
+
+    // Write updated derived files only — raw content is already on disk unchanged.
+    await Promise.all([
+      this.writeJson(paths.rawdocPath, params.rawdoc),
+      this.writeJson(paths.documentPath, params.document),
+      this.writeText(paths.markdownPath, params.markdown)
+    ]);
+
+    this.database!.exec("BEGIN");
+    try {
+      this.database!.prepare(`
+        INSERT INTO items (item_id, item_type, source_type, identity_key, title, creators_json, language, tags_json, state, active_capture_id, active_doc_id, created_at, updated_at, parsed_at)
+        VALUES (?, 'document', ?, ?, ?, ?, ?, ?, 'parsed', ?, ?, ?, ?, ?)
+        ON CONFLICT(item_id) DO UPDATE SET
+          source_type = excluded.source_type,
+          title = excluded.title,
+          creators_json = excluded.creators_json,
+          language = excluded.language,
+          tags_json = excluded.tags_json,
+          state = 'parsed',
+          active_capture_id = excluded.active_capture_id,
+          active_doc_id = excluded.active_doc_id,
+          updated_at = excluded.updated_at,
+          parsed_at = excluded.parsed_at
+      `).run(
+        params.itemId, params.sourceType, params.identityHash ?? null, params.pageTitle ?? params.document.meta.title,
+        authorsJson, language, JSON.stringify(tags),
+        captureId, docId, previous?.created_at ?? now, now, now
+      );
+
+      this.database!.prepare(`
+        INSERT INTO documents (doc_id, item_id, capture_id, title, page_title, source_url, language, authors_json, published_at, parser_version, parser_method, parser_profile, content_hash, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, NULL, ?, ?, NULL, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(doc_id) DO UPDATE SET
+          item_id = excluded.item_id,
+          capture_id = excluded.capture_id,
+          title = excluded.title,
+          page_title = excluded.page_title,
+          language = excluded.language,
+          authors_json = excluded.authors_json,
+          parser_version = excluded.parser_version,
+          parser_method = excluded.parser_method,
+          parser_profile = excluded.parser_profile,
+          content_hash = excluded.content_hash,
+          updated_at = excluded.updated_at
+      `).run(
+        docId, params.itemId, captureId, params.document.meta.title,
+        params.pageTitle ?? null, language, authorsJson,
+        parserInfo.version, parserInfo.method, parserInfo.profile, contentHash, now, now
+      );
+
+      this.replaceChunks(params.document, { rawdoc_id: captureId, source_type: params.sourceType } as RawDoc, params.itemId, captureId, parserInfo, now);
+
+      // Cleanup replaced doc version
+      if (replacedDocId) {
+        this.database!.prepare("DELETE FROM chunks WHERE doc_id = ?").run(replacedDocId);
+        this.database!.prepare("DELETE FROM documents WHERE doc_id = ?").run(replacedDocId);
+      }
+
+      if (params.epubMetadata) {
+        this.upsertEpubMetadata(params.itemId, params.epubMetadata);
+      }
+
+      if (params.sourceType === "url" || params.sourceType === "singlefile_html") {
+        const normalizedUrl = normalizeUrlForKnowledge(params.sourceUri);
+        this.upsertAlias(params.itemId, "normalized_url", normalizedUrl, true);
+      }
+
+      this.database!.exec("COMMIT");
+    } catch (error) {
+      this.database!.exec("ROLLBACK");
+      throw error;
+    }
+
+    // Derive rawContentPath from existing file — raw content is never rewritten on reparse.
+    const rawContentExt = params.sourceType === "epub" ? "epub" : params.sourceType === "pdf" ? "pdf" : "html";
+    const rawContentPath = `rawdocs/${captureId}.${rawContentExt}`;
+
+    const item = this.buildKnowledgeItem(
+      this.database!.prepare("SELECT * FROM items WHERE item_id = ?").get(params.itemId) as unknown as ItemRow
+    );
+    return {
+      knowledgeItem: item!,
+      rawdoc: params.rawdoc,
+      document: params.document,
+      markdown: params.markdown,
+      saved: true,
+      paths: { rawContentPath, rawdocPath: paths.rawdocPath, documentPath: paths.documentPath, markdownPath: paths.markdownPath }
+    };
+  }
+
+  // ── reparse helpers ────────────────────────────────────────────────────
+
   async loadCaptureByUrl(inputUrl: string): Promise<{ clip: KnowledgeItem; html: string; rawdoc: RawDoc; itemId: string }> {
     await this.ensure();
     const row = this.findItemByUrlLikeAlias(inputUrl);
