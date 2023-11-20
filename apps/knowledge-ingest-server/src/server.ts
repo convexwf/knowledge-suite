@@ -452,11 +452,11 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
 
   app.get("/api/collections/:collectionId/navigation", async (request) => {
     const params = request.params as { collectionId: string };
-    const query = request.query as { docId?: string };
-    if (!query.docId) {
+    const query = request.query as { itemId?: string };
+    if (!query.itemId) {
       return { previous: null, next: null };
     }
-    return store.getCollectionNavigation(params.collectionId, query.docId);
+    return store.getCollectionNavigation(params.collectionId, query.itemId);
   });
 
   app.get("/api/collections/:collectionId", async (request) => {

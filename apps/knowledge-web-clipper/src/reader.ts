@@ -1681,8 +1681,8 @@ async function loadCollectionContext(): Promise<void> {
 
     renderCollectionLinks(collectionLinks);
 
-    if (currentDocId && collectionIds[0]) {
-      collectionNavData = await client.collectionNavigation(collectionIds[0], currentDocId);
+    if (currentDocId && currentItemId && collectionIds[0]) {
+      collectionNavData = await client.collectionNavigation(collectionIds[0], currentItemId);
       setCollectionNavigation(collectionNavData);
       return;
     }

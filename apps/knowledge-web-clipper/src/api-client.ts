@@ -112,7 +112,7 @@ export interface KnowledgeApiClient {
   listCollections(limit?: number): Promise<{ collections: CollectionSummary[] }>;
   collection(collectionId: string): Promise<CollectionDetail>;
   deleteCollection(collectionId: string): Promise<{ deleted: boolean; collectionId: string }>;
-  collectionNavigation(collectionId: string, docId: string): Promise<{
+  collectionNavigation(collectionId: string, itemId: string): Promise<{
     previous: { docId: string; itemId?: string; title?: string; normalizedUrl: string } | null;
     next: { docId: string; itemId?: string; title?: string; normalizedUrl: string } | null;
   }>;
@@ -402,14 +402,14 @@ export function createKnowledgeApiClient(settings: ExtensionSettings): Knowledge
       undefined,
       options
     ),
-    collectionNavigation: (collectionId, docId) => request<{
+    collectionNavigation: (collectionId, itemId) => request<{
       previous: { docId: string; title?: string; normalizedUrl: string } | null;
       next: { docId: string; title?: string; normalizedUrl: string } | null;
     }>(
       baseUrl,
       settings.token,
       "GET",
-      `/api/collections/${encodeURIComponent(collectionId)}/navigation?docId=${encodeURIComponent(docId)}`,
+      `/api/collections/${encodeURIComponent(collectionId)}/navigation?itemId=${encodeURIComponent(itemId)}`,
       undefined,
       options
     ),
