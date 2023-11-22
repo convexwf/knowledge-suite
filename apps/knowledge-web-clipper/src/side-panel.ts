@@ -901,6 +901,8 @@ function renderBatchConfirmation(): void {
   startButton.textContent = "Start";
   startButton.className = "primary-action";
   startButton.addEventListener("click", () => {
+    // Prevent double-click — disable immediately before async work starts.
+    startButton.disabled = true;
     // Use the edited collection name
     currentCollectionTitle = nameInput.value.trim() || collectionTitle();
     void startBatchJob();

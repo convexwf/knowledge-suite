@@ -1453,10 +1453,27 @@ export class KnowledgeStore {
   }): Promise<{ collectionId: string; collection: CollectionSummary }> {
     await this.ensure();
     const now = new Date().toISOString();
-    const id = params.collectionId ?? makeId();
     const normalizedRootUrl = params.normalizedRootUrl
       ?? (params.rootUrl ? normalizeUrlForKnowledge(params.rootUrl) : undefined);
     const identityKey = normalizedRootUrl ? urlHash(normalizedRootUrl) : null;
+
+    // Deduplicate by identity_key when creating a new collection — same source
+    // page should map to the same collection, preventing duplicates from
+    // double-clicks or repeated batch saves.
+    if (!params.collectionId && identityKey) {
+      const existing = this.database!.prepare(
+        "SELECT item_id FROM items WHERE item_type = 'collection' AND identity_key = ? LIMIT 1"
+      ).get(identityKey) as { item_id: string } | undefined;
+      if (existing) {
+        // Reuse existing collection, update title in case it changed.
+        this.database!.prepare(
+          "UPDATE items SET title = ?, updated_at = ? WHERE item_id = ?"
+        ).run(params.title, now, existing.item_id);
+        return { collectionId: existing.item_id, collection: this.loadCollectionSummary(existing.item_id) };
+      }
+    }
+
+    const id = params.collectionId ?? makeId();
     this.database!.prepare(`
       INSERT INTO items (item_id, item_type, source_type, identity_key, title, creators_json, tags_json, state, member_visibility_mode, created_at, updated_at)
       VALUES (?, 'collection', ?, ?, ?, '[]', '[]', 'active', 'show_members', ?, ?)
