@@ -249,6 +249,13 @@ function renderFilterBar(): void {
     chip.textContent = option.label;
     chip.addEventListener("click", () => {
       activeSourceFilter = normalizeSourceFilter(option.value);
+      const url = new URL(globalThis.location.href);
+      if (activeSourceFilter === "all") {
+        url.searchParams.delete("source");
+      } else {
+        url.searchParams.set("source", activeSourceFilter);
+      }
+      globalThis.history.replaceState(null, "", url);
       renderFilterBar();
       void refreshItems();
     });

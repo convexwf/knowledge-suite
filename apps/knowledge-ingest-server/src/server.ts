@@ -800,11 +800,13 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
       options: input.options
     });
 
+    const fullJob = await store.loadBatchJob(job.jobId);
+
     const run = runBatchJob(job.jobId, input.options ?? {}).finally(() => {
       activeBatchRuns.delete(run);
     });
     activeBatchRuns.add(run);
-    return { ...job, collectionId: collection.collectionId };
+    return { ...fullJob, collectionId: collection.collectionId };
   });
 
   app.get("/api/batch/jobs/:jobId", async (request) => {

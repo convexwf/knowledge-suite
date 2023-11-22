@@ -619,7 +619,9 @@ async function loadSavedClips(): Promise<void> {
       createKnowledgeApiClient(settings).listCollections(),
       createKnowledgeApiClient(settings).usedCollectionDocIds()
     ]);
-    savedClips = clipsResult.items;
+    savedClips = clipsResult.items.filter(
+      (clip) => clip.sourceType !== "epub" && clip.sourceType !== "pdf"
+    );
 
     const collectionDocIds = new Set(usedDocIdsResult.docIds);
     const standaloneClips = savedClips.filter((clip) =>
