@@ -306,6 +306,9 @@ async function startBatchJob(): Promise<void> {
   pendingAction = "batch";
   updateActionButtons();
   setStatus("Starting", "Creating collection and batch job.");
+  // Show immediate progress feedback — modal switches from confirmation
+  // to a waiting view so the user sees something is happening right away.
+  renderBatchWaiting(selected.length);
   try {
     batchJob = await createKnowledgeApiClient(settings).createBatchJob({
       sourcePageUrl: activeTab.url,
@@ -935,6 +938,24 @@ function renderBatchConfirmation(): void {
   }
 
   container.append(summary, list);
+  batchModalBody.replaceChildren(container);
+}
+
+function renderBatchWaiting(itemCount: number): void {
+  showBatchModal();
+  const container = document.createElement("div");
+  container.className = "batch-inline";
+
+  const summary = document.createElement("section");
+  summary.className = "batch-summary";
+  const title = document.createElement("div");
+  title.className = "batch-title";
+  title.textContent = currentCollectionTitle ?? collectionTitle();
+  const meta = document.createElement("div");
+  meta.className = "batch-meta";
+  meta.textContent = `Creating collection for ${itemCount} pages…`;
+  summary.append(title, meta);
+  container.append(summary);
   batchModalBody.replaceChildren(container);
 }
 

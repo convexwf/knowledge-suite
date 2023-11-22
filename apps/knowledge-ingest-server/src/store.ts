@@ -333,7 +333,6 @@ export class KnowledgeStore {
   private ensureDatabase(): void {
     if (this.database) return;
     this.database = new DatabaseSync(join(this.root, "index.sqlite3"));
-    this.database.exec("PRAGMA journal_mode = WAL");
     this.database.exec("PRAGMA foreign_keys = ON");
   }
 
@@ -1473,7 +1472,7 @@ export class KnowledgeStore {
       }
     }
 
-    const id = params.collectionId ?? makeId();
+    const id = params.collectionId ?? (identityKey ? `col:sha256:${identityKey}` : makeId());
     this.database!.prepare(`
       INSERT INTO items (item_id, item_type, source_type, identity_key, title, creators_json, tags_json, state, member_visibility_mode, created_at, updated_at)
       VALUES (?, 'collection', ?, ?, ?, '[]', '[]', 'active', 'show_members', ?, ?)
