@@ -435,8 +435,6 @@ function itemRow(item: KnowledgeItem, options?: { nested?: boolean; indexLabel?:
 }
 
 function renderOverview(entries: ReturnType<typeof buildReaderListEntries>): void {
-  const readyStandalone = entries.filter((entry) => entry.kind === "standalone" && entry.state === "parsed").length;
-  const readyCollections = entries.filter((entry) => entry.kind === "collection" && entry.state === "active").length;
   const latest = entries
     .map((entry) => ({ entry, time: Date.parse(entry.updatedAt) }))
     .filter((entry) => !Number.isNaN(entry.time))
@@ -444,28 +442,40 @@ function renderOverview(entries: ReturnType<typeof buildReaderListEntries>): voi
   const collectionCount = entries.filter((entry) => entry.kind === "collection").length;
   const standaloneCount = entries.filter((entry) => entry.kind === "standalone").length;
   const visibleTotal = entries.length;
-  const sourceCounts = {
-    web: entries.filter((entry) => entry.kind === "standalone" && (entry.sourceType === "url" || entry.sourceType === "singlefile_html")).length,
-    epub: entries.filter((entry) => entry.kind === "standalone" && entry.sourceType === "epub").length,
-    pdf: entries.filter((entry) => entry.kind === "standalone" && entry.sourceType === "pdf").length,
-    collection: collectionCount
-  };
-  const sourceBreakdown = [
-    `${sourceCounts.web} web`,
-    `${sourceCounts.epub} epub`,
-    `${sourceCounts.pdf} pdf`,
-    `${sourceCounts.collection} collection`
-  ].join(" · ");
+
+  // Total documents: standalone docs + items nested inside collections
+  const totalCollectionItems = entries
+    .filter((entry): entry is ReaderListCollection => entry.kind === "collection")
+    .reduce((sum, c) => sum + c.itemCount, 0);
+  const totalDocs = standaloneCount + totalCollectionItems;
+
+  // Card 1 (Library): source-type breakdown, omit zero-count types
+  const breakdown: string[] = [];
+  const web = entries.filter((entry) => entry.kind === "standalone" && (entry.sourceType === "url" || entry.sourceType === "singlefile_html")).length;
+  const epub = entries.filter((entry) => entry.kind === "standalone" && entry.sourceType === "epub").length;
+  const pdf = entries.filter((entry) => entry.kind === "standalone" && entry.sourceType === "pdf").length;
+  if (web > 0) breakdown.push(`${web} web`);
+  if (epub > 0) breakdown.push(`${epub} epub`);
+  if (pdf > 0) breakdown.push(`${pdf} pdf`);
+  if (collectionCount > 0) breakdown.push(`${collectionCount} collection${collectionCount !== 1 ? "s" : ""}`);
+
+  // Card 2 (Reader Ready): total document count with breakdown
+  const detailParts: string[] = [];
+  if (standaloneCount > 0) detailParts.push(`${standaloneCount} standalone`);
+  if (collectionCount > 0) {
+    const word = collectionCount === 1 ? "collection" : "collections";
+    detailParts.push(`${totalCollectionItems} from ${collectionCount} ${word}`);
+  }
 
   overviewTotal.textContent = String(visibleTotal);
-  overviewParsed.textContent = String(readyStandalone + readyCollections);
+  overviewParsed.textContent = String(totalDocs);
   overviewLatest.textContent = latest ? formatShortDate(latest.updatedAt) : "-";
   overviewTotalDetail.textContent = visibleTotal === 0
     ? "No cards match the current source filter."
-    : `${visibleTotal} top-level card(s) · ${sourceBreakdown}.`;
-  overviewParsedDetail.textContent = readyStandalone + readyCollections === 0
-    ? "No reader-ready items yet."
-    : `${readyCollections} collection(s) and ${readyStandalone} standalone doc(s) can open directly. ${standaloneCount} standalone card(s) remain visible.`;
+    : breakdown.join(" · ") + ".";
+  overviewParsedDetail.textContent = detailParts.length > 0
+    ? detailParts.join(", ") + "."
+    : "No items yet.";
   overviewLatestDetail.textContent = latest
     ? `${latest.kind === "collection" ? latest.title : displayTitle(latest)} was updated most recently.`
     : "No activity yet.";
