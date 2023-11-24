@@ -602,6 +602,7 @@ async function openCollectionFirstItem(collectionId: string): Promise<void> {
 }
 
 async function operateOnCollection(collectionId: string, mode: "reparse" | "remove" | "purge"): Promise<void> {
+  collectionDetailCache.delete(collectionId);
   const itemIds = await resolveCollectionItemIds(collectionId);
   if (itemIds.length === 0) {
     if (mode === "purge") {
@@ -744,6 +745,7 @@ async function resolveBatchDeletePlan(): Promise<ReturnType<typeof buildBatchDel
   const collectionIds = [...new Set(selections.map((selection) => selection.collectionId).filter((value): value is string => Boolean(value)))];
 
   for (const collectionId of collectionIds) {
+    collectionDetailCache.delete(collectionId);
     collectionItemsById[collectionId] = await resolveCollectionItemIds(collectionId);
   }
 
