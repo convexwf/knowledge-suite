@@ -1,0 +1,102 @@
+name: Release
+
+on:
+  push:
+    branches: [master]
+    tags: [v*]
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Build mode
+        default: server
+        type: choice
+        options:
+          - server
+          - extension
+          - both
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository_owner }}/knowledge-ingest-server
+  NODE_VERSION: "24"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── Docker image: build & push multi-platform latest ─────────────────────
+  build-server:
+    if: >
+      github.event_name == 'push' && github.ref == 'refs/heads/master'
+      || startsWith(github.ref, 'refs/tags/v')
+      || (github.event_name == 'workflow_dispatch'
+          && (inputs.mode == 'server' || inputs.mode == 'both'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push multi-platform image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/knowledge-ingest-server/Dockerfile
+          target: runtime
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          provenance: false
+
+  # ── Chrome extension: build, zip & release ───────────────────────────────
+  build-extension:
+    if: >
+      startsWith(github.ref, 'refs/tags/v')
+      || (github.event_name == 'workflow_dispatch'
+          && (inputs.mode == 'extension' || inputs.mode == 'both'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build extension
+        run: npm run build:extension
+
+      - name: Package extension
+        run: |
+          cd apps/knowledge-web-clipper
+          zip -r ../../knowledge-web-clipper.zip dist/
+
+      - name: Create Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: knowledge-web-clipper.zip
+          generate_release_notes: true
+
