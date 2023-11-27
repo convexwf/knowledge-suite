@@ -624,9 +624,14 @@ async function operateOnCollection(collectionId: string, mode: "reparse" | "remo
     `${mode === "purge" ? "Purge" : "Remove"} this collection's ${itemIds.length} item(s)?`
   );
   if (mode === "purge" && result.ok === itemIds.length) {
-    const deleteResult = await client.deleteCollection(collectionId);
-    if (deleteResult.deleted) {
-      setStatus(`Purged ${result.ok}/${itemIds.length} item(s) and removed the collection shell.`);
+    try {
+      const deleteResult = await client.deleteCollection(collectionId);
+      if (deleteResult.deleted) {
+        setStatus(`Purged ${result.ok}/${itemIds.length} item(s) and removed the collection shell.`);
+        await refreshItems();
+      }
+    } catch (error) {
+      setStatus(`Purged items, but failed to remove the collection shell: ${errorMessage(error)}`);
       await refreshItems();
     }
   }

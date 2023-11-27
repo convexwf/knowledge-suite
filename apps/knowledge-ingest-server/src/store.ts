@@ -1534,6 +1534,7 @@ export class KnowledgeStore {
     this.database!.exec("BEGIN");
     try {
       this.database!.prepare("DELETE FROM collection_memberships WHERE collection_item_id = ?").run(collectionItemId);
+      this.database!.prepare("DELETE FROM item_aliases WHERE item_id = ?").run(collectionItemId);
       this.database!.prepare("DELETE FROM items WHERE item_id = ?").run(collectionItemId);
       this.database!.exec("COMMIT");
     } catch (error) {
