@@ -707,11 +707,13 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
       if (scope.sameOrigin && url.origin !== pageUrl.origin) {
         continue;
       }
-      const normalizedUrl = normalizeUrlForKnowledge(url.toString());
-      if (seen.has(normalizedUrl)) {
+      // Keep hash for same-origin URLs (SPA routing), strip for cross-origin
+      const dedupUrl = url.origin === pageUrl.origin ? url.toString() : normalizeUrlForKnowledge(url.toString());
+      if (seen.has(dedupUrl)) {
         continue;
       }
-      seen.add(normalizedUrl);
+      seen.add(dedupUrl);
+      const normalizedUrl = normalizeUrlForKnowledge(url.toString());
       if (items.length >= (scope.maxItems ?? 50)) {
         break;
       }

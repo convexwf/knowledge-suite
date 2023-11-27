@@ -175,7 +175,10 @@
       if (url.protocol !== "http:" && url.protocol !== "https:") {
         return;
       }
-      url.hash = "";
+      // Keep hash for same-origin links (SPA routing), strip for cross-origin
+      if (url.origin !== location.origin) {
+        url.hash = "";
+      }
       const normalized = url.toString();
       if (seen.has(normalized)) {
         return;
