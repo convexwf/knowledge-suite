@@ -61,7 +61,7 @@ let settings: ExtensionSettings = await getSettings();
 let activeTab: ActiveTabInfo | undefined;
 let lastPreview: PreviewResult | undefined;
 let activeCandidateId: string | undefined;
-let savedClips: ItemListItem[] = [];
+let savedItems: ItemListItem[] = [];
 let batchDiscover: BatchDiscoverResult | undefined;
 let batchJob: BatchJobResult | undefined;
 let batchPollTimer: number | undefined;
@@ -121,11 +121,11 @@ copyButton.addEventListener("click", () => {
 });
 removeButton.addEventListener("click", () => {
   closeMoreMenu();
-  void deleteCurrentClip("remove");
+  void deleteCurrentItem("remove");
 });
 purgeButton.addEventListener("click", () => {
   closeMoreMenu();
-  void deleteCurrentClip("purge");
+  void deleteCurrentItem("purge");
 });
 modeBrowserButton.addEventListener("click", () => {
   closeMoreMenu();
@@ -210,7 +210,7 @@ async function preview(): Promise<void> {
     renderOutput();
     updateActionButtons();
     if (nextPreview.status.state !== "empty") {
-      void loadSavedClips();
+      void loadSavedItems();
     }
   } catch (error) {
     setStatus("Error");
@@ -243,7 +243,7 @@ async function save(): Promise<void> {
     const body = await buildSaveRequestBody();
     const nextPreview = await createKnowledgeApiClient(settings).save(body);
     setLastPreview(nextPreview);
-    await loadSavedClips();
+    await loadSavedItems();
     await notifyBadgeRefresh();
     setStatus("Saved", summarizeSave(previousStatus, nextPreview));
     renderOutput();
@@ -369,7 +369,7 @@ function pollBatchJob(jobId: string): void {
       if (batchJob.state === "queued" || batchJob.state === "running") {
         pollBatchJob(jobId);
       } else {
-        await loadSavedClips();
+        await loadSavedItems();
         await notifyBadgeRefresh();
       }
     } catch (error) {
@@ -389,7 +389,7 @@ async function copyMarkdown(): Promise<void> {
   setStatus("Copied", "Markdown copied to your clipboard.");
 }
 
-async function deleteCurrentClip(mode: KnowledgeItemDeleteMode): Promise<void> {
+async function deleteCurrentItem(mode: KnowledgeItemDeleteMode): Promise<void> {
   await refreshActiveTab();
   if (!activeTab) {
     return;
@@ -424,7 +424,7 @@ async function deleteCurrentClip(mode: KnowledgeItemDeleteMode): Promise<void> {
       ? { ...lastPreview, status: clipStatusFromDelete(deleted) }
       : undefined;
     updatePageHeader();
-    await loadSavedClips();
+    await loadSavedItems();
     await notifyBadgeRefresh();
     setStatus(
       deleted.deleted ? "Deleted" : "Not saved",
@@ -516,7 +516,7 @@ function renderOutput(): void {
   updateDiagnosticsDisclosure();
   renderCandidateControl();
   if (activeView === "saved") {
-    void loadSavedClips();
+    void loadSavedItems();
     return;
   }
 
@@ -589,7 +589,7 @@ function setView(view: PanelView, persist = false): void {
   renderOutput();
   updateActionButtons();
   if (view === "saved") {
-    void loadSavedClips();
+    void loadSavedItems();
   }
 }
 
@@ -612,40 +612,40 @@ async function refreshServerStatus(): Promise<void> {
   }
 }
 
-async function loadSavedClips(): Promise<void> {
+async function loadSavedItems(): Promise<void> {
   try {
-    const [clipsResult, collectionsResult] = await Promise.all([
+    const [itemsResult, collectionsResult] = await Promise.all([
       createKnowledgeApiClient(settings).list(settings.savedListLimit),
       createKnowledgeApiClient(settings).listCollections()
     ]);
-    savedClips = clipsResult.items.filter(
-      (clip) => clip.sourceType !== "epub" && clip.sourceType !== "pdf"
+    savedItems = itemsResult.items.filter(
+      (item) => item.sourceType !== "epub" && item.sourceType !== "pdf"
     );
 
-    const standaloneClips = savedClips.filter((clip) =>
-      (clip.collectionIds?.length ?? 0) === 0
+    const standaloneItems = savedItems.filter((item) =>
+      (item.collectionIds?.length ?? 0) === 0
     );
 
     if (activeView === "saved") {
-      renderSavedList(collectionsResult.collections, standaloneClips);
+      renderSavedList(collectionsResult.collections, standaloneItems);
     }
   } catch (error) {
-    savedClips = [];
+    savedItems = [];
     if (activeView === "saved") {
       savedList.replaceChildren(makeEmptyState(error instanceof Error ? error.message : String(error)));
     }
   }
 }
 
-function renderSavedList(collections: CollectionSummary[], standaloneClips: ItemListItem[]): void {
-  if (collections.length === 0 && standaloneClips.length === 0) {
-    savedList.replaceChildren(makeEmptyState("No saved clips"));
+function renderSavedList(collections: CollectionSummary[], standaloneItems: ItemListItem[]): void {
+  if (collections.length === 0 && standaloneItems.length === 0) {
+    savedList.replaceChildren(makeEmptyState("No saved items"));
     return;
   }
 
   const allItems: HTMLElement[] = [];
 
-  // Collection cards — same DOM structure as clip cards
+  // Collection cards — same DOM structure as item cards
   for (const col of collections) {
     const item = document.createElement("article");
     item.className = "saved-item";
@@ -708,38 +708,38 @@ function renderSavedList(collections: CollectionSummary[], standaloneClips: Item
     allItems.push(item);
   }
 
-  // Standalone clip cards
-  for (const clip of standaloneClips) {
+  // Standalone item cards
+  for (const itemData of standaloneItems) {
     const item = document.createElement("article");
     item.className = "saved-item";
 
     const main = document.createElement("button");
     main.type = "button";
     main.className = "saved-card-button";
-    main.title = `Open ${clip.normalizedUrl}`;
+    main.title = `Open ${itemData.normalizedUrl}`;
     main.addEventListener("click", () => {
-      void openSavedClipUrl(clip.normalizedUrl);
+      void openSavedItemUrl(itemData.normalizedUrl);
     });
 
     const titleRow = document.createElement("div");
     titleRow.className = "saved-title-row";
     const title = document.createElement("div");
     title.className = "saved-title";
-    title.textContent = clip.title || clip.normalizedUrl;
+    title.textContent = itemData.title || itemData.normalizedUrl;
 
     const url = document.createElement("div");
     url.className = "saved-url";
-    url.textContent = clip.normalizedUrl;
+    url.textContent = itemData.normalizedUrl;
 
     const meta = document.createElement("div");
     meta.className = "saved-meta";
-    meta.textContent = [clip.state === "parsed" ? "Parsed" : "Raw only", new Date(
-      (clip.parseUpdatedAt ?? clip.captureUpdatedAt)
+    meta.textContent = [itemData.state === "parsed" ? "Parsed" : "Raw only", new Date(
+      (itemData.parseUpdatedAt ?? itemData.captureUpdatedAt)
     ).toLocaleString()].join(" | ");
 
     const details = document.createElement("div");
     details.className = "saved-details";
-    details.textContent = [clip.activeRawdocId, clip.activeDocId].filter(Boolean).join(" | ");
+    details.textContent = [itemData.activeRawdocId, itemData.activeDocId].filter(Boolean).join(" | ");
 
     titleRow.append(title);
     main.append(titleRow, url, meta);
@@ -748,7 +748,7 @@ function renderSavedList(collections: CollectionSummary[], standaloneClips: Item
     }
     item.append(main);
 
-    if (clip.itemId && clip.activeDocId) {
+    if (itemData.itemId && itemData.activeDocId) {
       const openReaderButton = document.createElement("button");
       openReaderButton.className = "saved-open-reader";
       openReaderButton.type = "button";
@@ -756,7 +756,7 @@ function renderSavedList(collections: CollectionSummary[], standaloneClips: Item
       openReaderButton.title = "Open in Reader";
       openReaderButton.addEventListener("click", (event) => {
         event.stopPropagation();
-        void openKnowledgePage(`reader.html?itemId=${encodeURIComponent(clip.itemId)}`);
+        void openKnowledgePage(`reader.html?itemId=${encodeURIComponent(itemData.itemId)}`);
       });
       item.append(openReaderButton);
     }
@@ -766,7 +766,7 @@ function renderSavedList(collections: CollectionSummary[], standaloneClips: Item
   savedList.replaceChildren(...allItems);
 }
 
-async function openSavedClipUrl(url: string): Promise<void> {
+async function openSavedItemUrl(url: string): Promise<void> {
   const currentTab = activeTab?.tabId !== undefined && activeTab.url !== window.location.href
     ? await chrome.tabs.get(activeTab.tabId).catch(() => undefined)
     : undefined;
@@ -1242,7 +1242,7 @@ function summarizeSave(
   const nextDoc = shortId(preview.document.doc_id);
   const nextRawdoc = shortId(preview.rawdoc.rawdoc_id);
   if (!previousStatus || previousStatus.state === "empty") {
-    return `Saved a new clip as doc ${nextDoc} from raw ${nextRawdoc}.`;
+    return `Saved a new item as doc ${nextDoc} from raw ${nextRawdoc}.`;
   }
   if (previousStatus.state === "captured") {
     return `Parsed the saved raw capture and created doc ${nextDoc}.`;

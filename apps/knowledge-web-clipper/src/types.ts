@@ -273,7 +273,7 @@ export interface StoreMaintenanceScan {
   };
   tables: {
     knowledgeItems?: number;
-    clips: number;
+    webItems: number;
     epubMetadata?: number;
     rawdocs: number;
     documents: number;
@@ -296,7 +296,7 @@ export interface StoreMaintenanceScan {
   };
   parsedResults?: {
     parsedItems?: number;
-    parsedClips: number;
+    parsedWebItems: number;
     documentRows: number;
     chunkRows: number;
     collectionItemRefs: number;

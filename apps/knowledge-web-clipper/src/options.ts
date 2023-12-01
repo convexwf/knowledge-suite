@@ -233,15 +233,15 @@ function formatStoreScan(scan: StoreMaintenanceScan): string {
     `Database: ${scan.database.exists ? "present" : "missing"} (${scan.database.sizeBytes} bytes)`,
     `Rows: ${scan.totals.rows}`,
     `Content files: ${scan.totals.contentFiles}`,
-    `Parsed impact: items=${impact.items}, clips=${impact.clips}, rows=${impact.rows}, files=${impact.files}, collectionRefs=${impact.collectionItemRefs}, batchRefs=${impact.batchItemRefs}`,
-    `Tables: knowledgeItems=${scan.tables.knowledgeItems ?? 0}, clips=${scan.tables.clips}, epubMetadata=${scan.tables.epubMetadata ?? 0}, rawdocs=${scan.tables.rawdocs}, documents=${scan.tables.documents}, chunks=${scan.tables.chunks}, collections=${scan.tables.collections}, collectionItems=${scan.tables.collectionItems}, batchJobs=${scan.tables.batchJobs}, batchItems=${scan.tables.batchItems}`,
+    `Parsed impact: items=${impact.items}, webItems=${impact.webItems}, rows=${impact.rows}, files=${impact.files}, collectionRefs=${impact.collectionItemRefs}, batchRefs=${impact.batchItemRefs}`,
+    `Tables: knowledgeItems=${scan.tables.knowledgeItems ?? 0}, webItems=${scan.tables.webItems}, epubMetadata=${scan.tables.epubMetadata ?? 0}, rawdocs=${scan.tables.rawdocs}, documents=${scan.tables.documents}, chunks=${scan.tables.chunks}, collections=${scan.tables.collections}, collectionItems=${scan.tables.collectionItems}, batchJobs=${scan.tables.batchJobs}, batchItems=${scan.tables.batchItems}`,
     `Files: rawdocs=${scan.files.rawdocs}, documents=${scan.files.documents}, markdown=${scan.files.markdown}, assets=${scan.files.assets}`,
     `Scanned at: ${scan.scannedAt}`
   ].join("\n");
 }
 
 function parsedImpact(scan: StoreMaintenanceScan): {
-  clips: number;
+  webItems: number;
   items: number;
   rows: number;
   files: number;
@@ -252,7 +252,7 @@ function parsedImpact(scan: StoreMaintenanceScan): {
   if (parsedResults) {
     return {
       items: parsedResults.parsedItems ?? 0,
-      clips: parsedResults.parsedClips,
+      webItems: parsedResults.parsedWebItems,
       rows: parsedResults.documentRows + parsedResults.chunkRows,
       files: parsedResults.derivedFiles,
       collectionItemRefs: parsedResults.collectionItemRefs,
@@ -262,7 +262,7 @@ function parsedImpact(scan: StoreMaintenanceScan): {
 
   return {
     items: scan.tables.knowledgeItems ?? 0,
-    clips: scan.tables.documents,
+    webItems: scan.tables.documents,
     rows: scan.tables.documents + scan.tables.chunks,
     files: scan.files.documents + scan.files.markdown + scan.files.assets,
     collectionItemRefs: 0,

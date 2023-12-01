@@ -794,7 +794,7 @@ export class KnowledgeStore {
     return itemId;
   }
 
-  // ── save (web clip) ────────────────────────────────────────────────────
+  // ── save (captured web item) ───────────────────────────────────────────
 
   async save(params: {
     normalizedUrl: string;
@@ -2153,7 +2153,7 @@ export class KnowledgeStore {
     const assetFiles = await countFiles(join(this.root, "assets"));
     const tables = {
       knowledgeItems: this.countRows("items"),
-      clips: this.countRowsWhere("items", "item_type = 'document' AND source_type IN ('url', 'singlefile_html')"),
+      webItems: this.countRowsWhere("items", "item_type = 'document' AND source_type IN ('url', 'singlefile_html')"),
       epubMetadata: this.countRows("epub_metadata"),
       rawdocs: this.countRows("rawdocs"),
       documents: this.countRows("documents"),
@@ -2178,7 +2178,7 @@ export class KnowledgeStore {
       totals: { rows, contentFiles: totalContentFiles },
       parsedResults: {
         parsedItems,
-        parsedClips: this.countRowsWhere("items", "item_type = 'document' AND source_type IN ('url', 'singlefile_html') AND active_doc_id IS NOT NULL"),
+        parsedWebItems: this.countRowsWhere("items", "item_type = 'document' AND source_type IN ('url', 'singlefile_html') AND active_doc_id IS NOT NULL"),
         documentRows: tables.documents,
         chunkRows: tables.chunks,
         collectionItemRefs,

@@ -19,36 +19,36 @@
   },
   "sections": [
     {
-      "section_id": "fern-docs-rerank-overview-section-1",
       "type": "paragraph",
-      "content": "Use Rerank to sort search results by relevance. Rerank accepts a query and a list of documents, then returns an ordered list with relevance scores."
+      "content": "Use Rerank to sort search results by relevance. Rerank accepts a query and a list of documents, then returns an ordered list with relevance scores.",
+      "section_id": "fern-docs-rerank-overview-section-1"
     },
     {
-      "section_id": "fern-docs-rerank-overview-section-2",
       "type": "heading",
       "level": 2,
-      "content": "How reranking works"
+      "content": "How reranking works",
+      "section_id": "fern-docs-rerank-overview-section-2"
     },
     {
-      "section_id": "fern-docs-rerank-overview-section-3",
       "type": "paragraph",
-      "content": "The endpoint compares each document to the query and assigns a relevance score. Applications can use the score to reorder search results, recommendations, and retrieved context."
+      "content": "The endpoint compares each document to the query and assigns a relevance score. Applications can use the score to reorder search results, recommendations, and retrieved context.",
+      "section_id": "fern-docs-rerank-overview-section-3"
     },
     {
-      "section_id": "fern-docs-rerank-overview-section-4",
       "type": "heading",
       "level": 2,
-      "content": "When to use Rerank"
+      "content": "When to use Rerank",
+      "section_id": "fern-docs-rerank-overview-section-4"
     },
     {
-      "section_id": "fern-docs-rerank-overview-section-5",
       "type": "paragraph",
-      "content": "Use reranking after lexical search, vector search, or hybrid retrieval. It is especially useful when the first retrieval pass returns candidates that are related but not equally helpful."
+      "content": "Use reranking after lexical search, vector search, or hybrid retrieval. It is especially useful when the first retrieval pass returns candidates that are related but not equally helpful.",
+      "section_id": "fern-docs-rerank-overview-section-5"
     },
     {
-      "section_id": "fern-docs-rerank-overview-section-6",
       "type": "code",
-      "content": "const results = await cohere.rerank({ query, documents });"
+      "content": "const results = await cohere.rerank({ query, documents });",
+      "section_id": "fern-docs-rerank-overview-section-6"
     }
   ]
 }

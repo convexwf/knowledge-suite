@@ -149,7 +149,7 @@ describe("knowledge ingest server", () => {
     await app.close();
   });
 
-  it("previews and saves browser_html clips", async () => {
+  it("previews and saves browser_html items", async () => {
     const app = await buildServer({
       host: "127.0.0.1",
       port: 0,
@@ -900,7 +900,7 @@ describe("knowledge ingest server", () => {
         path: "index.sqlite3"
       },
       tables: {
-        clips: 1,
+        webItems: 1,
         rawdocs: 1,
         documents: 1
       },
@@ -1012,13 +1012,13 @@ describe("knowledge ingest server", () => {
       mode: "parsed",
       before: {
         parsedResults: {
-          parsedClips: 1,
+          parsedWebItems: 1,
           documentRows: 1
         }
       },
       after: {
         tables: {
-          clips: 1,
+          webItems: 1,
           rawdocs: 1,
           documents: 0,
           chunks: 0
@@ -1028,7 +1028,7 @@ describe("knowledge ingest server", () => {
           totalContentFiles: 2
         },
         parsedResults: {
-          parsedClips: 0,
+          parsedWebItems: 0,
           documentRows: 0,
           chunkRows: 0,
           derivedFiles: 0
@@ -1812,7 +1812,7 @@ describe("knowledge ingest server", () => {
     await app.close();
   });
 
-  it("uses the final server_fetch response URL as the primary clip identity", async () => {
+  it("uses the final server_fetch response URL as the primary item identity", async () => {
     globalThis.fetch = async () => {
       const response = new Response(html, {
         status: 200,

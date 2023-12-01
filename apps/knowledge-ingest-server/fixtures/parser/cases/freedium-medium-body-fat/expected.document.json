@@ -19,22 +19,21 @@
   },
   "sections": [
     {
-      "section_id": "freedium-medium-body-fat-section-1",
       "type": "paragraph",
-      "content": "[Alex Carter](https://medium.com/@alexcarter)"
+      "content": "[Alex Carter](https://medium.com/@alexcarter)",
+      "section_id": "freedium-medium-body-fat-section-1"
     },
     {
-      "section_id": "freedium-medium-body-fat-section-2",
       "type": "paragraph",
-      "content": "I lowered my body fat percentage by focusing on simple repeatable habits rather than an extreme training plan. The important part was to make every week measurable."
+      "content": "I lowered my body fat percentage by focusing on simple repeatable habits rather than an extreme training plan. The important part was to make every week measurable.",
+      "section_id": "freedium-medium-body-fat-section-2"
     },
     {
-      "section_id": "freedium-medium-body-fat-section-3",
       "type": "paragraph",
-      "content": "The first habit was protein at every meal. The second habit was a daily walk after lunch. The third habit was resistance training three times a week with progressive overload."
+      "content": "The first habit was protein at every meal. The second habit was a daily walk after lunch. The third habit was resistance training three times a week with progressive overload.",
+      "section_id": "freedium-medium-body-fat-section-3"
     },
     {
-      "section_id": "freedium-medium-body-fat-section-4",
       "type": "figure",
       "content": "Progress chart across the first four months.",
       "assets": [
@@ -44,18 +43,19 @@
           "alt": "Progress chart",
           "caption": "Progress chart across the first four months."
         }
-      ]
+      ],
+      "section_id": "freedium-medium-body-fat-section-4"
     },
     {
-      "section_id": "freedium-medium-body-fat-section-5",
       "type": "heading",
       "level": 2,
-      "content": "What changed"
+      "content": "What changed",
+      "section_id": "freedium-medium-body-fat-section-5"
     },
     {
-      "section_id": "freedium-medium-body-fat-section-6",
       "type": "paragraph",
-      "content": "Weekly photos, waist measurements, and a simple calorie range made the plan easier to follow. I adjusted only when the trend stopped moving for two consecutive weeks."
+      "content": "Weekly photos, waist measurements, and a simple calorie range made the plan easier to follow. I adjusted only when the trend stopped moving for two consecutive weeks.",
+      "section_id": "freedium-medium-body-fat-section-6"
     }
   ]
 }

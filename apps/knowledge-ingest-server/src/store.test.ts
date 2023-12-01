@@ -134,7 +134,7 @@ describe("KnowledgeStore", () => {
     store.close();
   });
 
-  it("purge deletes clip rows, capture rows, and all capture files", async () => {
+  it("purge deletes item rows, capture rows, and all capture files", async () => {
     const store = new KnowledgeStore(storeRoot);
     const clip = fixture("44444444-4444-4444-8444-444444444444", "dddddddd-dddd-4ddd-8ddd-dddddddddddd", "Purge Title");
     const paths = await store.save(clip);
@@ -253,7 +253,7 @@ describe("KnowledgeStore", () => {
     const scan = await store.scanMaintenance();
     expect(scan.totals.rows).toBeGreaterThanOrEqual(4);
     expect(scan.totals.contentFiles).toBe(4);
-    expect(scan.tables.clips).toBe(1);
+    expect(scan.tables.webItems).toBe(1);
     expect(scan.tables.rawdocs).toBe(1);
     expect(scan.tables.documents).toBe(1);
     expect(scan.tables.chunks).toBeGreaterThan(0);
@@ -288,7 +288,7 @@ describe("KnowledgeStore", () => {
 
     const scan = await store.scanMaintenance();
     expect(scan.parsedResults).toMatchObject({
-      parsedClips: 1,
+      parsedWebItems: 1,
       documentRows: 1,
       derivedFiles: 2
     });
@@ -301,13 +301,13 @@ describe("KnowledgeStore", () => {
       mode: "parsed",
       before: {
         parsedResults: {
-          parsedClips: 1,
+          parsedWebItems: 1,
           documentRows: 1
         }
       },
       after: {
         tables: {
-          clips: 1,
+          webItems: 1,
           rawdocs: 1,
           documents: 0,
           chunks: 0
@@ -320,7 +320,7 @@ describe("KnowledgeStore", () => {
           totalContentFiles: 2
         },
         parsedResults: {
-          parsedClips: 0,
+          parsedWebItems: 0,
           documentRows: 0,
           chunkRows: 0,
           derivedFiles: 0

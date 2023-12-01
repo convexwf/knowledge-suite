@@ -8,8 +8,11 @@ language: "en"
 
 # Selection Clipping
 
+<!-- section_id:selection-clipping-section-1 -->
 ## Selected Passage
 
+<!-- section_id:selection-clipping-section-2 -->
 The selected passage is intentionally long enough to become a parser candidate and preserve the local context chosen by the reader.
 
+<!-- section_id:selection-clipping-section-3 -->
 > Selection keeps quoted material

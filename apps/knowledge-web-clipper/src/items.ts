@@ -297,7 +297,7 @@ function collectionRow(collection: ReaderListCollection): HTMLElement {
   const title = marqueeTitle("h3", "item-title", collection.title);
   const creator = document.createElement("div");
   creator.className = "item-creator";
-  creator.textContent = "Collection of saved web clips";
+  creator.textContent = "Collection of saved pages";
   const meta = document.createElement("div");
   meta.className = "item-summary-line";
   meta.textContent = `${collection.itemCount} page${collection.itemCount === 1 ? "" : "s"} · Updated ${formatDate(collection.updatedAt)}`;
@@ -789,13 +789,13 @@ function badge(label: string, tone: string): HTMLElement {
 function sourceBadgeLabel(sourceType: KnowledgeSourceType): string {
   switch (sourceType) {
     case "url":
-      return "Web Clip";
+      return "Web Page";
     case "epub":
       return "EPUB";
     case "pdf":
       return "PDF";
     case "singlefile_html":
-      return "Web Clip";
+      return "Web Page";
     default:
       return sourceType;
   }

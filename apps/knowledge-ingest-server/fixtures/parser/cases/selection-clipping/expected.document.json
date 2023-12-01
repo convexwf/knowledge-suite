@@ -17,20 +17,20 @@
   },
   "sections": [
     {
-      "section_id": "selection-clipping-section-1",
       "type": "heading",
       "level": 2,
-      "content": "Selected Passage"
+      "content": "Selected Passage",
+      "section_id": "selection-clipping-section-1"
     },
     {
-      "section_id": "selection-clipping-section-2",
       "type": "paragraph",
-      "content": "The selected passage is intentionally long enough to become a parser candidate and preserve the local context chosen by the reader."
+      "content": "The selected passage is intentionally long enough to become a parser candidate and preserve the local context chosen by the reader.",
+      "section_id": "selection-clipping-section-2"
     },
     {
-      "section_id": "selection-clipping-section-3",
       "type": "blockquote",
-      "content": "Selection keeps quoted material"
+      "content": "Selection keeps quoted material",
+      "section_id": "selection-clipping-section-3"
     }
   ]
 }

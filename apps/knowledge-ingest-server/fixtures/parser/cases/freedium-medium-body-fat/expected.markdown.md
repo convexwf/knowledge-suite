@@ -8,15 +8,21 @@ language: "en"
 
 # How I Lowered My Body Fat Percentage by 8% in 4 Months
 
+<!-- section_id:freedium-medium-body-fat-section-1 -->
 [Alex Carter](https://medium.com/@alexcarter)
 
+<!-- section_id:freedium-medium-body-fat-section-2 -->
 I lowered my body fat percentage by focusing on simple repeatable habits rather than an extreme training plan. The important part was to make every week measurable.
 
+<!-- section_id:freedium-medium-body-fat-section-3 -->
 The first habit was protein at every meal. The second habit was a daily walk after lunch. The third habit was resistance training three times a week with progressive overload.
 
+<!-- section_id:freedium-medium-body-fat-section-4 -->
 ![Progress chart](https://freedium-mirror.cfd/images/progress.jpg)
 Progress chart across the first four months.
 
+<!-- section_id:freedium-medium-body-fat-section-5 -->
 ## What changed
 
+<!-- section_id:freedium-medium-body-fat-section-6 -->
 Weekly photos, waist measurements, and a simple calorie range made the plan easier to follow. I adjusted only when the trend stopped moving for two consecutive weeks.

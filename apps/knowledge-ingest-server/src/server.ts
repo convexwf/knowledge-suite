@@ -117,7 +117,7 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
     }
   }));
 
-  // ── Ingest routes (replaces legacy /api/clip/*) ───────────────────────
+  // ── Ingest routes ──────────────────────────────────────────────────────
 
   function itemStatus(item: KnowledgeItem | null, fallbackUrl: string) {
     if (!item) return {
