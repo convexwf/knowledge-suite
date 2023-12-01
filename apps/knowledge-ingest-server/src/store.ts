@@ -1238,7 +1238,7 @@ export class KnowledgeStore {
 
   // ── reparse helpers ────────────────────────────────────────────────────
 
-  async loadCaptureByUrl(inputUrl: string): Promise<{ clip: KnowledgeItem; html: string; rawdoc: RawDoc; itemId: string }> {
+  async loadCaptureByUrl(inputUrl: string): Promise<{ item: KnowledgeItem; html: string; rawdoc: RawDoc; itemId: string }> {
     await this.ensure();
     const row = this.findItemByUrlLikeAlias(inputUrl);
     if (!row || !row.active_capture_id) {
@@ -1246,7 +1246,7 @@ export class KnowledgeStore {
     }
     const html = await this.readText(`rawdocs/${row.active_capture_id}.html`);
     const rawdoc = JSON.parse(await this.readText(`rawdocs/${row.active_capture_id}.json`)) as RawDoc;
-    return { clip: this.buildKnowledgeItem(row), html, rawdoc, itemId: row.item_id };
+    return { item: this.buildKnowledgeItem(row), html, rawdoc, itemId: row.item_id };
   }
 
   async loadRawContentForItem(itemId: string): Promise<{ item: KnowledgeItem; html: string; rawdoc: RawDoc; content: string; contentExt: string }> {
@@ -2076,18 +2076,69 @@ export class KnowledgeStore {
     return annotations.length;
   }
 
-  async listAnnotationDocs(): Promise<
-    Array<{ doc_id: string; title?: string; page_title?: string; annotation_count: number }>
+  async listAnnotationItems(): Promise<
+    Array<{
+      item_id: string;
+      doc_id: string;
+      normalized_url?: string;
+      title?: string;
+      page_title?: string;
+      annotation_count: number;
+      types: Record<string, number>;
+    }>
   > {
     await this.ensure();
     const rows = this.database!.prepare(
-      "SELECT a.doc_id, d.title, d.page_title, COUNT(*) AS annotation_count FROM annotations a LEFT JOIN documents d ON d.doc_id = a.doc_id WHERE a.orphaned = 0 GROUP BY a.doc_id ORDER BY annotation_count DESC"
-    ).all() as { doc_id: string; title: string | null; page_title: string | null; annotation_count: number }[];
+      `SELECT
+        i.item_id,
+        i.active_doc_id AS doc_id,
+        d.title,
+        d.page_title,
+        COUNT(*) AS annotation_count,
+        MAX(CASE WHEN ia.alias_type = 'normalized_url' THEN ia.alias_value END) AS normalized_url
+      FROM annotations a
+      JOIN items i ON i.active_doc_id = a.doc_id
+      LEFT JOIN documents d ON d.doc_id = a.doc_id
+      LEFT JOIN item_aliases ia ON ia.item_id = i.item_id
+      WHERE a.orphaned = 0
+        AND i.item_type = 'document'
+        AND i.active_doc_id IS NOT NULL
+      GROUP BY i.item_id, i.active_doc_id, d.title, d.page_title
+      ORDER BY annotation_count DESC, i.updated_at DESC`
+    ).all() as Array<{
+      item_id: string;
+      doc_id: string;
+      title: string | null;
+      page_title: string | null;
+      annotation_count: number;
+      normalized_url: string | null;
+    }>;
+    const typeRows = this.database!.prepare(
+      `SELECT
+        i.item_id,
+        a.type,
+        COUNT(*) AS annotation_count
+      FROM annotations a
+      JOIN items i ON i.active_doc_id = a.doc_id
+      WHERE a.orphaned = 0
+        AND i.item_type = 'document'
+        AND i.active_doc_id IS NOT NULL
+      GROUP BY i.item_id, a.type`
+    ).all() as Array<{ item_id: string; type: string; annotation_count: number }>;
+    const typesByItem = new Map<string, Record<string, number>>();
+    for (const row of typeRows) {
+      const current = typesByItem.get(row.item_id) ?? {};
+      current[row.type] = row.annotation_count;
+      typesByItem.set(row.item_id, current);
+    }
     return rows.map((r) => ({
+      item_id: r.item_id,
       doc_id: r.doc_id,
+      normalized_url: r.normalized_url ?? undefined,
       title: r.title ?? undefined,
       page_title: r.page_title ?? undefined,
-      annotation_count: r.annotation_count
+      annotation_count: r.annotation_count,
+      types: typesByItem.get(r.item_id) ?? {}
     }));
   }
 

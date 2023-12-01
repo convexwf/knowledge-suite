@@ -48,8 +48,8 @@ let currentItem: KnowledgeItem | undefined;
 let currentAnnotations: Annotation[] = [];
 let currentDocId = "";
 let collectionNavData: {
-  previous: { docId: string; itemId?: string; title?: string; normalizedUrl: string } | null;
-  next: { docId: string; itemId?: string; title?: string; normalizedUrl: string } | null;
+  previous: { itemId: string; title?: string; normalizedUrl?: string } | null;
+  next: { itemId: string; title?: string; normalizedUrl?: string } | null;
 } = { previous: null, next: null };
 const objectUrls = new Set<string>();
 let aiAbortController: AbortController | null = null;
@@ -1715,8 +1715,8 @@ function renderCollectionLinks(collections: Array<{ collectionId: string; title:
 
 function setCollectionNavigation(
   navigation: {
-    previous: { docId: string; itemId?: string; title?: string; normalizedUrl: string } | null;
-    next: { docId: string; itemId?: string; title?: string; normalizedUrl: string } | null;
+    previous: { itemId: string; title?: string; normalizedUrl?: string } | null;
+    next: { itemId: string; title?: string; normalizedUrl?: string } | null;
   } | null
 ): void {
   collectionNav.hidden = !navigation?.previous && !navigation?.next;
@@ -1734,7 +1734,5 @@ function setCollectionNavigation(
 async function navigateInCollection(direction: "prev" | "next"): Promise<void> {
   const target = direction === "prev" ? collectionNavData.previous : collectionNavData.next;
   if (!target) return;
-  const navId = target.itemId || target.docId;
-  const paramName = target.itemId ? "itemId" : "docId";
-  await openKnowledgePage(`reader.html?${paramName}=${encodeURIComponent(navId)}`);
+  await openKnowledgePage(`reader.html?itemId=${encodeURIComponent(target.itemId)}`);
 }

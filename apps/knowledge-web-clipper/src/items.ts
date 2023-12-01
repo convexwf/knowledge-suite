@@ -423,7 +423,7 @@ function itemRow(item: KnowledgeItem, options?: { nested?: boolean; indexLabel?:
   readButton.disabled = item.state !== "parsed" || !item.activeDocId;
 
   const annotateButton = button("Annotations", "", () => {
-    void openKnowledgePage(`annotations.html?docId=${encodeURIComponent(item.activeDocId!)}&itemId=${encodeURIComponent(item.itemId)}`);
+    void openKnowledgePage(`annotations.html?itemId=${encodeURIComponent(item.itemId)}`);
   });
   annotateButton.classList.add("item-slot-button");
   annotateButton.disabled = !item.activeDocId;
@@ -592,13 +592,9 @@ function actionButton(
 
 async function openCollectionFirstItem(collectionId: string): Promise<void> {
   const detail = await loadCollectionDetail(collectionId);
-  const first = detail.items.find((item) => item.itemId || item.docId);
+  const first = detail.items.find((item) => item.itemId);
   if (!first) return;
-  if (first.itemId) {
-    openReader(first.itemId);
-  } else if (first.docId) {
-    void openKnowledgePage(`reader.html?docId=${encodeURIComponent(first.docId)}`);
-  }
+  openReader(first.itemId!);
 }
 
 async function operateOnCollection(collectionId: string, mode: "reparse" | "remove" | "purge"): Promise<void> {

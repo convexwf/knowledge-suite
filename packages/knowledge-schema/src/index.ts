@@ -32,35 +32,35 @@ export const ServerFetchInputSchema = z.object({
   url: z.string().url()
 });
 
-export const ClipInputSchema = z.discriminatedUnion("inputMode", [
+export const KnowledgeCaptureInputSchema = z.discriminatedUnion("inputMode", [
   BrowserHtmlInputSchema,
   ServerFetchInputSchema
 ]);
-export type ClipInput = z.infer<typeof ClipInputSchema>;
+export type KnowledgeCaptureInput = z.infer<typeof KnowledgeCaptureInputSchema>;
 
-export const ClipPreviewRequestSchema = ClipInputSchema;
-export type ClipPreviewRequest = z.infer<typeof ClipPreviewRequestSchema>;
+export const KnowledgeCapturePreviewRequestSchema = KnowledgeCaptureInputSchema;
+export type KnowledgeCapturePreviewRequest = z.infer<typeof KnowledgeCapturePreviewRequestSchema>;
 
-const ClipSaveOptionsSchema = z.object({
+const KnowledgeCaptureSaveOptionsSchema = z.object({
   candidateId: z.string().optional(),
   overwrite: z.boolean().optional()
 });
 
-export const ClipSaveRequestSchema = z.discriminatedUnion("inputMode", [
-  BrowserHtmlInputSchema.merge(ClipSaveOptionsSchema),
-  ServerFetchInputSchema.merge(ClipSaveOptionsSchema)
+export const KnowledgeCaptureSaveRequestSchema = z.discriminatedUnion("inputMode", [
+  BrowserHtmlInputSchema.merge(KnowledgeCaptureSaveOptionsSchema),
+  ServerFetchInputSchema.merge(KnowledgeCaptureSaveOptionsSchema)
 ]);
-export type ClipSaveRequest = z.infer<typeof ClipSaveRequestSchema>;
+export type KnowledgeCaptureSaveRequest = z.infer<typeof KnowledgeCaptureSaveRequestSchema>;
 
-export const ClipReparseRequestSchema = z.object({
+export const KnowledgeCaptureReparseRequestSchema = z.object({
   url: z.string().min(1)
 });
-export type ClipReparseRequest = z.infer<typeof ClipReparseRequestSchema>;
+export type KnowledgeCaptureReparseRequest = z.infer<typeof KnowledgeCaptureReparseRequestSchema>;
 
-export const ClipDeleteModeSchema = z.enum(["remove", "purge"]);
-export type ClipDeleteMode = z.infer<typeof ClipDeleteModeSchema>;
 export const KnowledgeItemDeleteModeSchema = z.enum(["remove", "purge"]);
 export type KnowledgeItemDeleteMode = z.infer<typeof KnowledgeItemDeleteModeSchema>;
+export const KnowledgeCaptureDeleteModeSchema = z.enum(["remove", "purge"]);
+export type KnowledgeCaptureDeleteMode = z.infer<typeof KnowledgeCaptureDeleteModeSchema>;
 
 export const STORE_CLEAR_CONFIRMATION = "CLEAR KNOWLEDGE STORE";
 export const STORE_CLEAR_PARSED_CONFIRMATION = "CLEAR PARSED RESULTS";
@@ -251,7 +251,7 @@ export interface ParserCandidatePreview {
   markdown: string;
 }
 
-export interface ClipStatus {
+export interface KnowledgeItemStatus {
   normalizedUrl: string;
   urlHash: string;
   state: "empty" | "captured" | "parsed";
@@ -270,8 +270,7 @@ export interface ClipStatus {
   docId?: string;
   rawdocId?: string;
 }
-
-export interface ClipPreviewResponse {
+export interface KnowledgePreviewResponse {
   rawdoc: RawDoc;
   document: KnowledgeDocument;
   markdown: string;
@@ -279,10 +278,10 @@ export interface ClipPreviewResponse {
   selectedCandidateId?: string;
   serverSelectedCandidateId?: string;
   activeCandidateId?: string;
-  status: ClipStatus;
+  status: KnowledgeItemStatus;
 }
 
-export interface ClipSaveResponse extends ClipPreviewResponse {
+export interface KnowledgeSaveResponse extends KnowledgePreviewResponse {
   saved: true;
   paths: {
     rawHtmlPath: string;
@@ -328,11 +327,10 @@ export interface KnowledgeItemDeleteResponse {
   removedRawdocId?: string;
 }
 
-export interface ClipStatusResponse extends ClipStatus {}
-
-export interface ClipDeleteResponse extends ClipStatus {
+export interface KnowledgeItemStatusResponse extends KnowledgeItemStatus {}
+export interface KnowledgeDeleteByUrlResponse extends KnowledgeItemStatus {
   deleted: boolean;
-  mode: ClipDeleteMode;
+  mode: KnowledgeItemDeleteMode;
   previousState: "captured" | "parsed";
   currentState: "empty" | "captured";
   deletedFiles: string[];
@@ -396,7 +394,8 @@ export interface StoreClearParsedResponse {
   after: StoreMaintenanceScan;
 }
 
-export interface ClipListItem {
+export interface SavedKnowledgeItem extends KnowledgeItemStatus {}
+export interface SavedKnowledgeItemListEntry extends SavedKnowledgeItem {
   normalizedUrl: string;
   urlHash: string;
   state: "captured" | "parsed";
@@ -416,8 +415,8 @@ export interface ClipListItem {
   rawdocId?: string;
 }
 
-export interface ClipListResponse {
-  clips: ClipListItem[];
+export interface SavedKnowledgeItemListResponse {
+  items: SavedKnowledgeItemListEntry[];
 }
 
 export interface SearchResultItem {
@@ -514,7 +513,7 @@ export interface BatchDiscoverItem {
   order: number;
   depth: number;
   selectedByDefault: boolean;
-  status: ClipStatus["state"];
+  status: KnowledgeItemStatus["state"];
   itemId?: string;
   docId?: string;
   rawdocId?: string;
@@ -698,8 +697,8 @@ export function slugifyTitle(title: string): string {
   return slug || "untitled";
 }
 
-export function assertClipInput(value: unknown): ClipInput {
-  return ClipInputSchema.parse(value);
+export function assertKnowledgeCaptureInput(value: unknown): KnowledgeCaptureInput {
+  return KnowledgeCaptureInputSchema.parse(value);
 }
 
 // ---- Annotation types ----

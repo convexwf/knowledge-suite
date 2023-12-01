@@ -1,12 +1,12 @@
 import { createKnowledgeApiClient } from "./api-client.js";
 import { getSettings } from "./settings.js";
 import { openKnowledgePage } from "./tabs.js";
-import type { Annotation, AnnotationType, AnnotationDocSummary } from "./types.js";
+import type { Annotation, AnnotationItemSummary, AnnotationType } from "./types.js";
 
 const settings = await getSettings();
 const client = createKnowledgeApiClient(settings);
 const query = new URLSearchParams(globalThis.location.search);
-const initialDocId = query.get("docId") || undefined;
+const initialItemId = query.get("itemId") || undefined;
 
 const backBtn = mustGet<HTMLButtonElement>("back-to-items");
 const navList = mustGet<HTMLElement>("anno-nav-list");
@@ -14,8 +14,8 @@ const detailEl = mustGet<HTMLElement>("anno-detail");
 const docCountEl = mustGet<HTMLElement>("anno-doc-count");
 const totalCountEl = mustGet<HTMLElement>("anno-total-count");
 
-let docs: AnnotationDocSummary[] = [];
-let currentDocId: string | null = null;
+let items: AnnotationItemSummary[] = [];
+let currentItemId: string | null = null;
 let currentAnnotations: Annotation[] = [];
 let currentFilter: AnnotationType | "all" = "all";
 
@@ -27,15 +27,15 @@ await loadDocs();
 
 async function loadDocs(): Promise<void> {
   try {
-    const result = await client.listAnnotationDocs();
-    docs = result.docs;
+    const result = await client.listAnnotationItems();
+    items = result.items;
     renderNavStats();
     renderNav();
 
-    if (initialDocId && docs.some((d) => d.doc_id === initialDocId)) {
-      selectDoc(initialDocId);
-    } else if (docs.length > 0) {
-      selectDoc(docs[0].doc_id);
+    if (initialItemId && items.some((item) => item.itemId === initialItemId)) {
+      void selectItem(initialItemId);
+    } else if (items.length > 0) {
+      void selectItem(items[0].itemId);
     }
   } catch (error) {
     navList.textContent = error instanceof Error ? error.message : "Failed to load";
@@ -44,28 +44,28 @@ async function loadDocs(): Promise<void> {
 
 function renderNav(): void {
   navList.replaceChildren();
-  for (const doc of docs) {
-    const item = document.createElement("div");
-    item.className = "anno-nav-item" + (doc.doc_id === currentDocId ? " active" : "");
-    item.dataset.docId = doc.doc_id;
-    const typeSummary = summarizeTypes(doc.types);
-    item.innerHTML = `
+  for (const entry of items) {
+    const node = document.createElement("div");
+    node.className = "anno-nav-item" + (entry.itemId === currentItemId ? " active" : "");
+    node.dataset.itemId = entry.itemId;
+    const typeSummary = summarizeTypes(entry.types);
+    node.innerHTML = `
       <div class="anno-nav-item-copy">
-        <span class="anno-nav-item-title">${escapeHtml(doc.title ?? doc.doc_id.slice(0, 8) + "...")}</span>
+        <span class="anno-nav-item-title">${escapeHtml(entry.displayTitle ?? entry.title ?? entry.itemId.slice(0, 8) + "...")}</span>
         <span class="anno-nav-item-subtitle">${escapeHtml(typeSummary || "No typed annotations yet")}</span>
       </div>
-      <span class="anno-nav-item-count">${doc.count}</span>
+      <span class="anno-nav-item-count">${entry.count}</span>
     `;
-    item.addEventListener("click", () => selectDoc(doc.doc_id));
-    navList.append(item);
+    node.addEventListener("click", () => void selectItem(entry.itemId));
+    navList.append(node);
   }
 }
 
-async function selectDoc(docId: string): Promise<void> {
-  currentDocId = docId;
+async function selectItem(itemId: string): Promise<void> {
+  currentItemId = itemId;
   renderNav();
   try {
-    currentAnnotations = (await client.annotations(docId)).annotations;
+    currentAnnotations = (await client.itemAnnotations(itemId)).annotations;
   } catch {
     currentAnnotations = [];
   }
@@ -74,22 +74,23 @@ async function selectDoc(docId: string): Promise<void> {
 }
 
 function renderDetail(): void {
-  const doc = docs.find((d) => d.doc_id === currentDocId);
-  if (!doc || !currentDocId) {
+  const item = items.find((entry) => entry.itemId === currentItemId);
+  if (!item || !currentItemId) {
     detailEl.innerHTML = `<div class="anno-detail-empty">Select a document to view annotations.</div>`;
     return;
   }
 
-  const title = doc.title ?? currentDocId.slice(0, 8) + "...";
+  const title = item.displayTitle ?? item.title ?? currentItemId.slice(0, 8) + "...";
+  const docLabel = item.docId.slice(0, 8);
 
   detailEl.innerHTML = `
     <div class="anno-detail-header">
       <div class="anno-detail-kicker">Annotation Index</div>
       <div class="anno-detail-title">${escapeHtml(title)}</div>
-      <div class="anno-detail-subtitle"><code>${currentDocId.slice(0, 8)}...</code> · ${currentAnnotations.length} annotations</div>
+      <div class="anno-detail-subtitle"><code>${docLabel}...</code> · ${currentAnnotations.length} annotations</div>
     </div>
     <div class="anno-detail-overview">
-      ${detailStats(doc)}
+      ${detailStats(item)}
     </div>
     <div class="anno-toolbar">
       <div class="anno-filter" id="anno-filter"></div>
@@ -109,23 +110,22 @@ function renderDetail(): void {
 
 function setupDetailHandlers(): void {
   const openReaderBtn = detailEl.querySelector("#anno-open-reader") as HTMLButtonElement | null;
-  if (openReaderBtn && currentDocId) {
-    const targetDocId = currentDocId;
+  if (openReaderBtn && currentItemId) {
+    const targetItemId = currentItemId;
     openReaderBtn.addEventListener("click", () => {
-      void openKnowledgePage(`reader.html?docId=${encodeURIComponent(targetDocId)}`);
+      void openKnowledgePage(`reader.html?itemId=${encodeURIComponent(targetItemId)}`);
     });
   }
   const deleteAllBtn = detailEl.querySelector("#anno-delete-all") as HTMLButtonElement | null;
   if (deleteAllBtn) {
     deleteAllBtn.addEventListener("click", async () => {
-      if (!currentDocId) return;
+      if (!currentItemId) return;
       if (!confirm(`Delete all ${currentAnnotations.length} annotations for this document?`)) return;
       try {
-        await client.deleteAnnotationsForDoc(currentDocId);
+        await client.deleteAnnotationsForItem(currentItemId);
         currentAnnotations = [];
-        // Update doc summary
-        const doc = docs.find((d) => d.doc_id === currentDocId);
-        if (doc) { doc.count = 0; doc.types = {}; }
+        const item = items.find((entry) => entry.itemId === currentItemId);
+        if (item) { item.count = 0; item.types = {}; }
         renderNavStats();
         renderNav();
         renderDetail();
@@ -226,15 +226,15 @@ function renderCard(anno: Annotation): HTMLElement {
 
   const deleteBtn = card.querySelector(".anno-card-delete") as HTMLButtonElement;
   deleteBtn.addEventListener("click", async () => {
-    if (!currentDocId) return;
+    if (!currentItemId) return;
     if (!confirm(`Delete this ${anno.type} annotation?`)) return;
     try {
-      await client.deleteAnnotation(currentDocId, anno.annotation_id);
+      await client.deleteItemAnnotation(currentItemId, anno.annotation_id);
       currentAnnotations = currentAnnotations.filter((a) => a.annotation_id !== anno.annotation_id);
-      const doc = docs.find((d) => d.doc_id === currentDocId);
-      if (doc) {
-        doc.count = Math.max(0, doc.count - 1);
-        doc.types[anno.type] = Math.max(0, (doc.types[anno.type] ?? 1) - 1);
+      const item = items.find((entry) => entry.itemId === currentItemId);
+      if (item) {
+        item.count = Math.max(0, item.count - 1);
+        item.types[anno.type] = Math.max(0, (item.types[anno.type] ?? 1) - 1);
       }
       renderNavStats();
       renderNav();
@@ -255,8 +255,8 @@ function mustGet<T extends HTMLElement>(id: string): T {
 }
 
 function renderNavStats(): void {
-  docCountEl.textContent = String(docs.length);
-  totalCountEl.textContent = String(docs.reduce((sum, doc) => sum + doc.count, 0));
+  docCountEl.textContent = String(items.length);
+  totalCountEl.textContent = String(items.reduce((sum, item) => sum + item.count, 0));
 }
 
 function summarizeTypes(types: Record<string, number>): string {
@@ -268,8 +268,8 @@ function summarizeTypes(types: Record<string, number>): string {
     .join(" · ");
 }
 
-function detailStats(doc: AnnotationDocSummary): string {
-  const entries = Object.entries(doc.types)
+function detailStats(item: AnnotationItemSummary): string {
+  const entries = Object.entries(item.types)
     .filter(([, count]) => count > 0)
     .sort((left, right) => right[1] - left[1]);
   const orphaned = currentAnnotations.filter((annotation) => annotation.orphaned).length;

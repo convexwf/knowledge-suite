@@ -2,7 +2,7 @@ import {
   documentToMarkdown,
   KnowledgeStore,
   parsePage,
-  resolveClipInput,
+  resolveKnowledgeCaptureInput,
   type ServerConfig
 } from "@uknowledge/knowledge-ingest-server/local-import-api.js";
 import { normalizeUrlForKnowledge, urlHash } from "@uknowledge/knowledge-schema";
@@ -44,7 +44,7 @@ export async function importUrl(
     }
   }
 
-  const resolved = await resolveClipInput({ inputMode: "server_fetch", url: candidate.url }, config);
+  const resolved = await resolveKnowledgeCaptureInput({ inputMode: "server_fetch", url: candidate.url }, config);
   const parsed = await parsePage(resolved);
   parsed.document.meta.tags = [...new Set([...(parsed.document.meta.tags ?? []), ...options.tags])];
   parsed.rawdoc.metadata = {

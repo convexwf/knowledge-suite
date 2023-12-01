@@ -1,7 +1,6 @@
 export type InputMode = "browser_html" | "server_fetch";
 export type PanelView = "preview" | "json" | "rawdoc" | "parser" | "saved" | "batch";
-export type ClipState = "empty" | "captured" | "parsed";
-export type ClipDeleteMode = "remove" | "purge";
+export type KnowledgeItemState = "empty" | "captured" | "parsed";
 export type KnowledgeSourceType = "url" | "singlefile_html" | "pdf" | "epub";
 export type KnowledgeItemDeleteMode = "remove" | "purge";
 export const STORE_CLEAR_CONFIRMATION = "CLEAR KNOWLEDGE STORE";
@@ -37,11 +36,11 @@ export interface ExtensionSettings {
   defaultPanelTab: PanelView;
 }
 
-export type ClipRequestBody =
+export type KnowledgeCaptureRequestBody =
   | { inputMode: "browser_html"; snapshot: PageSnapshot }
   | { inputMode: "server_fetch"; url: string };
 
-export type ClipSaveRequestBody = ClipRequestBody & {
+export type KnowledgeCaptureSaveRequestBody = KnowledgeCaptureRequestBody & {
   candidateId?: string;
 };
 
@@ -60,7 +59,7 @@ export interface PreviewResult {
   selectedCandidateId?: string;
   serverSelectedCandidateId?: string;
   activeCandidateId?: string;
-  status: ClipStatusResult;
+  status: KnowledgeItemStatusResult;
 }
 
 export interface CandidatePreview {
@@ -199,7 +198,7 @@ export interface EpubImportResult {
   };
 }
 
-export interface ClipListItem {
+export interface SavedKnowledgeItem {
   normalizedUrl: string;
   urlHash: string;
   state: "captured" | "parsed";
@@ -207,9 +206,6 @@ export interface ClipListItem {
   hasDocument: boolean;
   originalUrl?: string;
   canonicalUrl?: string;
-  captureSavedAt: string;
-  captureUpdatedAt: string;
-  parseUpdatedAt?: string;
   title?: string;
   pageTitle?: string;
   contentTitle?: string;
@@ -217,15 +213,14 @@ export interface ClipListItem {
   itemId?: string;
   docId?: string;
   rawdocId?: string;
+  captureSavedAt: string;
+  captureUpdatedAt: string;
+  parseUpdatedAt?: string;
 }
 
-export interface ClipListResult {
-  clips: ClipListItem[];
-}
-
-export interface ClipDeleteResult extends ClipStatusResult {
+export interface KnowledgeDeleteByUrlResult extends KnowledgeItemStatusResult {
   deleted: boolean;
-  mode: ClipDeleteMode;
+  mode: KnowledgeItemDeleteMode;
   previousState: "captured" | "parsed";
   currentState: "empty" | "captured";
   removedDocId?: string;
@@ -427,8 +422,18 @@ export interface AnnotationDocSummary {
   types: Record<string, number>;
 }
 
-export interface AnnotationDocListResult {
-  docs: AnnotationDocSummary[];
+export interface AnnotationItemSummary {
+  itemId: string;
+  docId: string;
+  normalizedUrl?: string;
+  title: string | null;
+  displayTitle?: string;
+  count: number;
+  types: Record<string, number>;
+}
+
+export interface AnnotationItemListResult {
+  items: AnnotationItemSummary[];
 }
 
 export interface TaskState {
@@ -476,10 +481,10 @@ export interface AIAnnotationGenerateResult {
   results: AIAnnotationResultItem[];
 }
 
-export interface ClipStatusResult {
+export interface KnowledgeItemStatusResult {
   normalizedUrl: string;
   urlHash: string;
-  state: ClipState;
+  state: KnowledgeItemState;
   hasRawdoc: boolean;
   hasDocument: boolean;
   originalUrl?: string;
@@ -529,7 +534,7 @@ export interface BatchDiscoverItem {
   order: number;
   depth: number;
   selectedByDefault: boolean;
-  status: ClipState;
+  status: KnowledgeItemState;
   docId?: string;
   rawdocId?: string;
 }

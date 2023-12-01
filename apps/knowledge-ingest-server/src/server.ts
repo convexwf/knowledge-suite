@@ -6,9 +6,9 @@ import {
   BatchDiscoverRequestSchema,
   BatchJobCreateRequestSchema,
   BatchJobItem,
-  ClipInputSchema,
-  ClipReparseRequestSchema,
-  ClipSaveRequestSchema,
+  KnowledgeCapturePreviewRequestSchema,
+  KnowledgeCaptureReparseRequestSchema,
+  KnowledgeCaptureSaveRequestSchema,
   KnowledgeDocument,
   KnowledgeItem,
   normalizeUrlForKnowledge,
@@ -22,7 +22,7 @@ import { createAIProvider } from "./ai-annotation/provider.js";
 import { taskManager } from "./ai-annotation/task.js";
 import { loadConfig, ServerConfig } from "./config.js";
 import { parseEpub, type CalibreMetadata, type PandocRunner } from "./epub.js";
-import { ResolvedInput, resolveClipInput } from "./input.js";
+import { ResolvedInput, resolveKnowledgeCaptureInput } from "./input.js";
 import { documentToMarkdown } from "./markdown.js";
 import { parsePage, type ParsedPage } from "./parser.js";
 import { KnowledgeStore } from "./store.js";
@@ -161,16 +161,16 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
   });
 
   app.post("/api/ingest/preview", { bodyLimit: config.maxHtmlBytes }, async (request) => {
-    const input = ClipInputSchema.parse(request.body);
-    const resolved = await resolveClipInput(input, effectiveConfig);
+    const input = KnowledgeCapturePreviewRequestSchema.parse(request.body);
+    const resolved = await resolveKnowledgeCaptureInput(input, effectiveConfig);
     const parsed = await parsePage(resolved);
     const status = itemStatus(await store.status(resolved.normalizedUrl), resolved.normalizedUrl);
     return { ...previewPayload(parsed), status };
   });
 
   app.post("/api/ingest/save", { bodyLimit: config.maxHtmlBytes }, async (request) => {
-    const input = ClipSaveRequestSchema.parse(request.body);
-    const resolved = await resolveClipInput(input, effectiveConfig);
+    const input = KnowledgeCaptureSaveRequestSchema.parse(request.body);
+    const resolved = await resolveKnowledgeCaptureInput(input, effectiveConfig);
     const parsed = await parsePage(resolved, { selectedCandidateId: input.candidateId });
     const markdown = documentToMarkdown(parsed.document);
     const paths = await store.save({
@@ -185,9 +185,9 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
   });
 
   app.post("/api/ingest/reparse", async (request) => {
-    const input = ClipReparseRequestSchema.parse(request.body);
+    const input = KnowledgeCaptureReparseRequestSchema.parse(request.body);
     const capture = await store.loadCaptureByUrl(input.url);
-    const oldDocId = capture.clip.activeDocId;
+    const oldDocId = capture.item.activeDocId;
     const resolved = resolvedInputFromCapture(capture.rawdoc, capture.html);
     const parsed = await parsePage(resolved, { rawdocId: capture.rawdoc.rawdoc_id });
     const markdown = documentToMarkdown(parsed.document);
@@ -276,8 +276,33 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
     return { deleted: true, doc_id: params.docId, count };
   });
 
+  app.delete("/api/items/:itemId/annotations", async (request, reply) => {
+    const params = request.params as { itemId: string };
+    const detail = await store.loadItemDetail(params.itemId);
+    const docId = detail.document?.doc_id ?? detail.item?.activeDocId;
+    if (!docId) {
+      reply.code(404);
+      return { error: "Item has no active document" };
+    }
+    const before = await store.loadAnnotations(docId);
+    const count = before.length;
+    await store.deleteAnnotationsForDoc(docId);
+    return { deleted: true, doc_id: docId, count };
+  });
+
   app.get("/api/annotations", async () => {
-    return { docs: await store.listAnnotationDocs() };
+    const rows = await store.listAnnotationItems();
+    return {
+      items: rows.map((row) => ({
+        itemId: row.item_id,
+        docId: row.doc_id,
+        normalizedUrl: row.normalized_url,
+        title: row.title ?? null,
+        displayTitle: row.page_title ?? row.title ?? row.normalized_url ?? row.item_id,
+        count: row.annotation_count,
+        types: row.types
+      }))
+    };
   });
 
   const aiEnabled = process.env.KNOWLEDGE_AI_ENABLED === "true";
@@ -883,7 +908,7 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
       }
 
       await store.updateBatchItem({ itemId: item.itemId, state: "fetching", incrementAttempt: true });
-      const resolved = await resolveClipInput({ inputMode: "server_fetch", url: item.url }, effectiveConfig);
+      const resolved = await resolveKnowledgeCaptureInput({ inputMode: "server_fetch", url: item.url }, effectiveConfig);
       await store.updateBatchItem({ itemId: item.itemId, state: "parsing", normalizedUrl: resolved.normalizedUrl });
       const parsed = await parsePage(resolved);
       const markdown = documentToMarkdown(parsed.document);

@@ -4,24 +4,23 @@ import {
   Annotation,
   AnnotationDeleteAllResult,
   AnnotationDeleteResult,
-  AnnotationDocListResult,
+  AnnotationItemListResult,
   AnnotationListResult,
   AnnotationSaveResult,
   TaskState,
-  ClipDeleteResult,
-  ClipDeleteMode,
-  ClipRequestBody,
-  ClipSaveRequestBody,
-  ClipStatusResult,
   ExtensionSettings,
   HealthResult,
   EpubImportResult,
   KnowledgeDocument,
+  KnowledgeCaptureRequestBody,
+  KnowledgeCaptureSaveRequestBody,
   KnowledgeItem,
+  KnowledgeDeleteByUrlResult,
   KnowledgeItemDeleteMode,
   KnowledgeItemDeleteResult,
   KnowledgeItemDetailResult,
   KnowledgeItemListResult,
+  KnowledgeItemStatusResult,
   KnowledgeSourceType,
   PreviewResult,
   BatchCandidate,
@@ -63,7 +62,7 @@ export interface KnowledgeApiClient {
   scanStore(): Promise<StoreMaintenanceScan>;
   clearStore(): Promise<StoreClearResult>;
   clearParsedResults(): Promise<StoreClearParsedResult>;
-  status(url: string): Promise<ClipStatusResult>;
+  status(url: string): Promise<KnowledgeItemStatusResult>;
   list(limit?: number): Promise<{ items: ItemListItem[] }>;
   listItems(sourceType?: KnowledgeSourceType, limit?: number): Promise<KnowledgeItemListResult>;
   item(itemId: string): Promise<KnowledgeItemDetailResult>;
@@ -80,10 +79,10 @@ export interface KnowledgeApiClient {
   document(docId: string): Promise<KnowledgeDocument>;
   documentMarkdown(docId: string): Promise<string>;
   assetBlobUrl(assetId: string): Promise<string>;
-  deleteClip(url: string, mode?: ClipDeleteMode): Promise<ClipDeleteResult>;
-  reparse(url: string): Promise<PreviewResult>;
-  preview(body: ClipRequestBody): Promise<PreviewResult>;
-  save(body: ClipSaveRequestBody): Promise<PreviewResult>;
+  deleteByUrl(url: string, mode?: KnowledgeItemDeleteMode): Promise<KnowledgeDeleteByUrlResult>;
+  reparseByUrl(url: string): Promise<PreviewResult>;
+  preview(body: KnowledgeCaptureRequestBody): Promise<PreviewResult>;
+  save(body: KnowledgeCaptureSaveRequestBody): Promise<PreviewResult>;
   discoverBatch(pageUrl: string, candidates: BatchCandidate[]): Promise<BatchDiscoverResult>;
   createBatchJob(body: {
     sourcePageUrl: string;
@@ -113,21 +112,14 @@ export interface KnowledgeApiClient {
   collection(collectionId: string): Promise<CollectionDetail>;
   deleteCollection(collectionId: string): Promise<{ deleted: boolean; collectionId: string }>;
   collectionNavigation(collectionId: string, itemId: string): Promise<{
-    previous: { docId: string; itemId?: string; title?: string; normalizedUrl: string } | null;
-    next: { docId: string; itemId?: string; title?: string; normalizedUrl: string } | null;
+    previous: { itemId: string; title?: string; normalizedUrl?: string } | null;
+    next: { itemId: string; title?: string; normalizedUrl?: string } | null;
   }>;
-  collectionsByDoc(docId: string): Promise<{ collections: Array<{ collectionId: string; title: string }> }>;
-  usedCollectionDocIds(): Promise<{ docIds: string[] }>;
-  annotations(docId: string): Promise<AnnotationListResult>;
   itemAnnotations(itemId: string): Promise<AnnotationListResult>;
-  saveAnnotation(docId: string, annotation: Annotation): Promise<AnnotationSaveResult>;
   saveItemAnnotation(itemId: string, annotation: Annotation): Promise<AnnotationSaveResult>;
-  deleteAnnotation(docId: string, annotationId: string): Promise<AnnotationDeleteResult>;
   deleteItemAnnotation(itemId: string, annotationId: string): Promise<AnnotationDeleteResult>;
-  deleteAnnotationsForDoc(docId: string): Promise<AnnotationDeleteAllResult>;
-  listAnnotationDocs(): Promise<AnnotationDocListResult>;
-  generateAIAnnotations(docId: string, body: AIAnnotationGenerateRequest, signal?: AbortSignal): Promise<AIAnnotationGenerateResult>;
-  createAITask(docId: string, body: AIAnnotationGenerateRequest): Promise<TaskState>;
+  deleteAnnotationsForItem(itemId: string): Promise<AnnotationDeleteAllResult>;
+  listAnnotationItems(): Promise<AnnotationItemListResult>;
   createItemAITask(itemId: string, body: AIAnnotationGenerateRequest): Promise<TaskState>;
   getTask(taskId: string): Promise<TaskState>;
   cancelTask(taskId: string): Promise<{ cancelled: boolean; task_id: string; completed: number }>;
@@ -171,7 +163,7 @@ export function createKnowledgeApiClient(settings: ExtensionSettings): Knowledge
       },
       options
     ),
-    status: (url) => request<ClipStatusResult>(
+    status: (url) => request<KnowledgeItemStatusResult>(
       baseUrl,
       settings.token,
       "GET",
@@ -280,7 +272,7 @@ export function createKnowledgeApiClient(settings: ExtensionSettings): Knowledge
       const blob = await requestBlob(baseUrl, settings.token, `/api/assets/${encodeURIComponent(assetId)}`, options);
       return URL.createObjectURL(blob);
     },
-    deleteClip: (url, mode = "remove") => request<ClipDeleteResult>(
+    deleteByUrl: (url, mode = "remove") => request<KnowledgeDeleteByUrlResult>(
       baseUrl,
       settings.token,
       "GET",
@@ -299,7 +291,7 @@ export function createKnowledgeApiClient(settings: ExtensionSettings): Knowledge
       return {
         ...before,
         deleted: result.deleted,
-        mode: mode as ClipDeleteMode,
+        mode,
         previousState: result.previousState,
         currentState: result.currentState,
         state: result.currentState,
@@ -308,7 +300,7 @@ export function createKnowledgeApiClient(settings: ExtensionSettings): Knowledge
         deletedFiles: result.deletedFiles
       };
     }),
-    reparse: (url) => request<PreviewResult>(baseUrl, settings.token, "POST", "/api/ingest/reparse", { url }, options),
+    reparseByUrl: (url) => request<PreviewResult>(baseUrl, settings.token, "POST", "/api/ingest/reparse", { url }, options),
     preview: (body) => request<PreviewResult>(baseUrl, settings.token, "POST", "/api/ingest/preview", body, options),
     save: (body) => request<PreviewResult>(baseUrl, settings.token, "POST", "/api/ingest/save", {
       ...body,
@@ -403,37 +395,13 @@ export function createKnowledgeApiClient(settings: ExtensionSettings): Knowledge
       options
     ),
     collectionNavigation: (collectionId, itemId) => request<{
-      previous: { docId: string; title?: string; normalizedUrl: string } | null;
-      next: { docId: string; title?: string; normalizedUrl: string } | null;
+      previous: { itemId: string; title?: string; normalizedUrl?: string } | null;
+      next: { itemId: string; title?: string; normalizedUrl?: string } | null;
     }>(
       baseUrl,
       settings.token,
       "GET",
       `/api/collections/${encodeURIComponent(collectionId)}/navigation?itemId=${encodeURIComponent(itemId)}`,
-      undefined,
-      options
-    ),
-    collectionsByDoc: (docId) => request<{ collections: Array<{ collectionId: string; title: string }> }>(
-      baseUrl,
-      settings.token,
-      "GET",
-      `/api/collections/by-doc?docId=${encodeURIComponent(docId)}`,
-      undefined,
-      options
-    ),
-    usedCollectionDocIds: () => request<{ docIds: string[] }>(
-      baseUrl,
-      settings.token,
-      "GET",
-      "/api/collections/used-doc-ids",
-      undefined,
-      options
-    ),
-    annotations: (docId) => request<AnnotationListResult>(
-      baseUrl,
-      settings.token,
-      "GET",
-      `/api/documents/${encodeURIComponent(docId)}/annotations`,
       undefined,
       options
     ),
@@ -445,28 +413,12 @@ export function createKnowledgeApiClient(settings: ExtensionSettings): Knowledge
       undefined,
       options
     ),
-    saveAnnotation: (docId, annotation) => request<AnnotationSaveResult>(
-      baseUrl,
-      settings.token,
-      "POST",
-      `/api/documents/${encodeURIComponent(docId)}/annotations`,
-      annotation,
-      options
-    ),
     saveItemAnnotation: (itemId, annotation) => request<AnnotationSaveResult>(
       baseUrl,
       settings.token,
       "POST",
       `/api/items/${encodeURIComponent(itemId)}/annotations`,
       annotation,
-      options
-    ),
-    deleteAnnotation: (docId, annotationId) => request<AnnotationDeleteResult>(
-      baseUrl,
-      settings.token,
-      "DELETE",
-      `/api/documents/${encodeURIComponent(docId)}/annotations/${encodeURIComponent(annotationId)}`,
-      undefined,
       options
     ),
     deleteItemAnnotation: (itemId, annotationId) => request<AnnotationDeleteResult>(
@@ -477,37 +429,21 @@ export function createKnowledgeApiClient(settings: ExtensionSettings): Knowledge
       undefined,
       options
     ),
-    deleteAnnotationsForDoc: (docId) => request<AnnotationDeleteAllResult>(
+    deleteAnnotationsForItem: (itemId) => request<AnnotationDeleteAllResult>(
       baseUrl,
       settings.token,
       "DELETE",
-      `/api/documents/${encodeURIComponent(docId)}/annotations`,
+      `/api/items/${encodeURIComponent(itemId)}/annotations`,
       undefined,
       options
     ),
-    listAnnotationDocs: () => request<AnnotationDocListResult>(
+    listAnnotationItems: () => request<AnnotationItemListResult>(
       baseUrl,
       settings.token,
       "GET",
       "/api/annotations",
       undefined,
       options
-    ),
-    generateAIAnnotations: (docId, body, signal) => request<AIAnnotationGenerateResult>(
-      baseUrl,
-      settings.token,
-      "POST",
-      `/api/documents/${encodeURIComponent(docId)}/ai-annotations`,
-      body,
-      { timeoutMs: 300000, signal }
-    ),
-    createAITask: (docId, body) => request<TaskState>(
-      baseUrl,
-      settings.token,
-      "POST",
-      `/api/documents/${encodeURIComponent(docId)}/ai-annotations`,
-      body,
-      { timeoutMs: 30000 }
     ),
     createItemAITask: (itemId, body) => request<TaskState>(
       baseUrl,

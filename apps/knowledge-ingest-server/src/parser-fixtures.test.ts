@@ -1,9 +1,9 @@
 import { readFile, readdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ClipInput, KnowledgeDocument, ParserCandidatePreview } from "@uknowledge/knowledge-schema";
+import type { KnowledgeCaptureInput, KnowledgeDocument, ParserCandidatePreview } from "@uknowledge/knowledge-schema";
 import { describe, expect, it } from "vitest";
-import { resolveClipInput } from "./input.js";
+import { resolveKnowledgeCaptureInput } from "./input.js";
 import { documentToMarkdown } from "./markdown.js";
 import { parsePage } from "./parser.js";
 import type { ServerConfig } from "./config.js";
@@ -92,7 +92,7 @@ describe("parser fixture corpus", async () => {
       const html = await readFile(paths.html, "utf8");
       const snapshot = await readJson<ParserFixtureSnapshot>(paths.snapshot);
       const input = fixtureInput(fixtureCase, snapshot, html);
-      const resolved = await resolveClipInput(input, testConfig);
+      const resolved = await resolveKnowledgeCaptureInput(input, testConfig);
       const parsed = await parsePage(resolved, {
         rawdocId: stableRawdocId(fixtureCase.id)
       });
@@ -124,7 +124,7 @@ async function loadCases(): Promise<ParserFixtureCase[]> {
   return cases.sort((left, right) => left.id.localeCompare(right.id));
 }
 
-function fixtureInput(fixtureCase: ParserFixtureCase, snapshot: ParserFixtureSnapshot, html: string): ClipInput {
+function fixtureInput(fixtureCase: ParserFixtureCase, snapshot: ParserFixtureSnapshot, html: string): KnowledgeCaptureInput {
   return {
     inputMode: "browser_html",
     snapshot: {

@@ -9,13 +9,13 @@ import {
   BatchDiscoverResult,
   BatchJobResult,
   CandidatePreview,
-  ClipDeleteMode,
-  ClipRequestBody,
-  ClipSaveRequestBody,
   CollectionSummary,
   ExtensionSettings,
   InputMode,
   KnowledgeItem,
+  KnowledgeCaptureRequestBody,
+  KnowledgeCaptureSaveRequestBody,
+  KnowledgeItemDeleteMode,
   PanelView,
   PageSnapshot,
   PreviewResult
@@ -389,7 +389,7 @@ async function copyMarkdown(): Promise<void> {
   setStatus("Copied", "Markdown copied to your clipboard.");
 }
 
-async function deleteCurrentClip(mode: ClipDeleteMode): Promise<void> {
+async function deleteCurrentClip(mode: KnowledgeItemDeleteMode): Promise<void> {
   await refreshActiveTab();
   if (!activeTab) {
     return;
@@ -419,7 +419,7 @@ async function deleteCurrentClip(mode: ClipDeleteMode): Promise<void> {
       : "This removes both the capture and the parsed result."
   );
   try {
-    const deleted = await createKnowledgeApiClient(settings).deleteClip(activeTab.url, mode);
+    const deleted = await createKnowledgeApiClient(settings).deleteByUrl(activeTab.url, mode);
     lastPreview = lastPreview
       ? { ...lastPreview, status: clipStatusFromDelete(deleted) }
       : undefined;
@@ -440,7 +440,7 @@ async function deleteCurrentClip(mode: ClipDeleteMode): Promise<void> {
   }
 }
 
-async function buildRequestBody(): Promise<ClipRequestBody> {
+async function buildRequestBody(): Promise<KnowledgeCaptureRequestBody> {
   if (!activeTab) {
     throw new Error("No active tab");
   }
@@ -470,7 +470,7 @@ async function buildRequestBody(): Promise<ClipRequestBody> {
   };
 }
 
-async function buildSaveRequestBody(): Promise<ClipSaveRequestBody> {
+async function buildSaveRequestBody(): Promise<KnowledgeCaptureSaveRequestBody> {
   const body = await buildRequestBody();
   return activeCandidateId ? { ...body, candidateId: activeCandidateId } : body;
 }
@@ -614,19 +614,16 @@ async function refreshServerStatus(): Promise<void> {
 
 async function loadSavedClips(): Promise<void> {
   try {
-    const [clipsResult, collectionsResult, usedDocIdsResult] = await Promise.all([
+    const [clipsResult, collectionsResult] = await Promise.all([
       createKnowledgeApiClient(settings).list(settings.savedListLimit),
-      createKnowledgeApiClient(settings).listCollections(),
-      createKnowledgeApiClient(settings).usedCollectionDocIds()
+      createKnowledgeApiClient(settings).listCollections()
     ]);
     savedClips = clipsResult.items.filter(
       (clip) => clip.sourceType !== "epub" && clip.sourceType !== "pdf"
     );
 
-    const collectionDocIds = new Set(usedDocIdsResult.docIds);
     const standaloneClips = savedClips.filter((clip) =>
-      !(clip.docId && collectionDocIds.has(clip.docId)) &&
-      !(clip.itemId && collectionDocIds.has(clip.itemId))
+      (clip.collectionIds?.length ?? 0) === 0
     );
 
     if (activeView === "saved") {
@@ -660,11 +657,9 @@ function renderSavedList(collections: CollectionSummary[], standaloneClips: Item
     main.addEventListener("click", async () => {
       try {
         const detail = await createKnowledgeApiClient(settings).collection(col.collectionId);
-        const firstWithDoc = detail.items.find((i) => i.docId);
-        if (firstWithDoc?.itemId) {
-          void openKnowledgePage(`reader.html?itemId=${encodeURIComponent(firstWithDoc.itemId)}`);
-        } else if (firstWithDoc?.docId) {
-          void openKnowledgePage(`reader.html?docId=${encodeURIComponent(firstWithDoc.docId)}`);
+        const firstWithReaderItem = detail.items.find((i) => i.itemId);
+        if (firstWithReaderItem?.itemId) {
+          void openKnowledgePage(`reader.html?itemId=${encodeURIComponent(firstWithReaderItem.itemId)}`);
         } else {
           void openKnowledgePage("items.html");
         }
@@ -700,11 +695,9 @@ function renderSavedList(collections: CollectionSummary[], standaloneClips: Item
       event.stopPropagation();
       try {
         const detail = await createKnowledgeApiClient(settings).collection(col.collectionId);
-        const firstWithDoc = detail.items.find((i) => i.docId);
-        if (firstWithDoc?.itemId) {
-          void openKnowledgePage(`reader.html?itemId=${encodeURIComponent(firstWithDoc.itemId)}`);
-        } else if (firstWithDoc?.docId) {
-          void openKnowledgePage(`reader.html?docId=${encodeURIComponent(firstWithDoc.docId)}`);
+        const firstWithReaderItem = detail.items.find((i) => i.itemId);
+        if (firstWithReaderItem?.itemId) {
+          void openKnowledgePage(`reader.html?itemId=${encodeURIComponent(firstWithReaderItem.itemId)}`);
         }
       } catch {
         // silent
@@ -746,7 +739,7 @@ function renderSavedList(collections: CollectionSummary[], standaloneClips: Item
 
     const details = document.createElement("div");
     details.className = "saved-details";
-    details.textContent = [clip.rawdocId, clip.docId].filter(Boolean).join(" | ");
+    details.textContent = [clip.activeRawdocId, clip.activeDocId].filter(Boolean).join(" | ");
 
     titleRow.append(title);
     main.append(titleRow, url, meta);
@@ -755,7 +748,7 @@ function renderSavedList(collections: CollectionSummary[], standaloneClips: Item
     }
     item.append(main);
 
-    if (clip.docId) {
+    if (clip.itemId && clip.activeDocId) {
       const openReaderButton = document.createElement("button");
       openReaderButton.className = "saved-open-reader";
       openReaderButton.type = "button";
@@ -763,9 +756,7 @@ function renderSavedList(collections: CollectionSummary[], standaloneClips: Item
       openReaderButton.title = "Open in Reader";
       openReaderButton.addEventListener("click", (event) => {
         event.stopPropagation();
-        const navId = clip.itemId || clip.docId;
-        const paramName = clip.itemId ? "itemId" : "docId";
-        void openKnowledgePage(`reader.html?${paramName}=${encodeURIComponent(navId!)}`);
+        void openKnowledgePage(`reader.html?itemId=${encodeURIComponent(clip.itemId)}`);
       });
       item.append(openReaderButton);
     }
@@ -1262,7 +1253,7 @@ function summarizeSave(
   return `Saved doc ${nextDoc}.`;
 }
 
-function summarizeDelete(mode: ClipDeleteMode, deleted: boolean): string {
+function summarizeDelete(mode: KnowledgeItemDeleteMode, deleted: boolean): string {
   if (!deleted) {
     return "Nothing changed.";
   }

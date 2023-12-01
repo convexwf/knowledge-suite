@@ -1,5 +1,5 @@
 import {
-  ClipInput,
+  KnowledgeCaptureInput,
   isFileUrl,
   normalizeUrlForKnowledge,
   nowIso,
@@ -9,7 +9,7 @@ import { ServerConfig } from "./config.js";
 import { resolveCanonicalUrl, resolveFetchUrl } from "./parser/adapters/index.js";
 
 export interface ResolvedInput {
-  inputMode: ClipInput["inputMode"];
+  inputMode: KnowledgeCaptureInput["inputMode"];
   url: string;
   originalUrl: string;
   canonicalUrl?: string;
@@ -25,7 +25,7 @@ export interface ResolvedInput {
   selectionHtml?: string;
 }
 
-export async function resolveClipInput(input: ClipInput, config: ServerConfig): Promise<ResolvedInput> {
+export async function resolveKnowledgeCaptureInput(input: KnowledgeCaptureInput, config: ServerConfig): Promise<ResolvedInput> {
   if (input.inputMode === "browser_html") {
     return fromSnapshot(input.snapshot, config);
   }
