@@ -89,22 +89,22 @@ describe("KnowledgeStore", () => {
 
   it("remove deletes only derived artifacts and keeps the raw capture for reparse", async () => {
     const store = new KnowledgeStore(storeRoot);
-    const clip = fixture("33333333-3333-4333-8333-333333333333", "cccccccc-cccc-4ccc-8ccc-cccccccccccc", "Captured Title");
+    const savedItem = fixture("33333333-3333-4333-8333-333333333333", "cccccccc-cccc-4ccc-8ccc-cccccccccccc", "Captured Title");
 
-    const paths = await store.save(clip);
+    const paths = await store.save(savedItem);
     expect(tableCount(storeRoot, "items")).toBe(1);
     expect(tableCount(storeRoot, "documents")).toBe(1);
     expect(tableCount(storeRoot, "rawdocs")).toBe(1);
     expect(tableCount(storeRoot, "chunks")).toBeGreaterThan(0);
 
-    const result = await store.deleteByUrl(clip.normalizedUrl, "remove");
+    const result = await store.deleteByUrl(savedItem.normalizedUrl, "remove");
 
     expect(result).toMatchObject({
       deleted: true,
       mode: "remove",
       previousState: "parsed",
       currentState: "captured",
-      removedDocId: clip.document.doc_id
+      removedDocId: savedItem.document.doc_id
     });
     expect(result.deletedFiles).toEqual(
       expect.arrayContaining([paths.documentPath, paths.markdownPath])
@@ -118,38 +118,38 @@ describe("KnowledgeStore", () => {
     await expect(access(join(storeRoot, paths.rawHtmlPath))).resolves.toBeUndefined();
     await expect(access(join(storeRoot, paths.rawdocPath))).resolves.toBeUndefined();
 
-    const status = await store.status(clip.normalizedUrl);
+    const status = await store.status(savedItem.normalizedUrl);
     expect(status).toMatchObject({
       itemId: expect.stringMatching(/^url:sha256:/),
       state: "captured",
-      activeRawdocId: clip.rawdoc.rawdoc_id
+      activeRawdocId: savedItem.rawdoc.rawdoc_id
     });
     expect(status?.activeDocId).toBeUndefined();
     expect(status?.parsedAt).toBeUndefined();
 
-    const capture = await store.loadCaptureByUrl(clip.normalizedUrl);
+    const capture = await store.loadCaptureByUrl(savedItem.normalizedUrl);
     expect(capture.html).toContain("Captured Title");
-    expect(capture.rawdoc.rawdoc_id).toBe(clip.rawdoc.rawdoc_id);
+    expect(capture.rawdoc.rawdoc_id).toBe(savedItem.rawdoc.rawdoc_id);
 
     store.close();
   });
 
   it("purge deletes item rows, capture rows, and all capture files", async () => {
     const store = new KnowledgeStore(storeRoot);
-    const clip = fixture("44444444-4444-4444-8444-444444444444", "dddddddd-dddd-4ddd-8ddd-dddddddddddd", "Purge Title");
-    const paths = await store.save(clip);
+    const savedItem = fixture("44444444-4444-4444-8444-444444444444", "dddddddd-dddd-4ddd-8ddd-dddddddddddd", "Purge Title");
+    const paths = await store.save(savedItem);
 
-    const removed = await store.deleteByUrl(clip.normalizedUrl, "remove");
+    const removed = await store.deleteByUrl(savedItem.normalizedUrl, "remove");
     expect(removed.currentState).toBe("captured");
 
-    const purged = await store.deleteByUrl(clip.normalizedUrl, "purge");
+    const purged = await store.deleteByUrl(savedItem.normalizedUrl, "purge");
 
     expect(purged).toMatchObject({
       deleted: true,
       mode: "purge",
       previousState: "captured",
       currentState: "empty",
-      removedRawdocId: clip.rawdoc.rawdoc_id
+      removedRawdocId: savedItem.rawdoc.rawdoc_id
     });
     expect(purged.deletedFiles).toEqual([
       paths.rawHtmlPath,
@@ -247,8 +247,8 @@ describe("KnowledgeStore", () => {
 
   it("scans and clears the whole local store", async () => {
     const store = new KnowledgeStore(storeRoot);
-    const clip = fixture("77777777-7777-4777-8777-777777777777", "77777777-aaaa-4aaa-8aaa-777777777777", "Clear Title");
-    const paths = await store.save(clip);
+    const savedItem = fixture("77777777-7777-4777-8777-777777777777", "77777777-aaaa-4aaa-8aaa-777777777777", "Clear Title");
+    const paths = await store.save(savedItem);
 
     const scan = await store.scanMaintenance();
     expect(scan.totals.rows).toBeGreaterThanOrEqual(4);
@@ -276,15 +276,15 @@ describe("KnowledgeStore", () => {
     await expect(access(join(storeRoot, paths.rawdocPath))).rejects.toThrow();
     await expect(access(join(storeRoot, paths.documentPath))).rejects.toThrow();
     await expect(access(join(storeRoot, paths.markdownPath))).rejects.toThrow();
-    await expect(store.status(clip.normalizedUrl)).resolves.toBeNull();
+    await expect(store.status(savedItem.normalizedUrl)).resolves.toBeNull();
 
     store.close();
   });
 
   it("clears parsed results while preserving raw captures", async () => {
     const store = new KnowledgeStore(storeRoot);
-    const clip = fixture("12121212-1212-4212-8212-121212121212", "12121212-aaaa-4aaa-8aaa-121212121212", "Parsed Clear Title");
-    const paths = await store.save(clip);
+    const savedItem = fixture("12121212-1212-4212-8212-121212121212", "12121212-aaaa-4aaa-8aaa-121212121212", "Parsed Clear Title");
+    const paths = await store.save(savedItem);
 
     const scan = await store.scanMaintenance();
     expect(scan.parsedResults).toMatchObject({
@@ -335,9 +335,9 @@ describe("KnowledgeStore", () => {
     await expect(access(join(storeRoot, paths.rawdocPath))).resolves.toBeUndefined();
     await expect(access(join(storeRoot, paths.documentPath))).rejects.toThrow();
     await expect(access(join(storeRoot, paths.markdownPath))).rejects.toThrow();
-    await expect(store.status(clip.normalizedUrl)).resolves.toMatchObject({
+    await expect(store.status(savedItem.normalizedUrl)).resolves.toMatchObject({
       state: "captured",
-      activeRawdocId: clip.rawdoc.rawdoc_id
+      activeRawdocId: savedItem.rawdoc.rawdoc_id
     });
 
     store.close();
@@ -354,15 +354,15 @@ describe("KnowledgeStore", () => {
 
   it("builds searchable chunks and returns section-level search results", async () => {
     const store = new KnowledgeStore(storeRoot);
-    const clip = fixture("55555555-5555-4555-8555-555555555555", "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", "Retrieval Title");
+    const savedItem = fixture("55555555-5555-4555-8555-555555555555", "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", "Retrieval Title");
 
-    await store.save(clip);
+    await store.save(savedItem);
 
     const results = await store.search("retrieval systems", { limit: 5, trace: true });
     expect(results).toHaveLength(1);
     expect(results[0]).toMatchObject({
-      docId: clip.document.doc_id,
-      rawdocId: clip.rawdoc.rawdoc_id,
+      docId: savedItem.document.doc_id,
+      rawdocId: savedItem.rawdoc.rawdoc_id,
       title: "Retrieval Title",
       sourceUrl: "https://example.com/article",
       normalizedUrl: "https://example.com/article",
@@ -423,9 +423,9 @@ describe("KnowledgeStore", () => {
 
   it("packs ranked chunks into citation-ready context", async () => {
     const store = new KnowledgeStore(storeRoot);
-    const clip = fixture("12121212-1212-4121-8121-121212121212", "abababab-abab-4bab-8bab-abababababab", "Context Title");
+    const savedItem = fixture("12121212-1212-4121-8121-121212121212", "abababab-abab-4bab-8bab-abababababab", "Context Title");
 
-    await store.save(clip);
+    await store.save(savedItem);
 
     const pack = await store.retrieveContext("retrieval systems", { limit: 3, maxChars: 2000, trace: true });
     expect(pack).toMatchObject({
@@ -446,8 +446,8 @@ describe("KnowledgeStore", () => {
       citationId: expect.any(String),
       marker: "[1]",
       rank: 1,
-      docId: clip.document.doc_id,
-      rawdocId: clip.rawdoc.rawdoc_id,
+      docId: savedItem.document.doc_id,
+      rawdocId: savedItem.rawdoc.rawdoc_id,
       sourceUrl: "https://example.com/article",
       normalizedUrl: "https://example.com/article",
       truncated: false,
@@ -463,14 +463,14 @@ describe("KnowledgeStore", () => {
 
   it("applies context character budget with truncation", async () => {
     const store = new KnowledgeStore(storeRoot);
-    const clip = fixture(
+    const savedItem = fixture(
       "34343434-3434-4434-8434-343434343434",
       "cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd",
       "Long Context",
       "Long Context",
       "https://example.com/long-context"
     );
-    clip.document.sections = [
+    savedItem.document.sections = [
       { section_id: "heading-1", type: "heading", level: 1, content: "Long Retrieval" },
       {
         section_id: "para-1",
@@ -479,7 +479,7 @@ describe("KnowledgeStore", () => {
       }
     ];
 
-    await store.save(clip);
+    await store.save(savedItem);
 
     const pack = await store.retrieveContext("retrieval citations", { limit: 1, maxChars: 500 });
     expect(pack.budget.maxChars).toBe(500);

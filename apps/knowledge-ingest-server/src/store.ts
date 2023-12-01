@@ -146,7 +146,8 @@ interface SearchChunkRow {
   rank?: number;
 }
 
-// Keep batch rows for now (will be replaced by refresh_* tables later)
+// Transitional batch queue rows. Keep them until refresh_* storage replaces
+// the current batch execution model.
 interface BatchJobRow {
   job_id: string;
   collection_id: string | null;
@@ -460,7 +461,7 @@ export class KnowledgeStore {
         UNIQUE(collection_item_id, member_item_id)
       );
 
-      -- Legacy tables kept for batch (will be replaced by refresh_*)
+      -- Transitional queue tables kept until refresh_* storage lands
 
       CREATE TABLE IF NOT EXISTS batch_jobs (
         job_id TEXT PRIMARY KEY,
@@ -1681,7 +1682,7 @@ export class KnowledgeStore {
     return next;
   }
 
-  // ── batch (legacy, will be replaced by refresh_* ) ────────────────────
+  // ── batch queue (transitional, pending refresh_* storage) ─────────────
 
   async recoverStaleJobs(): Promise<number> {
     await this.ensure();
