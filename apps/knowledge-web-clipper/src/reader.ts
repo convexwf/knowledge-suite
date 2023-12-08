@@ -602,7 +602,6 @@ function appendFormattedText(parent: HTMLElement, text: string): void {
     if (typeof segment === "string") {
       appendAutolinks(parent, segment);
     } else {
-      appendFormattedText(segment.element, segment.content);
       parent.append(segment.element);
     }
   }
