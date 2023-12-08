@@ -161,7 +161,32 @@ function estimateTokens(text: string): number {
 }
 
 function normalizeText(value: string): string {
-  return value.replace(/\r\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+  return sanitizeText(value)
+    .replace(/\r\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+/**
+ * Remove or replace invisible/control/formatting characters that
+ * JavaScript \s does not cover, including LS/PS/ZWS/Bidi controls.
+ *
+ * @see doc-rules/doc/architecture/knowledge-suite/parser/knowledge-text-sanitization.md
+ */
+function sanitizeText(value: string): string {
+  return value
+    // Line/Paragraph separators → space (U+2028/U+2029 not matched by \s)
+    .replace(/[\u2028\u2029]/g, " ")
+    // Zero-width characters → remove (ZWSP/ZWNJ/ZWJ/Word Joiner/BOM)
+    .replace(/[\u200B-\u200D\u2060\uFEFF]/g, "")
+    // Narrow no-break space → space
+    .replace(/\u202F/g, " ")
+    // Ideographic space (full-width) → space
+    .replace(/\u3000/g, " ")
+    // Soft hyphen → remove
+    .replace(/\u00AD/g, "")
+    // Bidi control characters → remove (safety-critical)
+    .replace(/[\u200E\u200F\u202A-\u202E\u2066-\u2069]/g, "");
 }
 
 function sha256(content: string): string {
