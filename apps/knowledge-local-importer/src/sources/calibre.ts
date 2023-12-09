@@ -20,6 +20,7 @@ export async function scanCalibre(root: string): Promise<SourceScan> {
     const opf = files.find((entry) => entry.name.toLowerCase() === "metadata.opf");
     const cover = files.find((entry) => COVER_PATTERN.test(entry.name)) ??
       files.find((entry) => IMAGE_PATTERN.test(entry.name));
+    const tocJson = files.find((entry) => entry.name.toLowerCase() === "toc.json");
 
     if (epubPaths.length > 0 && opf) {
       candidates.push({
@@ -27,7 +28,8 @@ export async function scanCalibre(root: string): Promise<SourceScan> {
         directoryPath,
         epubPaths,
         opfPath: join(directoryPath, opf.name),
-        coverPath: cover ? join(directoryPath, cover.name) : undefined
+        coverPath: cover ? join(directoryPath, cover.name) : undefined,
+        tocPath: tocJson ? join(directoryPath, tocJson.name) : undefined
       });
       return;
     }

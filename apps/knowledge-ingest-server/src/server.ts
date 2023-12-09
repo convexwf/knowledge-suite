@@ -21,7 +21,7 @@ import {
 import { createAIProvider } from "./ai-annotation/provider.js";
 import { taskManager } from "./ai-annotation/task.js";
 import { loadConfig, ServerConfig } from "./config.js";
-import { parseEpub, type CalibreMetadata, type PandocRunner } from "./epub.js";
+import { parseEpub, type CalibreMetadata, type PandocRunner, type TocEntry } from "./epub.js";
 import { ResolvedInput, resolveKnowledgeCaptureInput } from "./input.js";
 import { documentToMarkdown } from "./markdown.js";
 import { parsePage, type ParsedPage } from "./parser.js";
@@ -624,7 +624,8 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
         rawdocId: capture.rawdoc.rawdoc_id,
         sourceUri: capture.rawdoc.source_uri,
         calibreMetadata: calibreMetadataFromRawdoc(capture.rawdoc),
-        pandocRunner: config.epubPandocRunner
+        pandocRunner: config.epubPandocRunner,
+        toc: Array.isArray(capture.toc) ? capture.toc as TocEntry[] : undefined
       });
       try {
         if (oldDocId) {

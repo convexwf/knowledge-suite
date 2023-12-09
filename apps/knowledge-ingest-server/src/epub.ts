@@ -53,6 +53,12 @@ export interface EpubMetadataSupplement {
   metadata?: Record<string, unknown>;
 }
 
+export interface TocEntry {
+  level: number;
+  title: string;
+  src?: string;
+}
+
 export interface ParseEpubOptions {
   rawdocId?: string;
   docId?: string;
@@ -66,6 +72,7 @@ export interface ParseEpubOptions {
     filename?: string;
   };
   pandocRunner?: PandocRunner;
+  toc?: TocEntry[];
 }
 
 export type PandocRunner = (params: {
@@ -108,6 +115,9 @@ export async function parseEpub(bytes: Buffer, options: ParseEpubOptions = {}): 
   const language = normalizeLanguage(firstNonEmpty(calibre?.language, metaString(ast.meta?.lang), metaString(ast.meta?.language)));
   const tags = unique([...(options.tags ?? []), ...(calibre?.subjects ?? [])]);
   const sections = pandocBlocksToSections(ast.blocks ?? [], tempDir);
+  if (options.toc?.length) {
+    applyTocLevels(sections, options.toc);
+  }
   if (options.cover?.bytes.length) {
     const coverPath = join(tempDir, `calibre-cover.${sanitizeExtension(extname(options.cover.filename ?? "")) || "jpg"}`);
     await writeFile(coverPath, options.cover.bytes);
@@ -745,6 +755,31 @@ function sanitizeExtension(input: string): string {
 
 function stderrWarnings(stderr: string): string[] {
   return stderr.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+}
+
+function applyTocLevels(sections: DocumentSection[], toc: TocEntry[]): void {
+  if (toc.length === 0) return;
+
+  const headings = sections.filter((s) => s.type === "heading" && s.content);
+  let tocIdx = 0;
+
+  for (const heading of headings) {
+    if (tocIdx >= toc.length) break;
+    const headingText = heading.content!.trim().toLowerCase();
+    const tocText = toc[tocIdx].title.trim().toLowerCase();
+
+    if (headingText === tocText || headingText.includes(tocText) || tocText.includes(headingText)) {
+      heading.level = Math.max(1, Math.min(toc[tocIdx].level, 6));
+      tocIdx++;
+    } else if (tocIdx + 1 < toc.length) {
+      const nextTocText = toc[tocIdx + 1].title.trim().toLowerCase();
+      if (headingText === nextTocText || headingText.includes(nextTocText) || nextTocText.includes(headingText)) {
+        tocIdx++;
+        heading.level = Math.max(1, Math.min(toc[tocIdx].level, 6));
+        tocIdx++;
+      }
+    }
+  }
 }
 
 function firstNonEmpty(...values: Array<string | undefined>): string {

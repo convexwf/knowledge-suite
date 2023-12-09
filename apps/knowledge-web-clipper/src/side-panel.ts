@@ -385,12 +385,13 @@ function pollBatchJob(jobId: string): void {
 }
 
 async function copyMarkdown(): Promise<void> {
-  const markdown = lastPreview ? activeCandidate(lastPreview)?.markdown ?? lastPreview.markdown : "";
-  if (!markdown) {
+  const raw = lastPreview ? activeCandidate(lastPreview)?.markdown ?? lastPreview.markdown : "";
+  if (!raw) {
     setStatus("Nothing to copy", "Preview or save a page first.");
     return;
   }
 
+  const markdown = raw.replace(/^<!--\s*section_id:\S+\s*-->\n/gm, "");
   await navigator.clipboard.writeText(markdown);
   setStatus("Copied", "Markdown copied to your clipboard.");
 }

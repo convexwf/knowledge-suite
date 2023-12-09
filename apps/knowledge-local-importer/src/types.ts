@@ -20,6 +20,7 @@ export interface CalibreBookCandidate {
   epubPaths: string[];
   opfPath: string;
   coverPath?: string;
+  tocPath?: string;
 }
 
 export interface HtmlFileCandidate {

@@ -1250,7 +1250,7 @@ export class KnowledgeStore {
     return { item: this.buildKnowledgeItem(row), html, rawdoc, itemId: row.item_id };
   }
 
-  async loadRawContentForItem(itemId: string): Promise<{ item: KnowledgeItem; html: string; rawdoc: RawDoc; content: string; contentExt: string }> {
+  async loadRawContentForItem(itemId: string): Promise<{ item: KnowledgeItem; html: string; rawdoc: RawDoc; content: string; contentExt: string; toc?: unknown }> {
     await this.ensure();
     const row = this.database!.prepare("SELECT * FROM items WHERE item_id = ?").get(itemId) as unknown as ItemRow | undefined;
     if (!row || !row.active_capture_id) {
@@ -1258,6 +1258,14 @@ export class KnowledgeStore {
     }
     const captureId = row.active_capture_id;
     const rawdoc = JSON.parse(await this.readText(`rawdocs/${captureId}.json`)) as RawDoc;
+
+    let toc: unknown;
+    try {
+      const tocRaw = await this.readText(`rawdocs/${captureId}.toc.json`);
+      toc = JSON.parse(tocRaw);
+    } catch {
+      // toc.json does not exist, skip
+    }
 
     // EPUB/PDF: read raw binary from .epub/.pdf, return as Buffer for reparse
     if (rawdoc.source_type === "epub" || rawdoc.source_type === "pdf") {
@@ -1268,12 +1276,13 @@ export class KnowledgeStore {
         html: "",
         rawdoc,
         content: bin.toString("base64"),
-        contentExt: ext
+        contentExt: ext,
+        toc
       };
     }
 
     const html = await this.readText(`rawdocs/${captureId}.html`);
-    return { item: this.buildKnowledgeItem(row) as KnowledgeItem, html, rawdoc, content: html, contentExt: "html" };
+    return { item: this.buildKnowledgeItem(row) as KnowledgeItem, html, rawdoc, content: html, contentExt: "html", toc };
   }
 
   // ── collection membership ──────────────────────────────────────────────

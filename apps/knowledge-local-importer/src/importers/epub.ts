@@ -3,7 +3,8 @@ import { pathToFileURL } from "node:url";
 import {
   documentToMarkdown,
   KnowledgeStore,
-  parseEpub
+  parseEpub,
+  type TocEntry
 } from "@uknowledge/knowledge-ingest-server/local-import-api.js";
 import { CalibreBookCandidate, ImportOptions, ReportItem } from "../types.js";
 import { sha256Buffer } from "../hash.js";
@@ -55,11 +56,20 @@ export async function importCalibreBook(
   const cover = candidate.coverPath
     ? { bytes: await readFile(candidate.coverPath), filename: candidate.coverPath.split(/[\\/]/).pop() }
     : undefined;
+  let toc: TocEntry[] | undefined;
+  if (candidate.tocPath) {
+    try {
+      toc = JSON.parse(await readFile(candidate.tocPath, "utf8")) as TocEntry[];
+    } catch {
+      // ignore malformed toc.json
+    }
+  }
   const parsed = await parseEpub(epubBytes, {
     sourceUri: pathToFileURL(epubPath).href,
     tags: options.tags,
     metadataOpf,
-    cover
+    cover,
+    toc
   });
 
   try {
