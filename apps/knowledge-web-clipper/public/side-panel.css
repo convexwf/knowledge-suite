@@ -387,6 +387,48 @@ button[data-active="true"] {
   padding: 14px;
 }
 
+/* Mode toggle: Navigation | List */
+.batch-mode-toggle {
+  display: flex;
+  gap: 0;
+  margin-bottom: 14px;
+  border: 1px solid #dde3ea;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.batch-mode-btn {
+  flex: 1;
+  padding: 6px 12px;
+  border: none;
+  background: #f4f6f9;
+  color: #4b5a6a;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 120ms, color 120ms;
+}
+
+.batch-mode-btn:first-child {
+  border-right: 1px solid #dde3ea;
+}
+
+.batch-mode-btn.active {
+  background: #2563eb;
+  color: #ffffff;
+}
+
+.batch-mode-btn:not(.active):hover {
+  background: #e8ecf1;
+}
+
+.batch-empty-hint {
+  text-align: center;
+  color: #8b95a5;
+  font-size: 13px;
+  padding: 24px 8px;
+}
+
 .batch-inline .batch-summary {
   margin-bottom: 12px;
 }

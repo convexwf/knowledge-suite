@@ -1313,6 +1313,20 @@ export class KnowledgeStore {
     return this.loadCollectionMembers(collectionItemId);
   }
 
+  async updateCollectionMemberItem(params: {
+    collectionItemId: string;
+    oldMemberItemId: string;
+    newMemberItemId: string;
+  }): Promise<void> {
+    await this.ensure();
+    const now = new Date().toISOString();
+    this.database!.prepare(`
+      UPDATE collection_memberships
+      SET member_item_id = ?, updated_at = ?
+      WHERE collection_item_id = ? AND member_item_id = ?
+    `).run(params.newMemberItemId, now, params.collectionItemId, params.oldMemberItemId);
+  }
+
   async loadCollection(
     collectionItemId: string
   ): Promise<{ collection: CollectionSummary; items: CollectionItemDetail[] }> {

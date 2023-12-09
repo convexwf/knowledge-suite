@@ -927,6 +927,23 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
         rawdocId: parsed.rawdoc.rawdoc_id,
         docId: parsed.document.doc_id
       });
+
+      // Fix up collection membership when fetch followed a redirect
+      // to a URL with a different normalizedUrl (e.g. cross-domain 302).
+      // The collection member was inserted with the original URL's itemId,
+      // but store.save() wrote to the redirected URL's itemId — leaving a
+      // captured-but-empty member in the collection and the saved document
+      // as an orphan standalone item.
+      const originalNormalized = item.normalizedUrl ?? item.url;
+      if (item.collectionId && resolved.normalizedUrl !== originalNormalized) {
+        const oldMemberItemId = `url:sha256:${urlHash(originalNormalized)}`;
+        const newMemberItemId = `url:sha256:${urlHash(resolved.normalizedUrl)}`;
+        await store.updateCollectionMemberItem({
+          collectionItemId: item.collectionId,
+          oldMemberItemId,
+          newMemberItemId
+        });
+      }
     } catch (error) {
       await store.updateBatchItem({
         itemId: item.itemId,

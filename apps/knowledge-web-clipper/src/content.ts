@@ -13,7 +13,8 @@
       }
 
       if (message?.type === "knowledge.discoverLinks") {
-        sendResponse(collectNavigationLinks());
+        const mode = (message?.mode as string) === "list" ? "list" : "navigation";
+        sendResponse(mode === "list" ? collectListPageLinks() : collectNavigationLinks());
         return true;
       }
 
@@ -193,6 +194,175 @@
         depth
       });
     }
+  }
+
+  function collectListPageLinks() {
+    const candidates: Array<{
+      url: string;
+      text?: string;
+      source?: string;
+      order: number;
+      depth: number;
+    }> = [];
+    const seen = new Set<string>();
+
+    const nonArticlePathPatterns = [
+      /\/about(\/|$)/i,
+      /\/privacy(\/|$)/i,
+      /\/terms(\/|$)/i,
+      /\/tags(\/|$)/i,
+      /\/categories(\/|$)/i,
+      /\/category(\/|$)/i,
+      /\/authors(\/|$)/i,
+      /\/author(\/|$)/i,
+      /\/login(\/|$)/i,
+      /\/register(\/|$)/i,
+      /\/subscribe(\/|$)/i,
+      /\/contact(\/|$)/i,
+      /\/careers(\/|$)/i,
+      /\/jobs(\/|$)/i,
+      /\/press(\/|$)/i
+    ];
+
+    function isNonArticlePath(href: string): boolean {
+      try {
+        const url = new URL(href, location.href);
+        return nonArticlePathPatterns.some((pattern) => pattern.test(url.pathname));
+      } catch {
+        return true;
+      }
+    }
+
+    function isFooterOrSocial(link: HTMLAnchorElement): boolean {
+      const closest = link.closest("footer, [class*=footer i], [class*=social i], [class*=share i]");
+      if (closest) return true;
+      const rel = link.getAttribute("rel");
+      if (rel && /nofollow/i.test(rel)) return true;
+      return false;
+    }
+
+    function isSkipLink(url: URL): boolean {
+      if (url.origin !== location.origin) return false;
+      if (/^#/.test(url.hash) && url.pathname === location.pathname) return true;
+      if (url.pathname === location.pathname) return true;
+      return false;
+    }
+
+    function pushCandidate(link: HTMLAnchorElement, source: string): void {
+      const rawHref = link.href;
+      if (!rawHref) return;
+      let url: URL;
+      try {
+        url = new URL(rawHref, location.href);
+      } catch {
+        return;
+      }
+      if (url.protocol !== "http:" && url.protocol !== "https:") return;
+      if (url.origin !== location.origin) return;
+      if (isSkipLink(url)) return;
+      if (isNonArticlePath(rawHref)) return;
+      if (isFooterOrSocial(link)) return;
+
+      url.hash = "";
+      const search = url.search;
+      // Keep only meaningful query params; strip common tracking
+      const strippedSearch = search.replace(/[?&](utm_|fbclid|gclid|ref|source=|mc_cid|mc_eid)[^&]*/gi, "");
+      url.search = strippedSearch;
+
+      const normalized = url.toString();
+      if (seen.has(normalized)) return;
+      seen.add(normalized);
+
+      // Extract best title text from the link or nearby heading
+      let text: string | undefined;
+      const h = link.querySelector("h1, h2, h3, h4, h5, h6");
+      if (h) {
+        text = h.textContent?.trim().replace(/\s+/g, " ");
+      }
+      if (!text) {
+        text = link.textContent?.trim().replace(/\s+/g, " ");
+        // If text is very short (e.g. "Read more"), try to find heading nearby
+        if (text && text.length < 15) {
+          const parent = link.closest("article, li, [class*=post i], [class*=card i], [class*=item i]");
+          if (parent) {
+            const parentHeading = parent.querySelector("h1, h2, h3, h4, h5, h6");
+            if (parentHeading) {
+              text = parentHeading.textContent?.trim().replace(/\s+/g, " ") || text;
+            }
+          }
+        }
+      }
+      if (!text) {
+        text = link.getAttribute("aria-label") || link.getAttribute("title") || undefined;
+      }
+
+      candidates.push({
+        url: normalized,
+        text,
+        source,
+        order: candidates.length,
+        depth: 0
+      });
+    }
+
+    // Find main content area
+    let container: Element | null = document.querySelector("main");
+    if (!container) {
+      // Look for the largest article-containing element
+      const articleParents = Array.from(document.querySelectorAll("article"))
+        .map((a) => a.parentElement)
+        .filter((el): el is HTMLElement => el !== null);
+      if (articleParents.length > 0) {
+        container = articleParents[0];
+      }
+    }
+    if (!container) {
+      container = document.body;
+    }
+
+    // Try repeating <article> cards first
+    const articles = Array.from(container.querySelectorAll("article"));
+    if (articles.length >= 2) {
+      for (const article of articles) {
+        const link = article.querySelector<HTMLAnchorElement>("a[href]");
+        if (link) {
+          pushCandidate(link, "list");
+        }
+      }
+    } else {
+      // Fallback: scan for links inside repeating list items or card containers
+      const listItems = Array.from(
+        container.querySelectorAll(
+          "li:has(a[href]), [class*=post i]:has(a[href]), [class*=card i]:has(a[href]), [class*=item i]:has(a[href])"
+        )
+      );
+      if (listItems.length >= 2) {
+        for (const item of listItems) {
+          const link = item.querySelector<HTMLAnchorElement>("a[href]");
+          if (link) {
+            pushCandidate(link, "list");
+          }
+        }
+      } else {
+        // Last resort: direct links in main content that look like article links
+        const links = Array.from(
+          container.querySelectorAll<HTMLAnchorElement>("a[href]")
+        );
+        for (const link of links) {
+          // Heuristic: link text is long enough to be an article title
+          const text = link.textContent?.trim() || "";
+          if (text.length >= 20) {
+            pushCandidate(link, "list");
+          }
+        }
+      }
+    }
+
+    return {
+      pageUrl: location.href,
+      title: document.title,
+      candidates
+    };
   }
 
   function findNavigationContainers(): Element[] {

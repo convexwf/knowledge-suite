@@ -63,6 +63,7 @@ let lastPreview: PreviewResult | undefined;
 let activeCandidateId: string | undefined;
 let savedItems: ItemListItem[] = [];
 let batchDiscover: BatchDiscoverResult | undefined;
+let batchDiscoverMode: "navigation" | "list" = "navigation";
 let batchJob: BatchJobResult | undefined;
 let batchPollTimer: number | undefined;
 
@@ -104,7 +105,7 @@ document.addEventListener("click", (event) => {
 
 saveSectionButton.addEventListener("click", () => {
   saveDropdownMenu.hidden = true;
-  void discoverSection();
+  void discoverSection("navigation");
 });
 
 // Batch modal close
@@ -256,7 +257,7 @@ async function save(): Promise<void> {
   }
 }
 
-async function discoverSection(): Promise<void> {
+async function discoverSection(mode: "navigation" | "list" = "navigation"): Promise<void> {
   await refreshActiveTab();
   if (!activeTab || activeTab.isFileUrl) {
     setStatus("Unavailable", "Batch section save only supports http(s) pages.");
@@ -267,17 +268,20 @@ async function discoverSection(): Promise<void> {
     return;
   }
 
+  batchDiscoverMode = mode;
+  const modeLabel = mode === "list" ? "list" : "navigation";
   pendingAction = "batch";
   updateActionButtons();
-  showBatchModal("Scanning this page for navigation links...");
-  setStatus("Discovering", "Scanning this page for navigation links.");
+  showBatchModal(`Scanning this page for ${modeLabel} links...`);
+  setStatus("Discovering", `Scanning this page for ${modeLabel} links.`);
   try {
     await refreshServerStatus();
-    const discovered = await collectNavigationLinks();
+    const discovered = await collectNavigationLinks(mode);
     if (discovered.candidates.length === 0) {
       batchDiscover = undefined;
       renderBatchConfirmation();
-      setStatus("No links", "No sidebar or navigation links were found.");
+      const otherModeLabel = mode === "list" ? "Navigation" : "List";
+      setStatus("No links", `No ${modeLabel} links found. Try ${otherModeLabel} mode.`);
       return;
     }
     batchDiscover = await createKnowledgeApiClient(settings).discoverBatch(discovered.pageUrl, discovered.candidates);
@@ -338,19 +342,21 @@ async function startBatchJob(): Promise<void> {
   }
 }
 
-async function collectNavigationLinks(): Promise<{ pageUrl: string; title?: string; candidates: BatchCandidate[] }> {
+async function collectNavigationLinks(mode: "navigation" | "list" = "navigation"): Promise<{ pageUrl: string; title?: string; candidates: BatchCandidate[] }> {
   if (!activeTab) {
     throw new Error("No active tab");
   }
   return chrome.tabs.sendMessage(activeTab.tabId, {
-    type: "knowledge.discoverLinks"
+    type: "knowledge.discoverLinks",
+    mode
   }).catch(async (error) => {
     if (!isMissingContentScriptError(error)) {
       throw error;
     }
     await injectContentScript(activeTab!.tabId);
     return chrome.tabs.sendMessage(activeTab!.tabId, {
-      type: "knowledge.discoverLinks"
+      type: "knowledge.discoverLinks",
+      mode
     });
   });
 }
@@ -812,6 +818,7 @@ async function hideBatchModal(): Promise<void> {
   }
 
   batchDiscover = undefined;
+  batchDiscoverMode = "navigation";
   batchJob = undefined;
   batchJobId = undefined;
   currentCollectionTitle = undefined;
@@ -827,15 +834,42 @@ function renderBatchMessage(message: string): void {
 }
 
 function renderBatchConfirmation(): void {
-  if (!batchDiscover) {
-    renderBatchMessage("No section discovery yet.");
-    return;
-  }
-
   showBatchModal();
 
   const container = document.createElement("div");
   container.className = "batch-inline";
+
+  // Mode toggle: always visible so users can switch between Navigation and List
+  const modeToggle = document.createElement("div");
+  modeToggle.className = "batch-mode-toggle";
+  const navButton = document.createElement("button");
+  navButton.textContent = "Navigation";
+  navButton.className = `batch-mode-btn${batchDiscoverMode === "navigation" ? " active" : ""}`;
+  navButton.addEventListener("click", () => {
+    if (batchDiscoverMode !== "navigation") {
+      void discoverSection("navigation");
+    }
+  });
+  const listButton = document.createElement("button");
+  listButton.textContent = "List";
+  listButton.className = `batch-mode-btn${batchDiscoverMode === "list" ? " active" : ""}`;
+  listButton.addEventListener("click", () => {
+    if (batchDiscoverMode !== "list") {
+      void discoverSection("list");
+    }
+  });
+  modeToggle.append(navButton, listButton);
+  container.append(modeToggle);
+
+  if (!batchDiscover) {
+    const emptyHint = document.createElement("div");
+    emptyHint.className = "batch-empty-hint";
+    const otherMode = batchDiscoverMode === "list" ? "Navigation" : "List";
+    emptyHint.textContent = `No ${batchDiscoverMode} links found on this page. Try ${otherMode} mode.`;
+    container.append(emptyHint);
+    batchModalBody.replaceChildren(container);
+    return;
+  }
 
   const summary = document.createElement("section");
   summary.className = "batch-summary";
