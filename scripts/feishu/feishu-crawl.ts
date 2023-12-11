@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { writeFileSync, mkdirSync, existsSync, readFileSync } from "node:fs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const STORE_DIR = resolve(__dirname, "..", "knowledge-store", "wiki-export");
+const STORE_DIR = resolve(__dirname, "..", "..", "knowledge-store", "wiki-export");
 const FEISHU_EXTRACT = readFileSync(resolve(__dirname, "feishu-extract.js"), "utf-8");
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -50,9 +50,21 @@ function sectionsToMarkdown(sections: any[], tokenHash?: Record<string, string>)
 async function main() {
   const args = process.argv.slice(2);
   const url = args.find(a => a.startsWith("http"));
-  if (!url) { console.log("Usage: npx tsx scripts/feishu-crawl.ts <url> --connect"); return; }
+  if (!url) { console.log("Usage: npx tsx scripts/feishu-crawl.ts <url> --connect [--skip token1,token2,...] [--out dir]"); return; }
   const targetToken = wikiToken(url);
   if (!targetToken) { console.error("Invalid URL"); return; }
+
+  // Parse --skip: comma-separated tokens or URLs
+  const skipIdx = args.indexOf("--skip");
+  const skipRaw = skipIdx >= 0 ? args[skipIdx + 1] : "";
+  const skipTokens = new Set<string>();
+  if (skipRaw) {
+    for (const s of skipRaw.split(",")) {
+      const t = wikiToken(s.trim()) || s.trim();
+      skipTokens.add(t);
+    }
+    console.log(`[crawl] Skip: ${skipTokens.size} token(s)`);
+  }
 
   console.log("[crawl] Connecting...");
   const browser = await chromium.connectOverCDP("http://127.0.0.1:9222");
@@ -66,8 +78,8 @@ async function main() {
   const treeMap: Record<string, { title: string; children: string[] }> = {};
 
   // Root: navigate to target URL first to get title and first tree
-  await page.goto(url, { waitUntil: "domcontentloaded", timeout: 10000 });
-  await page.waitForTimeout(3000);
+  await page.goto(url, { waitUntil: "networkidle", timeout: 30000 });
+  await page.waitForTimeout(5000);
   const rootTitle = await page.evaluate("(async()=>{var r=window.PageMain?.blockManager?.rootBlockModel;if(!r)return'';function o(a){return a&&a.length?a.map(function(x){return x.insert}).join('').replace(/\\n/g,'').trim():'';}return o(r.zoneState?.content?.ops)||r.zoneState?.allText?.replace(/\\n/g,'').trim()||'';})()");
   queue.push({ token: targetToken, parentTitle: "", path: [rootTitle || targetToken] });
   treeMap[targetToken] = { title: rootTitle || targetToken, children: [] };
@@ -107,6 +119,7 @@ async function main() {
               for (const k of kids) {
                 const cnode = nd[k];
                 if (cnode && !visited.has(k) && !childSet.has(k)) {
+                  if (skipTokens.has(k)) { console.log(`  ⏭ skipped: ${cnode.title || k}`); continue; }
                   childSet.add(k);
                   // Set or ensure current token's entry with correct title
                   if (!treeMap[item.token]) treeMap[item.token] = { title: item.path[item.path.length - 1] || item.token, children: [] };
@@ -121,8 +134,8 @@ async function main() {
       };
       page.on("response", respHandler);
 
-      await page.goto(pageUrl, { waitUntil: "domcontentloaded", timeout: 10000 });
-      await page.waitForTimeout(2000);
+      await page.goto(pageUrl, { waitUntil: "networkidle", timeout: 30000 });
+      await page.waitForTimeout(3000);
 
       // Skip extraction if already saved
       if (existsSync(fp)) {
