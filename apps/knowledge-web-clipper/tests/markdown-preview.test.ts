@@ -109,6 +109,15 @@ const x = 1;
     expect(html).not.toContain("onerror");
   });
 
+  it("hides section anchors from legacy Markdown", async () => {
+    const { renderMarkdownPreview } = await import("../src/markdown-preview/render.js");
+
+    const html = renderHtml(renderMarkdownPreview("<!-- section_id:legacy-section -->\n\nVisible body"));
+
+    expect(html).toContain("Visible body");
+    expect(html).not.toContain("section_id:");
+  });
+
   it("keeps math preview available without KaTeX", async () => {
     const { renderMarkdownPreview } = await import("../src/markdown-preview/render.js");
 

@@ -1,5 +1,6 @@
 import { createKnowledgeApiClient, type ItemListItem } from "./api-client.js";
 import { renderMarkdownPreview } from "./markdown-preview/render.js";
+import { stripSectionAnchors } from "./markdown-utils.js";
 import { getSettings, saveSettings } from "./settings.js";
 import { openKnowledgePage } from "./tabs.js";
 import {
@@ -391,7 +392,7 @@ async function copyMarkdown(): Promise<void> {
     return;
   }
 
-  const markdown = raw.replace(/^<!--\s*section_id:\S+\s*-->\n/gm, "");
+  const markdown = stripSectionAnchors(raw);
   await navigator.clipboard.writeText(markdown);
   setStatus("Copied", "Markdown copied to your clipboard.");
 }

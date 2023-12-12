@@ -1,5 +1,7 @@
 import { createKnowledgeApiClient } from "./api-client.js";
 import { applyCascadeSelection, normalizeHeadingSelections } from "./heading-cascade.js";
+import { stripSectionAnchors } from "./markdown-utils.js";
+import { renderDocument } from "./reader-renderer.js";
 import { getSettings } from "./settings.js";
 import { openKnowledgePage } from "./tabs.js";
 import { Annotation, KnowledgeDocument, KnowledgeItem, SummaryAnnotation } from "./types.js";
@@ -192,7 +194,11 @@ async function loadReader(): Promise<void> {
     }
 
     renderMetadata(currentItem, currentDocument);
-    await renderMarkdown(currentMarkdown || documentFallbackMarkdown(currentDocument), contentOutput);
+    await renderDocument(currentDocument, contentOutput, {
+      resolveAsset: (assetId) => client.assetBlobUrl(assetId),
+      registerObjectUrl: (url) => objectUrls.add(url),
+      onDiagnostic: (diagnostic) => console.warn("[Reader] section diagnostic", diagnostic)
+    });
     renderOutline();
     copyButton.disabled = !currentMarkdown;
 
@@ -216,7 +222,11 @@ async function reparseCurrentItem(value: string): Promise<void> {
     currentDocument = result.document;
     currentMarkdown = result.markdown;
     renderMetadata(currentItem, currentDocument);
-    await renderMarkdown(currentMarkdown, contentOutput);
+    await renderDocument(currentDocument, contentOutput, {
+      resolveAsset: (assetId) => client.assetBlobUrl(assetId),
+      registerObjectUrl: (url) => objectUrls.add(url),
+      onDiagnostic: (diagnostic) => console.warn("[Reader] section diagnostic", diagnostic)
+    });
     renderOutline();
     copyButton.disabled = false;
 
@@ -263,137 +273,6 @@ function renderMetadata(item: KnowledgeItem | undefined, document: KnowledgeDocu
   for (const value of metaItems) {
     const span = documentCreate("span", value);
     metaOutput.append(span);
-  }
-}
-
-async function renderMarkdown(markdown: string, target: HTMLElement): Promise<void> {
-  target.replaceChildren();
-  const body = stripFrontmatter(markdown).trim();
-  if (!body) {
-    target.append(messageNode("No Markdown content was produced for this document."));
-    return;
-  }
-
-  const lines = body.split(/\r?\n/);
-  let currentSectionId = "";
-  for (let index = 0; index < lines.length;) {
-    const line = lines[index] ?? "";
-
-    const sectionAnchor = line.match(/^<!--\s*section_id:(\S+)\s*-->$/);
-    if (sectionAnchor) {
-      currentSectionId = sectionAnchor[1];
-      index += 1;
-      continue;
-    }
-
-    if (!line.trim()) {
-      index += 1;
-      continue;
-    }
-
-    if (/^(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) {
-      const hr = document.createElement("hr");
-      if (currentSectionId) hr.dataset.sectionId = currentSectionId;
-      target.append(hr);
-      index += 1;
-      continue;
-    }
-
-    if (line.startsWith("```")) {
-      const lang = line.slice(3).trim();
-      const codeLines: string[] = [];
-      index += 1;
-      while (index < lines.length && !lines[index].startsWith("```")) {
-        codeLines.push(lines[index]);
-        index += 1;
-      }
-      index += 1;
-      const block = codeBlock(codeLines.join("\n"), lang);
-      if (currentSectionId) block.dataset.sectionId = currentSectionId;
-      target.append(block);
-      continue;
-    }
-
-    const heading = line.match(/^(#{1,6})\s+(.+)$/);
-    if (heading) {
-      const block = headingNode(heading[1].length, heading[2]);
-      if (currentSectionId) block.dataset.sectionId = currentSectionId;
-      target.append(block);
-      index += 1;
-      continue;
-    }
-
-    const image = line.match(/^!\[([^\]]*)]\(([^)]+)\)$/);
-    if (image) {
-      const block = await imageFigure(image[2], image[1]);
-      if (currentSectionId) block.dataset.sectionId = currentSectionId;
-      target.append(block);
-      index += 1;
-      continue;
-    }
-
-    if (line.startsWith(">")) {
-      const quoteLines: string[] = [];
-      while (index < lines.length) {
-        const cur = lines[index];
-        if (cur.startsWith(">")) {
-          quoteLines.push(cur.replace(/^>\s?/, ""));
-          index += 1;
-        } else if (!cur.trim() && index + 1 < lines.length && lines[index + 1].startsWith(">")) {
-          quoteLines.push("");
-          index += 1;
-        } else {
-          break;
-        }
-      }
-      const quote = document.createElement("blockquote");
-      quote.textContent = quoteLines.join("\n");
-      if (currentSectionId) quote.dataset.sectionId = currentSectionId;
-      target.append(quote);
-      continue;
-    }
-
-    const listItem = matchListItem(line);
-    if (listItem) {
-      const items = collectListItems(lines, index);
-      const block = buildNestedList(items, 0, items[0].indent);
-      if (currentSectionId) block.dataset.sectionId = currentSectionId;
-      target.append(block);
-      index += items.length;
-      continue;
-    }
-
-    if (isTableStart(lines, index)) {
-      const tableLines: string[] = [];
-      while (index < lines.length && lines[index].trim().startsWith("|")) {
-        tableLines.push(lines[index]);
-        index += 1;
-      }
-      const table = tableNode(tableLines);
-      if (currentSectionId) table.dataset.sectionId = currentSectionId;
-      target.append(table);
-      continue;
-    }
-
-    const paragraphLines = [line];
-    index += 1;
-    while (
-      index < lines.length &&
-      lines[index].trim() &&
-      !/^(#{1,6})\s+/.test(lines[index]) &&
-      !lines[index].startsWith("```") &&
-      !lines[index].startsWith(">") &&
-      !/^(-{3,}|\*{3,}|_{3,})\s*$/.test(lines[index]) &&
-      !matchListItem(lines[index]) &&
-      !isTableStart(lines, index)
-    ) {
-      paragraphLines.push(lines[index]);
-      index += 1;
-    }
-    const paragraph = document.createElement("p");
-    appendInline(paragraph, paragraphLines.join(" "));
-    if (currentSectionId) paragraph.dataset.sectionId = currentSectionId;
-    target.append(paragraph);
   }
 }
 
@@ -487,334 +366,6 @@ function renderOutline(): void {
   renderOutlineTree(tree, outlineOutput);
   outlineCollapseToggle.dataset.collapsed = "false";
   outlineCollapseToggle.textContent = "Collapse all";
-}
-
-function headingNode(level: number, text: string): HTMLElement {
-  const normalizedLevel = Math.min(Math.max(level, 1), 6);
-  const heading = document.createElement(`h${normalizedLevel}`);
-  appendInline(heading, text);
-  heading.id = slugify(text, contentOutput.querySelectorAll("h1, h2, h3, h4, h5, h6").length);
-  return heading;
-}
-
-function codeBlock(code: string, lang?: string): HTMLElement {
-  const pre = document.createElement("pre");
-  const codeNode = document.createElement("code");
-  codeNode.textContent = code;
-  if (lang) {
-    codeNode.className = `language-${lang}`;
-  }
-  pre.append(codeNode);
-  return pre;
-}
-
-async function imageFigure(src: string, alt: string): Promise<HTMLElement> {
-  const figure = document.createElement("figure");
-  const image = document.createElement("img");
-  image.alt = alt;
-  const assetId = assetIdFromSrc(src);
-  if (assetId) {
-    try {
-      const blobUrl = await client.assetBlobUrl(assetId);
-      objectUrls.add(blobUrl);
-      image.src = blobUrl;
-    } catch {
-      image.alt = alt || `Missing asset ${assetId}`;
-    }
-  } else if (isSafeUrl(src, "image")) {
-    image.src = src;
-  }
-  figure.append(image);
-  if (alt) {
-    const caption = document.createElement("figcaption");
-    caption.textContent = alt;
-    figure.append(caption);
-  }
-  return figure;
-}
-
-function tableNode(lines: string[]): HTMLElement {
-  const table = document.createElement("table");
-  const [headerLine, _separator, ...bodyLines] = lines;
-  const thead = document.createElement("thead");
-  const tbody = document.createElement("tbody");
-  thead.append(tableRow(headerLine, "th"));
-  for (const line of bodyLines) {
-    tbody.append(tableRow(line, "td"));
-  }
-  table.append(thead, tbody);
-  return table;
-}
-
-function tableRow(line: string, cellName: "td" | "th"): HTMLTableRowElement {
-  const row = document.createElement("tr");
-  for (const value of line.split("|").slice(1, -1)) {
-    const cell = document.createElement(cellName);
-    appendInline(cell, value.trim());
-    row.append(cell);
-  }
-  return row;
-}
-
-function appendInline(parent: HTMLElement, text: string): void {
-  const pattern = /(`([^`]+)`|\[([^\]]+)]\(([^)]+)\)|\$([^$\n]+)\$)/g;
-  let lastIndex = 0;
-  for (const match of text.matchAll(pattern)) {
-    if (match.index > lastIndex) {
-      appendFormattedText(parent, text.slice(lastIndex, match.index));
-    }
-    if (match[2] !== undefined) {
-      const code = document.createElement("code");
-      code.textContent = match[2];
-      parent.append(code);
-    } else if (match[3] !== undefined && match[4] !== undefined) {
-      if (isSafeUrl(match[4], "link")) {
-        const link = document.createElement("a");
-        link.href = match[4];
-        link.rel = "noreferrer";
-        appendFormattedText(link, match[3]);
-        parent.append(link);
-      } else {
-        parent.append(document.createTextNode(match[3]));
-      }
-    } else if (match[5] !== undefined) {
-      const span = document.createElement("span");
-      span.className = "math-inline";
-      span.textContent = match[5];
-      parent.append(span);
-    }
-    lastIndex = match.index + match[0].length;
-  }
-  if (lastIndex < text.length) {
-    appendFormattedText(parent, text.slice(lastIndex));
-  }
-}
-
-function appendFormattedText(parent: HTMLElement, text: string): void {
-  if (!text) return;
-  const unescaped = unescapeBackslashes(text);
-  const segments = parseInlineFormatting(unescaped);
-  if (!segments) {
-    appendAutolinks(parent, text);
-    return;
-  }
-  for (const segment of segments) {
-    if (typeof segment === "string") {
-      appendAutolinks(parent, segment);
-    } else {
-      parent.append(segment.element);
-    }
-  }
-}
-
-type FormatSegment = string | { element: HTMLElement; content: string };
-
-function parseInlineFormatting(text: string): FormatSegment[] | null {
-  let changed = false;
-  let result: FormatSegment[] = [text];
-
-  const applyPattern = (
-    regex: RegExp,
-    createElement: () => HTMLElement,
-    innerProcess?: (el: HTMLElement, content: string) => void
-  ): void => {
-    const next: FormatSegment[] = [];
-    for (const segment of result) {
-      if (typeof segment !== "string") {
-        next.push(segment);
-        continue;
-      }
-      const str = segment;
-      let lastIndex = 0;
-      let matched = false;
-      for (const m of str.matchAll(regex)) {
-        changed = true;
-        matched = true;
-        if (m.index! > lastIndex) {
-          next.push(str.slice(lastIndex, m.index!));
-        }
-        const el = createElement();
-        const inner = m[1] ?? "";
-        if (innerProcess) {
-          innerProcess(el, inner);
-        } else {
-          appendFormattedText(el, inner);
-        }
-        next.push({ element: el, content: inner });
-        lastIndex = m.index! + m[0].length;
-      }
-      if (matched && lastIndex < str.length) {
-        next.push(str.slice(lastIndex));
-      } else if (!matched) {
-        next.push(segment);
-      }
-    }
-    result = next;
-  };
-
-  applyPattern(/\*\*\*(.+?)\*\*\*/g, () => {
-    const strong = document.createElement("strong");
-    const em = document.createElement("em");
-    strong.append(em);
-    return strong;
-  }, (_el, content) => {
-    const em = document.createElement("em");
-    appendFormattedText(em, content);
-    (_el as HTMLElement).replaceChildren(em);
-  });
-
-  applyPattern(/___(.+?)___/g, () => {
-    const strong = document.createElement("strong");
-    const em = document.createElement("em");
-    strong.append(em);
-    return strong;
-  }, (_el, content) => {
-    const em = document.createElement("em");
-    appendFormattedText(em, content);
-    (_el as HTMLElement).replaceChildren(em);
-  });
-
-  applyPattern(/\*\*(.+?)\*\*/g, () => document.createElement("strong"));
-  applyPattern(/__(.+?)__/g, () => document.createElement("strong"));
-  applyPattern(/\*(.+?)\*/g, () => document.createElement("em"));
-  applyPattern(/_(.+?)_/g, () => document.createElement("em"));
-  applyPattern(/~~(.+?)~~/g, () => document.createElement("del"));
-
-  return changed ? result : null;
-}
-
-function unescapeBackslashes(text: string): string {
-  return text.replace(/\\([\\`*_{}[\]()#+\-.!|~<>])/g, "$1");
-}
-
-function appendAutolinks(parent: HTMLElement, text: string): void {
-  const pattern = /(https?:\/\/[^\s<>"']+)/g;
-  let lastIndex = 0;
-  let matched = false;
-  for (const match of text.matchAll(pattern)) {
-    matched = true;
-    if (match.index > lastIndex) {
-      parent.append(document.createTextNode(text.slice(lastIndex, match.index)));
-    }
-    const url = match[1];
-    const stripped = url.replace(/[.,;:!?)]+$/, "");
-    if (isSafeUrl(stripped, "link")) {
-      const link = document.createElement("a");
-      link.href = stripped;
-      link.textContent = stripped;
-      link.rel = "noreferrer";
-      parent.append(link);
-    } else {
-      parent.append(document.createTextNode(url));
-    }
-    lastIndex = match.index + match[0].length;
-  }
-  if (matched) {
-    if (lastIndex < text.length) {
-      parent.append(document.createTextNode(text.slice(lastIndex)));
-    }
-  } else {
-    parent.append(document.createTextNode(text));
-  }
-}
-
-function isTableStart(lines: string[], index: number): boolean {
-  return Boolean(
-    lines[index]?.trim().startsWith("|") &&
-      lines[index + 1]?.trim().startsWith("|") &&
-      /^\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?$/.test(lines[index + 1].trim())
-  );
-}
-
-interface ListItemInfo {
-  type: "ul" | "ol";
-  content: string;
-  indent: number;
-}
-
-function matchListItem(line: string): ListItemInfo | null {
-  const match = line.match(/^(\s*)([-*+]|\d+\.)\s+(.+)$/);
-  if (!match) return null;
-  return {
-    indent: match[1].length,
-    type: /^\d+\.$/.test(match[2]) ? "ol" : "ul",
-    content: match[3]
-  };
-}
-
-function collectListItems(lines: string[], startIndex: number): ListItemInfo[] {
-  const items: ListItemInfo[] = [];
-  let index = startIndex;
-  while (index < lines.length) {
-    const item = matchListItem(lines[index]);
-    if (!item) break;
-    items.push(item);
-    index += 1;
-  }
-  return items;
-}
-
-function buildNestedList(items: ListItemInfo[], startIdx: number, baseIndent: number): HTMLElement {
-  const listType = items[startIdx].type;
-  const list = document.createElement(listType);
-  let i = startIdx;
-
-  while (i < items.length) {
-    const item = items[i];
-    if (item.indent < baseIndent) break;
-
-    if (item.indent === baseIndent) {
-      const li = document.createElement("li");
-      appendInline(li, item.content);
-      i += 1;
-
-      if (i < items.length && items[i].indent > baseIndent) {
-        const sub = buildNestedList(items, i, items[i].indent);
-        li.append(sub);
-        i = items.findIndex((it, idx) => idx >= i && it.indent <= baseIndent);
-        if (i === -1) i = items.length;
-      }
-
-      list.append(li);
-    } else {
-      break;
-    }
-  }
-
-  return list;
-}
-
-function stripFrontmatter(markdown: string): string {
-  if (!markdown.startsWith("---")) {
-    return markdown;
-  }
-  const end = markdown.indexOf("\n---", 3);
-  return end >= 0 ? markdown.slice(end + 4) : markdown;
-}
-
-function assetIdFromSrc(src: string): string | undefined {
-  const match = src.match(/^assets\/([^/?#]+)$/);
-  return match?.[1];
-}
-
-function isSafeUrl(value: string, kind: "image" | "link"): boolean {
-  try {
-    const url = new URL(value, globalThis.location.href);
-    if (kind === "image") {
-      return url.protocol === "http:" || url.protocol === "https:";
-    }
-    return url.protocol === "http:" || url.protocol === "https:" || url.protocol === "mailto:";
-  } catch {
-    return false;
-  }
-}
-
-function documentFallbackMarkdown(document: KnowledgeDocument): string {
-  return [
-    `# ${document.meta.title}`,
-    "",
-    ...document.sections.map((section) => section.content || "").filter(Boolean)
-  ].join("\n\n");
 }
 
 function showMessage(message: string): void {
@@ -1630,14 +1181,15 @@ async function createAnnotationFromSelection(
 }
 
 function buildExportMarkdown(markdown: string, annotations: Annotation[]): string {
-  if (annotations.length === 0) return markdown;
+  const cleanMarkdown = stripSectionAnchors(markdown);
+  if (annotations.length === 0) return cleanMarkdown;
   const grouped = new Map<string, Annotation[]>();
   for (const anno of annotations) {
     const key = anno.type;
     if (!grouped.has(key)) grouped.set(key, []);
     grouped.get(key)!.push(anno);
   }
-  const parts = [markdown, "", "---", "", "## Annotations", ""];
+  const parts = [cleanMarkdown, "", "---", "", "## Annotations", ""];
   for (const [type, annos] of grouped) {
     parts.push(`### ${type.charAt(0).toUpperCase() + type.slice(1)}s`, "");
     for (const anno of annos) {

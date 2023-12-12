@@ -1,3 +1,5 @@
+import { stripSectionAnchors } from "../markdown-utils.js";
+
 type MarkdownItInstance = {
   render(markdown: string): string;
   validateLink?: (url: string) => boolean;
@@ -211,10 +213,6 @@ function collectElements(root: ParentNode, tagName?: string): Element[] {
   };
   visit(root);
   return elements;
-}
-
-function stripSectionAnchors(markdown: string): string {
-  return markdown.replace(/^<!--\s*section_id:\S+\s*-->\n/gm, "");
 }
 
 function stripFrontmatter(markdown: string): string {

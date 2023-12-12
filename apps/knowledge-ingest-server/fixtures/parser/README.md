@@ -29,3 +29,7 @@ npm run fixtures:parser:update -w @uknowledge/knowledge-ingest-server
 
 Only update snapshots after reviewing the Document, Markdown, and candidate
 summary diffs for each changed case.
+
+Generated Markdown is intentionally clean: `section_id` remains in the
+Document JSON snapshot but is not emitted as an HTML comment in
+`expected.markdown.md`.

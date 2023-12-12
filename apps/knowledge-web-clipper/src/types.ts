@@ -122,6 +122,7 @@ export interface KnowledgeDocument {
     parser_version?: string;
   };
   sections: Array<{
+    section_id?: string;
     type: string;
     level?: number;
     content?: string;

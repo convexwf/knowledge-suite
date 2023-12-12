@@ -144,6 +144,17 @@ The server persists data in `./knowledge-store/`. To reset:
 make clean-store
 ```
 
+To inspect legacy Markdown files and compare them with their Document JSON
+derivatives, run the dry-run maintenance command:
+
+```bash
+npm run markdown:rewrite -- --store ./knowledge-store
+```
+
+Add `--write` only after reviewing the report to rewrite the derived Markdown
+files. The command never changes Document JSON, annotations, chunks, or item
+state.
+
 ## Project Links
 
 - [API Reference](https://github.com/convexwf/uknowledge/blob/master/doc-rules/doc/uknowledge/knowledge-ingest-server-api-reference.md)

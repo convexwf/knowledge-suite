@@ -20,6 +20,7 @@
     "test": "vitest run --exclude 'dist/**'",
     "fixtures:parser": "vitest run src/parser-fixtures.test.ts",
     "fixtures:parser:update": "UPDATE_PARSER_FIXTURES=1 vitest run src/parser-fixtures.test.ts",
+    "markdown:rewrite": "npm run build && node ../../scripts/rewrite-derived-markdown.mjs",
     "dev": "node --enable-source-maps dist/index.js",
     "start": "node --enable-source-maps dist/index.js"
   },

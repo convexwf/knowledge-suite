@@ -29,10 +29,10 @@ describe("reader list and reader style regressions", () => {
     expect(itemsCss).toContain(".item-slot-button");
     expect(itemsCss).toContain(".collection-items-button");
     expect(itemsCss).toContain(".collection-read-button");
-    expect(itemsTs).toContain("`${sourceCounts.web} web`");
-    expect(itemsTs).toContain("`${sourceCounts.epub} epub`");
-    expect(itemsTs).toContain("`${sourceCounts.pdf} pdf`");
-    expect(itemsTs).toContain("`${sourceCounts.collection} collection`");
+    expect(itemsTs).toContain("if (web > 0) breakdown.push(`${web} web`);");
+    expect(itemsTs).toContain("if (epub > 0) breakdown.push(`${epub} epub`);");
+    expect(itemsTs).toContain("if (pdf > 0) breakdown.push(`${pdf} pdf`);");
+    expect(itemsTs).toContain("if (collectionCount > 0) breakdown.push(`${collectionCount} collection");
   });
 
   it("keeps collection navigation as floating hidden-by-default controls", () => {
