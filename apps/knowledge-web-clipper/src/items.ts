@@ -9,15 +9,52 @@ import {
 } from "./items-model.js";
 import { getSettings } from "./settings.js";
 import { openKnowledgePage } from "./tabs.js";
-import { CollectionDetail, CollectionSummary, KnowledgeItem, KnowledgeSourceType } from "./types.js";
+import {
+  CollectionDetail,
+  CollectionSummary,
+  KnowledgeItem,
+  KnowledgeSourceType
+} from "./types.js";
+import {
+  MarkdownDirectoryFiles,
+  MarkdownDirectoryHandle,
+  MarkdownImportScan,
+  MarkdownSourceMode,
+  readMarkdownDirectory,
+  scanMarkdownImport
+} from "./markdown-import.js";
 
-const uploadForm = mustGet<HTMLFormElement>("upload-form");
+interface DirectoryPickerWindow extends Window {
+  showDirectoryPicker?: (options?: { mode?: "read" }) => Promise<MarkdownDirectoryHandle>;
+}
+
+const importForm = mustGet<HTMLFormElement>("import-form");
 const fileInput = mustGet<HTMLInputElement>("epub-file");
 const calibreFolderInput = mustGet<HTMLInputElement>("calibre-folder");
 const titleHintInput = mustGet<HTMLInputElement>("title-hint");
 const tagsInput = mustGet<HTMLInputElement>("tags-input");
 const uploadButton = mustGet<HTMLButtonElement>("upload-button");
 const statusOutput = mustGet<HTMLElement>("status-output");
+const openImportButton = mustGet<HTMLButtonElement>("open-import");
+const importDialog = mustGet<HTMLDialogElement>("import-dialog");
+const importSourceType = mustGet<HTMLSelectElement>("import-source-type");
+const epubImportConfig = mustGet<HTMLElement>("epub-import-config");
+const markdownImportConfig = mustGet<HTMLElement>("markdown-import-config");
+const markdownSourceMode = mustGet<HTMLSelectElement>("markdown-source-mode");
+const markdownFileRow = mustGet<HTMLElement>("markdown-file-row");
+const markdownFolderRow = mustGet<HTMLElement>("markdown-folder-row");
+const markdownFileInput = mustGet<HTMLInputElement>("markdown-file");
+const markdownFolderInput = mustGet<HTMLInputElement>("markdown-folder");
+const markdownResourceFolderInput = mustGet<HTMLInputElement>("markdown-resource-folder");
+const chooseMarkdownFolderButton = mustGet<HTMLButtonElement>("choose-markdown-folder");
+const chooseMarkdownResourceFolderButton = mustGet<HTMLButtonElement>("choose-markdown-resource-folder");
+const markdownFolderName = mustGet<HTMLElement>("markdown-folder-name");
+const markdownResourceFolderName = mustGet<HTMLElement>("markdown-resource-folder-name");
+const markdownTagsInput = mustGet<HTMLInputElement>("markdown-tags-input");
+const markdownScanOutput = mustGet<HTMLElement>("markdown-scan-output");
+const importCancelButton = mustGet<HTMLButtonElement>("import-cancel");
+const markdownScanButton = mustGet<HTMLButtonElement>("markdown-scan");
+const markdownImportButton = mustGet<HTMLButtonElement>("markdown-import");
 const itemList = mustGet<HTMLElement>("item-list");
 const refreshButton = mustGet<HTMLButtonElement>("refresh-items");
 const settingsButton = mustGet<HTMLButtonElement>("open-settings");
@@ -41,6 +78,9 @@ const query = new URLSearchParams(globalThis.location.search);
 
 let currentItems: KnowledgeItem[] = [];
 let currentCollections: CollectionSummary[] = [];
+let markdownScan: MarkdownImportScan | undefined;
+let markdownFolderHandle: MarkdownDirectoryHandle | undefined;
+let markdownResourceFolderHandle: MarkdownDirectoryHandle | undefined;
 let activeSourceFilter: SourceFilter = normalizeSourceFilter(query.get("source") ?? (query.get("collectionId") ? "collection" : "all"));
 const focusCollectionId = query.get("collectionId") || "";
 const collectionDetailCache = new Map<string, Promise<CollectionDetail>>();
@@ -53,9 +93,59 @@ refreshButton.addEventListener("click", () => {
   void refreshItems();
 });
 
-uploadForm.addEventListener("submit", (event) => {
+importForm.addEventListener("submit", (event) => {
   event.preventDefault();
-  void importEpub();
+  if (importSourceType.value === "markdown") {
+    void importMarkdownFiles();
+  } else {
+    void importEpub();
+  }
+});
+
+openImportButton.addEventListener("click", () => {
+  resetImportDialog();
+  importDialog.showModal();
+});
+
+importSourceType.addEventListener("change", () => {
+  updateImportSource();
+});
+
+chooseMarkdownFolderButton.addEventListener("click", () => {
+  void chooseMarkdownDirectory("source");
+});
+
+chooseMarkdownResourceFolderButton.addEventListener("click", () => {
+  void chooseMarkdownDirectory("resource");
+});
+
+markdownFolderInput.addEventListener("change", () => {
+  markdownFolderHandle = undefined;
+  updateMarkdownDirectoryNames();
+  invalidateMarkdownScan();
+});
+
+markdownResourceFolderInput.addEventListener("change", () => {
+  markdownResourceFolderHandle = undefined;
+  updateMarkdownDirectoryNames();
+  invalidateMarkdownScan();
+});
+
+markdownFileInput.addEventListener("change", () => {
+  invalidateMarkdownScan();
+});
+
+importCancelButton.addEventListener("click", () => {
+  importDialog.close();
+});
+
+markdownSourceMode.addEventListener("change", () => {
+  updateMarkdownSourceMode();
+  invalidateMarkdownScan();
+});
+
+markdownScanButton.addEventListener("click", () => {
+  void scanMarkdownFiles();
 });
 
 selectAll.addEventListener("change", () => {
@@ -79,6 +169,10 @@ batchPurgeBtn.addEventListener("click", () => {
 });
 
 setStatus("Ready");
+updateMarkdownDirectoryPickerUI();
+updateMarkdownDirectoryNames();
+updateMarkdownSourceMode();
+updateImportSource();
 renderFilterBar();
 await refreshItems();
 
@@ -126,7 +220,8 @@ async function importEpub(): Promise<void> {
       cover: selected.cover
     });
     setStatus(`Imported ${displayTitle(result.knowledgeItem)}.`);
-    uploadForm.reset();
+    importDialog.close();
+    resetImportDialog();
     await refreshItems();
     openReader(result.knowledgeItem.itemId);
   } catch (error) {
@@ -134,6 +229,201 @@ async function importEpub(): Promise<void> {
   } finally {
     uploadButton.disabled = false;
   }
+}
+
+async function scanMarkdownFiles(): Promise<void> {
+  const mode = markdownSourceMode.value as MarkdownSourceMode;
+  const sourceSelection = mode === "file"
+    ? { files: Array.from(markdownFileInput.files ?? []), relativePaths: new Map<File, string>() }
+    : await selectedMarkdownDirectory(markdownFolderHandle, markdownFolderInput);
+  const resourceSelection = await selectedMarkdownDirectory(markdownResourceFolderHandle, markdownResourceFolderInput);
+  const sourceFiles = sourceSelection.files;
+  const resourceFiles = resourceSelection.files;
+  if (sourceFiles.length === 0) {
+    markdownScanOutput.textContent = mode === "file"
+      ? "Choose a Markdown file first."
+      : "Choose a Markdown folder first.";
+    markdownImportButton.disabled = true;
+    return;
+  }
+
+  markdownScanButton.disabled = true;
+  markdownImportButton.disabled = true;
+  try {
+    markdownScanOutput.textContent = "Scanning Markdown files and resource metadata...";
+    markdownScan = await scanMarkdownImport({
+      mode,
+      sourceFiles,
+      resourceFiles,
+      sourceRelativePaths: sourceSelection.relativePaths,
+      resourceRelativePaths: resourceSelection.relativePaths,
+      onProgress: (current, total) => {
+        markdownScanOutput.textContent = `Scanning ${current}/${total} Markdown file(s)...`;
+      }
+    });
+    renderMarkdownScan(markdownScan);
+    markdownImportButton.disabled = markdownScan.documents.length === 0;
+  } catch (error) {
+    markdownScan = undefined;
+    markdownScanOutput.textContent = errorMessage(error);
+  } finally {
+    markdownScanButton.disabled = false;
+  }
+}
+
+async function chooseMarkdownDirectory(kind: "source" | "resource"): Promise<void> {
+  const picker = (globalThis as unknown as DirectoryPickerWindow).showDirectoryPicker;
+  if (!picker) {
+    (kind === "source" ? markdownFolderInput : markdownResourceFolderInput).click();
+    return;
+  }
+
+  try {
+    const handle = await picker({ mode: "read" });
+    if (kind === "source") {
+      markdownFolderHandle = handle;
+      markdownFolderInput.value = "";
+    } else {
+      markdownResourceFolderHandle = handle;
+      markdownResourceFolderInput.value = "";
+    }
+    updateMarkdownDirectoryNames();
+    invalidateMarkdownScan();
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") return;
+    markdownScanOutput.textContent = errorMessage(error);
+  }
+}
+
+async function selectedMarkdownDirectory(
+  handle: MarkdownDirectoryHandle | undefined,
+  fallbackInput: HTMLInputElement
+): Promise<MarkdownDirectoryFiles> {
+  if (handle) return readMarkdownDirectory(handle);
+  return {
+    files: Array.from(fallbackInput.files ?? []),
+    relativePaths: new Map<File, string>()
+  };
+}
+
+function invalidateMarkdownScan(): void {
+  markdownScan = undefined;
+  markdownImportButton.disabled = true;
+}
+
+function resetImportDialog(): void {
+  importForm.reset();
+  markdownFolderHandle = undefined;
+  markdownResourceFolderHandle = undefined;
+  markdownScan = undefined;
+  markdownScanOutput.textContent = "Choose a source and scan before importing.";
+  updateMarkdownDirectoryNames();
+  updateMarkdownSourceMode();
+  updateImportSource();
+}
+
+function updateImportSource(): void {
+  const markdown = importSourceType.value === "markdown";
+  epubImportConfig.hidden = markdown;
+  markdownImportConfig.hidden = !markdown;
+  uploadButton.hidden = markdown;
+  markdownScanButton.hidden = !markdown;
+  markdownImportButton.hidden = !markdown;
+  if (markdown) {
+    markdownImportButton.disabled = !markdownScan || markdownScan.documents.length === 0;
+  } else {
+    uploadButton.disabled = false;
+  }
+}
+
+function updateMarkdownDirectoryPickerUI(): void {
+  const supported = typeof (globalThis as unknown as DirectoryPickerWindow).showDirectoryPicker === "function";
+  chooseMarkdownFolderButton.hidden = !supported;
+  chooseMarkdownResourceFolderButton.hidden = !supported;
+  markdownFolderInput.hidden = supported;
+  markdownResourceFolderInput.hidden = supported;
+}
+
+function updateMarkdownDirectoryNames(): void {
+  markdownFolderName.textContent = markdownFolderHandle?.name
+    ?? selectedFileCountLabel(markdownFolderInput, "No folder selected");
+  markdownResourceFolderName.textContent = markdownResourceFolderHandle?.name
+    ?? selectedFileCountLabel(markdownResourceFolderInput, "No resource folder selected");
+}
+
+function selectedFileCountLabel(input: HTMLInputElement, emptyLabel: string): string {
+  const count = input.files?.length ?? 0;
+  return count > 0 ? `${count} file(s) selected` : emptyLabel;
+}
+
+async function importMarkdownFiles(): Promise<void> {
+  if (!markdownScan) {
+    markdownScanOutput.textContent = "Run Scan before importing.";
+    markdownImportButton.disabled = true;
+    return;
+  }
+  if (markdownScan.documents.length === 0) return;
+
+  markdownImportButton.disabled = true;
+  markdownScanButton.disabled = true;
+  const documents = markdownScan.documents;
+  const tags = parseTags(markdownTagsInput.value);
+  let succeeded = 0;
+  const failures: string[] = [];
+  let firstItemId: string | undefined;
+  try {
+    for (let index = 0; index < documents.length; index += 1) {
+      const document = documents[index];
+      markdownScanOutput.textContent = `Importing ${index + 1}/${documents.length}: ${document.file.name}`;
+      try {
+        const result = await client.importMarkdown({
+          file: document.file,
+          sourceUri: document.sourceUri,
+          relativePath: document.relativePath,
+          tags,
+          assets: document.assets
+        });
+        succeeded += 1;
+        firstItemId ??= result.knowledgeItem.itemId;
+      } catch (error) {
+        failures.push(`${document.file.name}: ${errorMessage(error)}`);
+      }
+    }
+    const warningCount = documents.reduce((sum, document) => sum + document.warnings.length, 0);
+    const summary = `Imported ${succeeded}/${documents.length} Markdown file(s).${warningCount ? ` ${warningCount} warning(s).` : ""}${failures.length ? ` ${failures.length} failed.` : ""}`;
+    markdownScanOutput.textContent = [...[summary], ...failures].join("\n");
+    setStatus(summary);
+    importDialog.close();
+    resetImportDialog();
+    await refreshItems();
+    if (firstItemId && documents.length === 1 && failures.length === 0) {
+      openReader(firstItemId);
+    }
+  } finally {
+    markdownImportButton.disabled = false;
+    markdownScanButton.disabled = false;
+  }
+}
+
+function renderMarkdownScan(scan: MarkdownImportScan): void {
+  const lines = [
+    `Markdown files: ${scan.markdownCount}`,
+    `Local image references: ${scan.referencedAssetCount}`,
+    `Matched local assets: ${scan.matchedAssetCount}`,
+    `Missing local assets: ${scan.missingAssetCount}`,
+    `Ignored files: ${scan.ignoredCount}`
+  ];
+  if (scan.warnings.length > 0) {
+    lines.push("", ...scan.warnings.slice(0, 12));
+    if (scan.warnings.length > 12) lines.push(`... and ${scan.warnings.length - 12} more warning(s)`);
+  }
+  markdownScanOutput.textContent = lines.join("\n");
+}
+
+function updateMarkdownSourceMode(): void {
+  const folderMode = markdownSourceMode.value === "folder";
+  markdownFileRow.hidden = folderMode;
+  markdownFolderRow.hidden = !folderMode;
 }
 
 function selectedImportFiles(): {
@@ -239,6 +529,7 @@ function renderFilterBar(): void {
     { value: "url", label: "Web" },
     { value: "epub", label: "EPUB" },
     { value: "pdf", label: "PDF" },
+    { value: "markdown", label: "Markdown" },
     { value: "collection", label: "Collection" }
   ]) {
     const chip = document.createElement("button");
@@ -454,9 +745,11 @@ function renderOverview(entries: ReturnType<typeof buildReaderListEntries>): voi
   const web = entries.filter((entry) => entry.kind === "standalone" && (entry.sourceType === "url" || entry.sourceType === "singlefile_html")).length;
   const epub = entries.filter((entry) => entry.kind === "standalone" && entry.sourceType === "epub").length;
   const pdf = entries.filter((entry) => entry.kind === "standalone" && entry.sourceType === "pdf").length;
+  const markdown = entries.filter((entry) => entry.kind === "standalone" && entry.sourceType === "markdown").length;
   if (web > 0) breakdown.push(`${web} web`);
   if (epub > 0) breakdown.push(`${epub} epub`);
   if (pdf > 0) breakdown.push(`${pdf} pdf`);
+  if (markdown > 0) breakdown.push(`${markdown} markdown`);
   if (collectionCount > 0) breakdown.push(`${collectionCount} collection${collectionCount !== 1 ? "s" : ""}`);
 
   // Card 2 (Reader Ready): total document count with breakdown
@@ -544,7 +837,7 @@ function itemMoreMenu(item: KnowledgeItem): HTMLElement {
   panel.className = "more-menu-panel";
 
   panel.append(
-    actionButton("Reparse", item.sourceType === "pdf", async () => reparseItem(item.itemId), menu),
+    actionButton("Reparse", !["pdf", "epub", "markdown"].includes(item.sourceType), async () => reparseItem(item.itemId), menu),
     actionButton("Remove", false, async () => deleteItem(item, "remove"), menu),
     actionButton("Purge", false, async () => deleteItem(item, "purge"), menu, "danger-button")
   );
@@ -794,6 +1087,8 @@ function sourceBadgeLabel(sourceType: KnowledgeSourceType): string {
       return "EPUB";
     case "pdf":
       return "PDF";
+    case "markdown":
+      return "Markdown";
     case "singlefile_html":
       return "Web Page";
     default:
@@ -809,6 +1104,8 @@ function sourceShortLabel(sourceType: KnowledgeSourceType): string {
       return "EP";
     case "pdf":
       return "PDF";
+    case "markdown":
+      return "MD";
     case "singlefile_html":
       return "WEB";
     default:

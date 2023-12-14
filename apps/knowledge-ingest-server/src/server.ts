@@ -11,6 +11,7 @@ import {
   KnowledgeCaptureSaveRequestSchema,
   KnowledgeDocument,
   KnowledgeItem,
+  MarkdownImportResponse,
   normalizeUrlForKnowledge,
   RawDoc,
   EpubImportResponse,
@@ -24,6 +25,7 @@ import { loadConfig, ServerConfig } from "./config.js";
 import { parseEpub, type CalibreMetadata, type PandocRunner, type TocEntry } from "./epub.js";
 import { ResolvedInput, resolveKnowledgeCaptureInput } from "./input.js";
 import { documentToMarkdown } from "./markdown.js";
+import { parseMarkdown, type MarkdownAssetInput } from "./markdown-import.js";
 import { parsePage, type ParsedPage } from "./parser.js";
 import { KnowledgeStore } from "./store.js";
 
@@ -611,7 +613,52 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
     }
   });
 
-  app.post("/api/items/:itemId/reparse", async (request): Promise<EpubImportResponse> => {
+  app.post("/api/import/markdown", async (request): Promise<MarkdownImportResponse> => {
+    const input = parseMarkdownImportRequest(request.headers["content-type"], request.body);
+    if (input.assets.length > 0 && !input.relativePath) {
+      throw new Error("resource_root_markdown_required: relativePath is required when local assets are uploaded");
+    }
+    const parsed = await parseMarkdown(input.file, {
+      sourceUri: input.sourceUri ?? input.fileName,
+      relativePath: input.relativePath,
+      tags: input.tags,
+      assets: input.assets
+    });
+    try {
+      const documentWithAssets = await store.prepareDocumentAssets(parsed.document);
+      const markdown = documentToMarkdown(documentWithAssets);
+      const result = await store.saveImportItem({
+        itemId: parsed.itemId,
+        sourceType: "markdown",
+        sourceUri: parsed.rawdoc.source_uri,
+        rawdocId: parsed.rawdoc.rawdoc_id,
+        rawdoc: parsed.rawdoc,
+        rawContentPath: input.file,
+        document: documentWithAssets,
+        markdown,
+        pageTitle: documentWithAssets.meta.title,
+        language: documentWithAssets.meta.language,
+        creators: documentWithAssets.meta.authors,
+        tags: documentWithAssets.meta.tags,
+        identityHash: parsed.identityHash,
+        content: input.file,
+        contentExt: "md"
+      });
+      return {
+        knowledgeItem: result.knowledgeItem,
+        rawdoc: parsed.rawdoc,
+        document: documentWithAssets,
+        markdown,
+        saved: true,
+        paths: result.paths,
+        ...(parsed.warnings.length ? { warnings: parsed.warnings } : {})
+      };
+    } finally {
+      await parsed.cleanup();
+    }
+  });
+
+  app.post("/api/items/:itemId/reparse", async (request): Promise<EpubImportResponse | MarkdownImportResponse> => {
     const params = request.params as { itemId: string };
     const capture = await store.loadRawContentForItem(params.itemId);
     const oldDocId = capture.item.activeDocId;
@@ -663,6 +710,60 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
           markdown,
           saved: true as const,
           paths: result.paths,
+          ...(annotationWarnings ? { annotationWarnings } : {})
+        };
+      } finally {
+        await parsed.cleanup();
+      }
+    }
+
+    if (capture.rawdoc.source_type === "markdown") {
+      const oldDocument = oldDocId ? await store.loadDocument(oldDocId) : undefined;
+      const parsed = await parseMarkdown(Buffer.from(capture.content, "utf8"), {
+        rawdocId: capture.rawdoc.rawdoc_id,
+        sourceUri: capture.rawdoc.source_uri,
+        relativePath: stringValue(capture.rawdoc.metadata?.relativePath),
+        tags: capture.item.tags,
+        assets: await loadStoredMarkdownAssets(store, oldDocument)
+      });
+      try {
+        if (oldDocId) {
+          await store.deleteDerivedArtifacts(oldDocId);
+        }
+        const documentWithAssets = await store.prepareDocumentAssets(parsed.document);
+        const markdown = documentToMarkdown(documentWithAssets);
+        const rawdoc = {
+          ...parsed.rawdoc,
+          metadata: {
+            ...parsed.rawdoc.metadata,
+            reparsedFromItemId: capture.item.itemId
+          }
+        };
+        const result = await store.saveReparseResult({
+          itemId: capture.item.itemId,
+          sourceType: "markdown",
+          sourceUri: capture.rawdoc.source_uri,
+          rawdocId: capture.rawdoc.rawdoc_id,
+          rawdoc,
+          document: documentWithAssets,
+          markdown,
+          pageTitle: capture.item.title,
+          language: capture.item.language,
+          creators: capture.item.creators,
+          tags: capture.item.tags,
+          identityHash: capture.item.identityHash
+        });
+        const annotationWarnings = await migrateAnnotationsForReparse(
+          store, oldDocId, documentWithAssets
+        );
+        return {
+          knowledgeItem: result.knowledgeItem,
+          rawdoc,
+          document: documentWithAssets,
+          markdown,
+          saved: true,
+          paths: result.paths,
+          ...(parsed.warnings.length ? { warnings: parsed.warnings } : {}),
           ...(annotationWarnings ? { annotationWarnings } : {})
         };
       } finally {
@@ -1037,6 +1138,95 @@ function parseEpubImportRequest(contentType: string | undefined, body: unknown):
   throw new Error("EPUB file is required");
 }
 
+function parseMarkdownImportRequest(contentType: string | undefined, body: unknown): {
+  file: Buffer;
+  fileName?: string;
+  sourceUri?: string;
+  relativePath?: string;
+  tags?: string[];
+  assets: MarkdownAssetInput[];
+} {
+  if (Buffer.isBuffer(body)) {
+    if (contentType?.toLowerCase().startsWith("multipart/form-data")) {
+      return parseMultipartMarkdown(contentType, body);
+    }
+    return { file: body, assets: [] };
+  }
+
+  if (body && typeof body === "object") {
+    const record = body as Record<string, unknown>;
+    const encoded = typeof record.fileBase64 === "string" ? record.fileBase64 : undefined;
+    if (!encoded) {
+      throw new Error("fileBase64 is required");
+    }
+    return {
+      file: Buffer.from(encoded, "base64"),
+      fileName: stringValue(record.fileName),
+      sourceUri: stringValue(record.sourceUri),
+      relativePath: stringValue(record.relativePath),
+      tags: stringArray(record.tags),
+      assets: []
+    };
+  }
+
+  throw new Error("Markdown file is required");
+}
+
+function parseMultipartMarkdown(contentType: string, body: Buffer): {
+  file: Buffer;
+  fileName?: string;
+  sourceUri?: string;
+  relativePath?: string;
+  tags?: string[];
+  assets: MarkdownAssetInput[];
+} {
+  const boundaryMatch = /boundary=(?:"([^"]+)"|([^;]+))/i.exec(contentType);
+  const boundary = boundaryMatch?.[1] ?? boundaryMatch?.[2];
+  if (!boundary) {
+    throw new Error("multipart boundary is required");
+  }
+
+  const delimiter = `--${boundary}`;
+  const raw = body.toString("binary");
+  let file: Buffer | undefined;
+  let fileName: string | undefined;
+  let sourceUri: string | undefined;
+  let relativePath: string | undefined;
+  let tags: string[] | undefined;
+  const assets: MarkdownAssetInput[] = [];
+  const assetPaths: string[] = [];
+
+  for (const part of raw.split(delimiter)) {
+    if (!part || part === "--\r\n" || part === "--") continue;
+    const trimmed = part.replace(/^\r\n/, "").replace(/\r\n--$/, "");
+    const separator = trimmed.indexOf("\r\n\r\n");
+    if (separator < 0) continue;
+    const headerText = trimmed.slice(0, separator);
+    const dataText = trimmed.slice(separator + 4).replace(/\r\n$/, "");
+    const name = /name="([^"]+)"/i.exec(headerText)?.[1];
+    if (!name) continue;
+    const bytes = Buffer.from(dataText, "binary");
+    if (name === "file") {
+      file = bytes;
+      fileName = multipartFilename(headerText);
+    } else if (name === "asset") {
+      assets.push({ bytes, filename: multipartFilename(headerText) });
+    } else {
+      const value = bytes.toString("utf8").trim();
+      if (name === "sourceUri") sourceUri = value || undefined;
+      if (name === "relativePath") relativePath = value || undefined;
+      if (name === "tags") tags = value ? value.split(",").map((item) => item.trim()).filter(Boolean) : [];
+      if (name === "assetPath") assetPaths.push(value);
+    }
+  }
+
+  if (!file) throw new Error("multipart field file is required");
+  for (let index = 0; index < assets.length; index += 1) {
+    assets[index].filename = assetPaths[index] || assets[index].filename;
+  }
+  return { file, fileName, sourceUri, relativePath, tags, assets };
+}
+
 function parseMultipartEpub(contentType: string, body: Buffer): {
   file: Buffer;
   sourceUri?: string;
@@ -1168,6 +1358,29 @@ function stringValue(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
+async function loadStoredMarkdownAssets(
+  store: KnowledgeStore,
+  document: KnowledgeDocument | undefined
+): Promise<MarkdownAssetInput[]> {
+  if (!document) return [];
+  const assets: MarkdownAssetInput[] = [];
+  const seen = new Set<string>();
+  for (const section of document.sections) {
+    for (const asset of section.assets ?? []) {
+      const relativePath = asset.relative_path;
+      if (!relativePath || !asset.asset_id || seen.has(relativePath)) continue;
+      seen.add(relativePath);
+      try {
+        const stored = await store.loadAsset(asset.asset_id);
+        assets.push({ bytes: stored.bytes, filename: relativePath });
+      } catch {
+        // A missing old asset is reported by the Markdown parser on reparse.
+      }
+    }
+  }
+  return assets;
+}
+
 function stringArray(value: unknown): string[] | undefined {
   if (!Array.isArray(value)) {
     return undefined;
@@ -1212,6 +1425,7 @@ function isClientInputError(message: string): boolean {
     "Path escapes knowledge store",
     "Unsafe relative path",
     "unsupported_file_type",
+    "resource_root_markdown_required",
     "pandoc_missing",
     "parse_failed",
     "EPUB file is required",

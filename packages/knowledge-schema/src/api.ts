@@ -137,6 +137,10 @@ export interface EpubImportResponse {
   };
 }
 
+export interface MarkdownImportResponse extends EpubImportResponse {
+  warnings?: string[];
+}
+
 export interface KnowledgeItemListResponse {
   items: KnowledgeItem[];
 }

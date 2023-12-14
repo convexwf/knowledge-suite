@@ -121,6 +121,14 @@ p {
   padding: 18px;
 }
 
+.import-panel {
+  align-content: start;
+}
+
+.import-panel .primary-button {
+  width: 100%;
+}
+
 label {
   color: #42526a;
   display: grid;
@@ -150,6 +158,63 @@ select {
   overflow-wrap: anywhere;
   padding: 10px;
   white-space: pre-wrap;
+}
+
+#import-dialog {
+  background: #ffffff;
+  border: 1px solid #c9d4e2;
+  border-radius: 10px;
+  color: #172033;
+  max-width: 620px;
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+  padding: 0;
+  width: calc(100% - 32px);
+}
+
+#import-dialog::backdrop {
+  background: rgb(23 32 51 / 42%);
+}
+
+.import-dialog {
+  display: grid;
+  gap: 16px;
+  padding: 22px;
+}
+
+.import-config {
+  background: #f8fafc;
+  border: 1px solid #d9e1ea;
+  border-radius: 8px;
+  display: grid;
+  gap: 14px;
+  padding: 14px;
+}
+
+.import-config[hidden] {
+  display: none;
+}
+
+.import-config-heading {
+  display: grid;
+  gap: 2px;
+}
+
+.file-picker-name {
+  color: #526174;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+#markdown-scan-output {
+  max-height: 180px;
+  overflow: auto;
+}
+
+.dialog-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
 }
 
 .item-list {

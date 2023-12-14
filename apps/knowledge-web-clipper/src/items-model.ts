@@ -28,7 +28,7 @@ export interface ReaderListStandalone extends KnowledgeItem {
 export type ReaderListEntry = ReaderListCollection | ReaderListStandalone;
 
 export function normalizeSourceFilter(value: string | null | undefined): SourceFilter {
-  return value === "url" || value === "epub" || value === "pdf" || value === "singlefile_html" || value === "collection"
+  return value === "url" || value === "epub" || value === "pdf" || value === "markdown" || value === "singlefile_html" || value === "collection"
     ? value
     : "all";
 }

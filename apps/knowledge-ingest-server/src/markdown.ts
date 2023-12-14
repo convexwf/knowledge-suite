@@ -32,7 +32,7 @@ function sectionToMarkdown(section: DocumentSection): string[] {
     case "list":
       return [...(section.items ?? []).map((item) => `- ${typeof item === "string" ? item : item.text}`), ""];
     case "code":
-      return ["```", section.content ?? "", "```", ""];
+      return [`\`\`\`${section.language ?? ""}`, section.content ?? "", "\`\`\`", ""];
     case "figure":
       return figureToMarkdown(section);
     case "table":

@@ -3,5 +3,6 @@ dist/
 apps/*/dist/
 packages/*/dist/
 knowledge-store/
+.env
 .DS_Store
 **/tmp

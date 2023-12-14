@@ -30,6 +30,11 @@
     "defuddle": "^0.18.1",
     "fastify": "^5.2.1",
     "linkedom": "^0.18.0",
+    "markdown-it": "^14.3.1",
+    "yaml": "^2.9.0",
     "zod": "^4.1.12"
+  },
+  "devDependencies": {
+    "@types/markdown-it": "^14.2.0"
   }
 }

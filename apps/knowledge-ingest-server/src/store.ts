@@ -36,7 +36,7 @@ import { resolveInsideRoot } from "./path-guard.js";
 interface ItemRow {
   item_id: string;
   item_type: "document" | "collection";
-  source_type: "url" | "singlefile_html" | "pdf" | "epub" | "virtual_collection";
+  source_type: "url" | "singlefile_html" | "pdf" | "epub" | "markdown" | "virtual_collection";
   identity_key: string | null;
   title: string | null;
   subtitle: string | null;
@@ -287,6 +287,13 @@ function parserInfoFor(document: KnowledgeDocument, rawdoc: RawDoc): {
 
 function sanitizeExtension(ext: string): string {
   return ext.replace(/[^a-zA-Z0-9]/g, "").slice(0, 10);
+}
+
+function contentExtension(sourceType: string): string {
+  if (sourceType === "epub") return "epub";
+  if (sourceType === "pdf") return "pdf";
+  if (sourceType === "markdown") return "md";
+  return "html";
 }
 
 function pathsFor(docId: string, captureId: string) {
@@ -946,11 +953,11 @@ export class KnowledgeStore {
     return paths;
   }
 
-  // ── save import (EPUB) ─────────────────────────────────────────────────
+  // ── save import (file-based documents) ─────────────────────────────────
 
   async saveImportItem(params: {
     itemId: string;
-    sourceType: "pdf" | "epub" | "singlefile_html" | "url";
+    sourceType: "pdf" | "epub" | "markdown" | "singlefile_html" | "url";
     sourceUri: string;
     rawdocId: string;
     rawdoc?: RawDoc;
@@ -1000,9 +1007,9 @@ export class KnowledgeStore {
       this.writeJson(paths.rawdocPath, rawdoc),
       this.writeJson(paths.documentPath, params.document),
       this.writeText(paths.markdownPath, params.markdown),
-      // Save raw content for reparse (EPUB/PDF import)
+      // Save raw content for reparse (file-based import)
       ...(params.content != null
-        ? [this.writeBuffer(`rawdocs/${captureId}.${params.sourceType}`, Buffer.isBuffer(params.content) ? params.content : Buffer.from(params.content))]
+        ? [this.writeBuffer(`rawdocs/${captureId}.${contentExtension(params.sourceType)}`, Buffer.isBuffer(params.content) ? params.content : Buffer.from(params.content))]
         : [])
     ]);
 
@@ -1037,7 +1044,7 @@ export class KnowledgeStore {
           source_type = excluded.source_type
       `).run(
         captureId, params.itemId, params.sourceUri, params.sourceType,
-        params.sourceType === "epub" ? "epub" : "pdf",
+        contentExtension(params.sourceType),
         params.pageTitle ?? null, now, now
       );
 
@@ -1088,7 +1095,7 @@ export class KnowledgeStore {
       throw error;
     }
 
-    // Create file_path alias for EPUB/PDF imports so they're findable
+    // Create file_path alias for file imports so they're findable
     this.upsertAlias(params.itemId, "file_path", params.sourceUri, true);
 
     const item = this.buildKnowledgeItem(
@@ -1221,7 +1228,7 @@ export class KnowledgeStore {
     }
 
     // Derive rawContentPath from existing file — raw content is never rewritten on reparse.
-    const rawContentExt = params.sourceType === "epub" ? "epub" : params.sourceType === "pdf" ? "pdf" : "html";
+    const rawContentExt = contentExtension(params.sourceType);
     const rawContentPath = `rawdocs/${captureId}.${rawContentExt}`;
 
     const item = this.buildKnowledgeItem(
@@ -1279,6 +1286,11 @@ export class KnowledgeStore {
         contentExt: ext,
         toc
       };
+    }
+
+    if (rawdoc.source_type === "markdown") {
+      const markdown = await this.readText(`rawdocs/${captureId}.md`);
+      return { item: this.buildKnowledgeItem(row) as KnowledgeItem, html: "", rawdoc, content: markdown, contentExt: "md", toc };
     }
 
     const html = await this.readText(`rawdocs/${captureId}.html`);

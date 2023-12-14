@@ -1,5 +1,11 @@
 export { loadConfig, type ServerConfig } from "./config.js";
 export { parseEpub, type TocEntry } from "./epub.js";
+export {
+  parseMarkdown,
+  type MarkdownAssetInput,
+  type ParseMarkdownOptions,
+  type ParsedMarkdown
+} from "./markdown-import.js";
 export { resolveKnowledgeCaptureInput, type ResolvedInput } from "./input.js";
 export { documentToMarkdown } from "./markdown.js";
 export { parsePage } from "./parser.js";

@@ -11,6 +11,7 @@ import {
   ExtensionSettings,
   HealthResult,
   EpubImportResult,
+  MarkdownImportResult,
   KnowledgeDocument,
   KnowledgeCaptureRequestBody,
   KnowledgeCaptureSaveRequestBody,
@@ -74,7 +75,14 @@ export interface KnowledgeApiClient {
     metadataOpf?: File;
     cover?: File;
   }): Promise<EpubImportResult>;
-  reparseItem(itemId: string): Promise<EpubImportResult>;
+  importMarkdown(body: {
+    file: File;
+    sourceUri?: string;
+    relativePath?: string;
+    tags?: string[];
+    assets?: Array<{ file: File; relativePath: string }>;
+  }): Promise<MarkdownImportResult>;
+  reparseItem(itemId: string): Promise<EpubImportResult | MarkdownImportResult>;
   deleteItem(itemId: string, mode?: KnowledgeItemDeleteMode): Promise<KnowledgeItemDeleteResult>;
   document(docId: string): Promise<KnowledgeDocument>;
   documentMarkdown(docId: string): Promise<string>;
@@ -238,7 +246,23 @@ export function createKnowledgeApiClient(settings: ExtensionSettings): Knowledge
       }
       return requestForm<EpubImportResult>(baseUrl, settings.token, "/api/import/epub", form, options);
     },
-    reparseItem: (itemId) => request<EpubImportResult>(
+    importMarkdown: (body) => {
+      const form = new FormData();
+      form.append("file", body.file, body.file.name);
+      form.append("sourceUri", body.sourceUri?.trim() || body.file.name);
+      if (body.relativePath?.trim()) {
+        form.append("relativePath", body.relativePath.trim());
+      }
+      if (body.tags?.length) {
+        form.append("tags", body.tags.join(","));
+      }
+      for (const asset of body.assets ?? []) {
+        form.append("assetPath", asset.relativePath);
+        form.append("asset", asset.file, asset.relativePath);
+      }
+      return requestForm<MarkdownImportResult>(baseUrl, settings.token, "/api/import/markdown", form, options);
+    },
+    reparseItem: (itemId) => request<EpubImportResult | MarkdownImportResult>(
       baseUrl,
       settings.token,
       "POST",

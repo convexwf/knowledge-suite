@@ -22,7 +22,7 @@ services:
     ports:
       - "127.0.0.1:18765:18765"
     volumes:
-      - ./knowledge-store:/data
+      - ${KNOWLEDGE_STORE_HOST:-./knowledge-store}:/data
     healthcheck:
       test:
         [

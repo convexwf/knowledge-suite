@@ -1,7 +1,7 @@
 export type InputMode = "browser_html" | "server_fetch";
 export type PanelView = "preview" | "json" | "rawdoc" | "parser" | "saved" | "batch";
 export type KnowledgeItemState = "empty" | "captured" | "parsed";
-export type KnowledgeSourceType = "url" | "singlefile_html" | "pdf" | "epub";
+export type KnowledgeSourceType = "url" | "singlefile_html" | "pdf" | "epub" | "markdown";
 export type KnowledgeItemDeleteMode = "remove" | "purge";
 export const STORE_CLEAR_CONFIRMATION = "CLEAR KNOWLEDGE STORE";
 export const STORE_CLEAR_PARSED_CONFIRMATION = "CLEAR PARSED RESULTS";
@@ -108,7 +108,7 @@ export interface KnowledgeDocument {
     title: string;
     page_title?: string;
     source?: {
-      type?: "html" | "pdf" | "epub";
+      type?: "html" | "pdf" | "epub" | "markdown";
       url?: string | null;
       rawdoc_id?: string;
       [key: string]: unknown;
@@ -123,15 +123,18 @@ export interface KnowledgeDocument {
   };
   sections: Array<{
     section_id?: string;
+    anchor_id?: string;
     type: string;
     level?: number;
     content?: string;
+    language?: string;
     items?: Array<string | { text: string; items?: string[] }>;
     rows?: unknown[];
     assets?: Array<{
       asset_id?: string;
       path?: string;
       source_url?: string;
+      relative_path?: string;
       alt?: string;
       caption?: string | null;
     }>;
@@ -197,6 +200,11 @@ export interface EpubImportResult {
     documentPath: string;
     markdownPath: string;
   };
+  warnings?: string[];
+}
+
+export interface MarkdownImportResult extends EpubImportResult {
+  warnings?: string[];
 }
 
 export interface SavedKnowledgeItem {

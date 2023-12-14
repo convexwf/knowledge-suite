@@ -11,7 +11,7 @@
       <header class="page-header">
         <div>
           <h1>Knowledge Items</h1>
-          <p>Open saved web clips and EPUB documents in reader mode.</p>
+          <p>Open saved web clips, EPUB books, and Markdown documents in reader mode.</p>
         </div>
         <div class="header-actions">
           <button id="refresh-items" type="button">Refresh</button>
@@ -38,30 +38,14 @@
       </section>
 
       <section class="workspace-grid">
-        <form id="upload-form" class="panel upload-panel">
+        <section class="panel import-panel">
           <div>
-            <h2>Import EPUB</h2>
-            <p class="panel-description">Saved files use the same rawdocs, documents, chunks, and assets pipeline.</p>
+            <h2>Import</h2>
+            <p class="panel-description">Choose a source type and configure the import in one place.</p>
           </div>
-          <label>
-            EPUB file
-            <input id="epub-file" type="file" accept=".epub,application/epub+zip" />
-          </label>
-          <label>
-            Calibre folder
-            <input id="calibre-folder" type="file" webkitdirectory multiple />
-          </label>
-          <label>
-            Title hint
-            <input id="title-hint" type="text" autocomplete="off" placeholder="Optional" />
-          </label>
-          <label>
-            Tags
-            <input id="tags-input" type="text" autocomplete="off" placeholder="comma separated" />
-          </label>
-          <button id="upload-button" type="submit">Import</button>
+          <button id="open-import" type="button" class="primary-button">Open Import</button>
           <div id="status-output" class="status-output" role="status"></div>
-        </form>
+        </section>
 
         <section class="panel list-panel">
           <div class="list-toolbar">
@@ -88,6 +72,87 @@
         </section>
       </section>
     </main>
+
+    <dialog id="import-dialog">
+      <form id="import-form" class="import-dialog">
+        <div>
+          <h2>Import source</h2>
+          <p class="panel-description">Choose a source type, configure it, then review before importing.</p>
+        </div>
+        <label>
+          Source type
+          <select id="import-source-type">
+            <option value="epub">EPUB</option>
+            <option value="markdown">Markdown</option>
+          </select>
+        </label>
+
+        <section id="epub-import-config" class="import-config">
+          <div class="import-config-heading">
+            <h3>EPUB configuration</h3>
+            <p>Import a book file or a Calibre folder with optional metadata.</p>
+          </div>
+          <label>
+            EPUB file
+            <input id="epub-file" type="file" accept=".epub,application/epub+zip" />
+          </label>
+          <label>
+            Calibre folder
+            <input id="calibre-folder" type="file" webkitdirectory multiple />
+          </label>
+          <label>
+            Title hint
+            <input id="title-hint" type="text" autocomplete="off" placeholder="Optional" />
+          </label>
+          <label>
+            Tags
+            <input id="tags-input" type="text" autocomplete="off" placeholder="comma separated" />
+          </label>
+        </section>
+
+        <section id="markdown-import-config" class="import-config" hidden>
+          <div class="import-config-heading">
+            <h3>Markdown configuration</h3>
+            <p>Import a single file or folder. A custom resource folder must contain the current Markdown file.</p>
+          </div>
+          <label>
+            Source mode
+            <select id="markdown-source-mode">
+              <option value="file">Single file</option>
+              <option value="folder">Folder</option>
+            </select>
+          </label>
+          <label id="markdown-file-row">
+            Markdown file
+            <input id="markdown-file" type="file" accept=".md,.markdown,text/markdown" />
+          </label>
+          <label id="markdown-folder-row" hidden>
+            Markdown folder
+            <button id="choose-markdown-folder" type="button">Choose folder</button>
+            <span id="markdown-folder-name" class="file-picker-name">No folder selected</span>
+            <input id="markdown-folder" type="file" webkitdirectory multiple hidden />
+          </label>
+          <label>
+            Resource folder (optional)
+            <button id="choose-markdown-resource-folder" type="button">Choose folder</button>
+            <span id="markdown-resource-folder-name" class="file-picker-name">No resource folder selected</span>
+            <input id="markdown-resource-folder" type="file" webkitdirectory multiple hidden />
+          </label>
+          <label>
+            Tags
+            <input id="markdown-tags-input" type="text" autocomplete="off" placeholder="comma separated" />
+          </label>
+          <div id="markdown-scan-output" class="status-output" role="status">Choose a source and scan before importing.</div>
+        </section>
+
+        <div class="dialog-actions">
+          <button id="import-cancel" type="button">Cancel</button>
+          <button id="markdown-scan" type="button" hidden>Scan</button>
+          <button id="upload-button" type="submit" class="primary-button">Import EPUB</button>
+          <button id="markdown-import" type="submit" class="primary-button" hidden disabled>Import Markdown</button>
+        </div>
+      </form>
+    </dialog>
     <script type="module" src="items.js"></script>
   </body>
 </html>

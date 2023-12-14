@@ -35,6 +35,16 @@ describe("reader list and reader style regressions", () => {
     expect(itemsTs).toContain("if (collectionCount > 0) breakdown.push(`${collectionCount} collection");
   });
 
+  it("uses one import entry point with separate source configuration sections", () => {
+    expect(itemsHtml).toContain('id="open-import"');
+    expect(itemsHtml).toContain('id="import-dialog"');
+    expect(itemsHtml).toContain('id="import-source-type"');
+    expect(itemsHtml).toContain('id="epub-import-config"');
+    expect(itemsHtml).toContain('id="markdown-import-config"');
+    expect(itemsHtml).not.toContain('id="open-markdown-import"');
+    expect(itemsTs).toContain('if (importSourceType.value === "markdown")');
+  });
+
   it("keeps collection navigation as floating hidden-by-default controls", () => {
     expect(readerHtml).toContain('id="collection-nav"');
     expect(readerHtml).toContain('hidden aria-label="Previous in collection"');

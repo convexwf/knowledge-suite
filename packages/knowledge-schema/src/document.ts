@@ -2,7 +2,7 @@
 
 export interface RawDoc {
   rawdoc_id: string;
-  source_type: "url" | "singlefile_html" | "pdf" | "epub";
+  source_type: "url" | "singlefile_html" | "pdf" | "epub" | "markdown";
   source_uri: string;
   fetch_time: string;
   content_type?: string;
@@ -12,7 +12,7 @@ export interface RawDoc {
 
 export interface KnowledgeItem {
   itemId: string;
-  sourceType: "url" | "singlefile_html" | "pdf" | "epub";
+  sourceType: "url" | "singlefile_html" | "pdf" | "epub" | "markdown";
   identityHash: string;
   activeRawdocId: string;
   activeDocId?: string;
@@ -45,15 +45,18 @@ export type DocumentSectionType =
 
 export interface DocumentSection {
   section_id?: string;
+  anchor_id?: string;
   type: DocumentSectionType;
   level?: number;
   content?: string;
+  language?: string;
   items?: Array<string | { text: string; items?: string[] }>;
   rows?: unknown[];
   assets?: Array<{
     asset_id?: string;
     path?: string;
     source_url?: string;
+    relative_path?: string;
     alt?: string;
     caption?: string | null;
   }>;
@@ -66,7 +69,7 @@ export interface KnowledgeDocument {
     title: string;
     page_title?: string;
     source: {
-      type: "html" | "pdf" | "epub";
+      type: "html" | "pdf" | "epub" | "markdown";
       url?: string | null;
       rawdoc_id?: string;
     };

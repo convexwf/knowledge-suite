@@ -48,7 +48,7 @@ async function renderSection(
   switch (section.type) {
     case "heading":
       return section.content
-        ? [headingNode(section.level ?? 2, section.content, nextHeadingIndex())]
+        ? [headingNode(section.level ?? 2, section.content, nextHeadingIndex(), section.anchor_id)]
         : [];
     case "paragraph":
       return section.content ? [paragraphNode(section.content)] : [];
@@ -63,7 +63,7 @@ async function renderSection(
       return items.length ? [buildSectionList(items)] : [];
     }
     case "code":
-      return [codeBlock(section.content ?? "")];
+      return [codeBlock(section.content ?? "", section.language)];
     case "figure": {
       const blocks: HTMLElement[] = [];
       for (const asset of section.assets ?? []) {
@@ -106,11 +106,11 @@ function buildSectionList(items: NonNullable<ReaderSection["items"]>): HTMLEleme
   return list;
 }
 
-function headingNode(level: number, text: string, index: number): HTMLElement {
+function headingNode(level: number, text: string, index: number, anchorId?: string): HTMLElement {
   const normalizedLevel = Math.min(Math.max(level, 1), 6);
   const heading = document.createElement(`h${normalizedLevel}`);
   appendInline(heading, text);
-  heading.id = slugify(text, index);
+  heading.id = anchorId || slugify(text, index);
   return heading;
 }
 
@@ -352,6 +352,9 @@ function assetIdFromSrc(src: string): string | undefined {
 }
 
 function isSafeUrl(value: string, kind: "image" | "link"): boolean {
+  if (kind === "link" && value.startsWith("#")) {
+    return true;
+  }
   try {
     const baseUrl = globalThis.location?.href || "https://reader.invalid/";
     const url = new URL(value, baseUrl);
