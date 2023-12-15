@@ -94,6 +94,27 @@ describe("section-first reader renderer", () => {
       .toEqual(["blob:asset-1", "blob:asset-2"]);
   });
 
+  it("resolves protected GitHub images through the authenticated URL resolver", async () => {
+    const resolved: string[] = [];
+    const model = documentModel();
+    const figure = model.sections.find((section) => section.type === "figure");
+    if (!figure || figure.type !== "figure") throw new Error("figure fixture missing");
+    figure.assets = [{
+      source_url: "/api/items/github%3Asha256%3Aitem/github-asset/aW1hZ2U"
+    }];
+
+    const target = document.createElement("main");
+    await renderDocument(model, target, {
+      resolveAssetUrl: async (sourceUrl) => {
+        resolved.push(sourceUrl);
+        return "blob:github-image";
+      }
+    });
+
+    expect(resolved).toEqual(["/api/items/github%3Asha256%3Aitem/github-asset/aW1hZ2U"]);
+    expect(target.querySelector("figure img")?.getAttribute("src")).toBe("blob:github-image");
+  });
+
   it("reports missing identities and empty legacy sections without blocking rendering", async () => {
     const diagnostics: string[] = [];
     const model = documentModel();

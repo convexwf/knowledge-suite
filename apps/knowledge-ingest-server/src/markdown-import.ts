@@ -23,6 +23,12 @@ export interface MarkdownAssetInput {
   filename?: string;
 }
 
+export interface MarkdownRemoteAssetInput {
+  relativePath: string;
+  sourceUrl: string;
+  source?: string;
+}
+
 export interface ParseMarkdownOptions {
   rawdocId?: string;
   docId?: string;
@@ -31,6 +37,7 @@ export interface ParseMarkdownOptions {
   titleHint?: string;
   tags?: string[];
   assets?: MarkdownAssetInput[];
+  remoteAssets?: MarkdownRemoteAssetInput[];
 }
 
 export interface ParsedMarkdown {
@@ -45,6 +52,8 @@ export interface ParsedMarkdown {
 interface MarkdownContext {
   sourceDir: string;
   assetFiles: Map<string, MarkdownAssetInput>;
+  remoteAssetsByPath: Map<string, MarkdownRemoteAssetInput>;
+  remoteAssetsBySource: Map<string, MarkdownRemoteAssetInput>;
   tempDir: string;
   warnings: string[];
   writtenAssets: Map<string, string>;
@@ -83,6 +92,7 @@ export async function parseMarkdown(bytes: Buffer, options: ParseMarkdownOptions
     const context: MarkdownContext = {
       sourceDir: sourceRelativePath ? posix.dirname(sourceRelativePath) : "",
       assetFiles: buildAssetIndex(options.assets ?? [], warnings),
+      ...buildRemoteAssetIndex(options.remoteAssets ?? [], warnings),
       tempDir,
       warnings,
       writtenAssets: new Map()
@@ -138,6 +148,7 @@ export async function parseMarkdown(bytes: Buffer, options: ParseMarkdownOptions
         },
         authors,
         published_at: stringValue(frontmatter.value.published_at),
+        updated_at: stringValue(frontmatter.value.updated_at),
         ingested_at: fetchTime,
         language: stringValue(frontmatter.value.language),
         tags,
@@ -304,6 +315,16 @@ function imageAssets(inline: Token, context: MarkdownContext): NonNullable<Docum
     if (child.type !== "image") continue;
     const src = attr(child, "src");
     if (!src) continue;
+    const remoteAsset = context.remoteAssetsBySource.get(src);
+    if (remoteAsset) {
+      assets.push({
+        source_url: remoteAsset.sourceUrl,
+        relative_path: remoteAsset.relativePath,
+        alt: child.content,
+        caption: attr(child, "title") ?? null
+      });
+      continue;
+    }
     if (isRemoteUrl(src)) {
       assets.push({ source_url: src, alt: child.content, caption: attr(child, "title") ?? null });
       continue;
@@ -311,6 +332,16 @@ function imageAssets(inline: Token, context: MarkdownContext): NonNullable<Docum
     const relativePath = resolveAssetPath(context.sourceDir, src);
     if (!relativePath) {
       context.warnings.push(`Unsafe local image reference skipped: ${src}`);
+      continue;
+    }
+    const remoteByPath = context.remoteAssetsByPath.get(relativePath);
+    if (remoteByPath) {
+      assets.push({
+        source_url: remoteByPath.sourceUrl,
+        relative_path: remoteByPath.relativePath,
+        alt: child.content,
+        caption: attr(child, "title") ?? null
+      });
       continue;
     }
     const input = context.assetFiles.get(relativePath);
@@ -370,6 +401,31 @@ function buildAssetIndex(inputs: MarkdownAssetInput[], warnings: string[]): Map<
     result.set(filename, input);
   }
   return result;
+}
+
+function buildRemoteAssetIndex(
+  inputs: MarkdownRemoteAssetInput[],
+  warnings: string[]
+): Pick<MarkdownContext, "remoteAssetsByPath" | "remoteAssetsBySource"> {
+  const byPath = new Map<string, MarkdownRemoteAssetInput>();
+  const bySource = new Map<string, MarkdownRemoteAssetInput>();
+  for (const input of inputs) {
+    const relativePath = normalizeRelativePath(input.relativePath);
+    if (!relativePath || !input.sourceUrl) {
+      warnings.push("A remote asset was skipped because its path or source URL is invalid.");
+      continue;
+    }
+    const normalized = { ...input, relativePath };
+    if (byPath.has(relativePath)) {
+      warnings.push(`Duplicate remote asset path: ${relativePath}`);
+      continue;
+    }
+    byPath.set(relativePath, normalized);
+    if (input.source) {
+      bySource.set(input.source, normalized);
+    }
+  }
+  return { remoteAssetsByPath: byPath, remoteAssetsBySource: bySource };
 }
 
 function extractFrontmatter(text: string): { value: Record<string, unknown>; body: string } {

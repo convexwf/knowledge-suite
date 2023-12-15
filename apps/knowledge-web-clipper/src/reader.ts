@@ -4,7 +4,7 @@ import { stripSectionAnchors } from "./markdown-utils.js";
 import { renderDocument } from "./reader-renderer.js";
 import { getSettings } from "./settings.js";
 import { openKnowledgePage } from "./tabs.js";
-import { Annotation, KnowledgeDocument, KnowledgeItem, SummaryAnnotation } from "./types.js";
+import { Annotation, KnowledgeDocument, KnowledgeItem, RawDoc, SummaryAnnotation } from "./types.js";
 
 const titleOutput = mustGet<HTMLElement>("reader-title");
 const kickerOutput = mustGet<HTMLElement>("reader-kicker");
@@ -47,6 +47,7 @@ let currentItemId = itemId || "";
 let currentMarkdown = "";
 let currentDocument: KnowledgeDocument | undefined;
 let currentItem: KnowledgeItem | undefined;
+let currentRawdoc: RawDoc | undefined;
 let currentAnnotations: Annotation[] = [];
 let currentDocId = "";
 let collectionNavData: {
@@ -120,7 +121,11 @@ copyButton.addEventListener("click", async () => {
 
 reparseButton.addEventListener("click", () => {
   if (itemId) {
-    void reparseCurrentItem(itemId);
+    if (isGitHubRawdoc(currentRawdoc)) {
+      void refreshCurrentItem(itemId);
+    } else {
+      void reparseCurrentItem(itemId);
+    }
   }
 });
 
@@ -174,8 +179,10 @@ async function loadReader(): Promise<void> {
       const detail = await client.item(itemId);
       currentItem = detail.item;
       currentItemId = detail.item.itemId;
+      currentRawdoc = detail.rawdoc;
       currentDocument = detail.document;
       reparseButton.disabled = detail.item.sourceType !== "epub" && detail.item.sourceType !== "markdown";
+      reparseButton.textContent = isGitHubRawdoc(currentRawdoc) ? "Refresh" : "Reparse";
       if (!currentDocument && detail.item.activeDocId) {
         currentDocument = await client.document(detail.item.activeDocId);
       }
@@ -187,15 +194,16 @@ async function loadReader(): Promise<void> {
     }
 
     if (!currentDocument) {
-      renderMetadata(currentItem, undefined);
+      renderMetadata(currentItem, undefined, currentRawdoc);
       showMessage("This item has no parsed document yet. Reparse it from this page or the item list.");
       copyButton.disabled = true;
       return;
     }
 
-    renderMetadata(currentItem, currentDocument);
+    renderMetadata(currentItem, currentDocument, currentRawdoc);
     await renderDocument(currentDocument, contentOutput, {
       resolveAsset: (assetId) => client.assetBlobUrl(assetId),
+      resolveAssetUrl: (sourceUrl) => client.githubAssetBlobUrl(sourceUrl),
       registerObjectUrl: (url) => objectUrls.add(url),
       onDiagnostic: (diagnostic) => console.warn("[Reader] section diagnostic", diagnostic)
     });
@@ -215,15 +223,18 @@ async function loadReader(): Promise<void> {
 async function reparseCurrentItem(value: string): Promise<void> {
   reparseButton.disabled = true;
   aiSummarizeBtn.disabled = true;
-  showMessage("Reparsing EPUB...");
+  showMessage("Reparsing item...");
   try {
     const result = await client.reparseItem(value);
     currentItem = result.knowledgeItem;
+    currentRawdoc = result.rawdoc;
     currentDocument = result.document;
     currentMarkdown = result.markdown;
-    renderMetadata(currentItem, currentDocument);
+    reparseButton.textContent = isGitHubRawdoc(currentRawdoc) ? "Refresh" : "Reparse";
+    renderMetadata(currentItem, currentDocument, currentRawdoc);
     await renderDocument(currentDocument, contentOutput, {
       resolveAsset: (assetId) => client.assetBlobUrl(assetId),
+      resolveAssetUrl: (sourceUrl) => client.githubAssetBlobUrl(sourceUrl),
       registerObjectUrl: (url) => objectUrls.add(url),
       onDiagnostic: (diagnostic) => console.warn("[Reader] section diagnostic", diagnostic)
     });
@@ -247,11 +258,58 @@ async function reparseCurrentItem(value: string): Promise<void> {
   }
 }
 
-function renderMetadata(item: KnowledgeItem | undefined, document: KnowledgeDocument | undefined): void {
+async function refreshCurrentItem(value: string): Promise<void> {
+  reparseButton.disabled = true;
+  aiSummarizeBtn.disabled = true;
+  showMessage("Checking GitHub for updates...");
+  try {
+    const result = await client.refreshItem(value);
+    if (result.status === "up_to_date") {
+      showMessage(`GitHub Markdown is already up to date${result.commitSha ? ` (${result.commitSha.slice(0, 8)})` : ""}.`);
+      return;
+    }
+    if (result.status === "remote_deleted") {
+      showMessage("The GitHub Markdown file was deleted remotely. The local copy is kept.");
+      return;
+    }
+    if (!result.knowledgeItem || !result.document) {
+      throw new Error("GitHub refresh returned no updated document");
+    }
+    currentItem = result.knowledgeItem;
+    currentRawdoc = result.rawdoc;
+    currentDocument = result.document;
+    currentMarkdown = result.markdown ?? currentMarkdown;
+    renderMetadata(currentItem, currentDocument, currentRawdoc);
+    await renderDocument(currentDocument, contentOutput, {
+      resolveAsset: (assetId) => client.assetBlobUrl(assetId),
+      resolveAssetUrl: (sourceUrl) => client.githubAssetBlobUrl(sourceUrl),
+      registerObjectUrl: (url) => objectUrls.add(url),
+      onDiagnostic: (diagnostic) => console.warn("[Reader] section diagnostic", diagnostic)
+    });
+    renderOutline();
+    copyButton.disabled = !currentMarkdown;
+    currentDocId = currentDocument.doc_id;
+    aiSummarizeBtn.disabled = false;
+    await loadAndApplyAnnotations();
+    showMessage(`GitHub Markdown refreshed${result.commitSha ? ` to ${result.commitSha.slice(0, 8)}` : ""}.`);
+    await loadCollectionContext();
+  } catch (error) {
+    showMessage(error instanceof Error ? error.message : String(error));
+  } finally {
+    reparseButton.disabled = false;
+  }
+}
+
+function renderMetadata(item: KnowledgeItem | undefined, document: KnowledgeDocument | undefined, rawdoc?: RawDoc): void {
   const title = document?.meta.title || item?.title || item?.subtitle || item?.itemId || "Knowledge Reader";
   titleOutput.textContent = title;
-  kickerOutput.textContent = item?.sourceType ? `${item.sourceType.toUpperCase()} reader` : "Document reader";
+  kickerOutput.textContent = isGitHubRawdoc(rawdoc)
+    ? "GITHUB MARKDOWN reader"
+    : item?.sourceType ? `${item.sourceType.toUpperCase()} reader` : "Document reader";
   metaOutput.replaceChildren();
+  if (rawdoc && isGitHubRawdoc(rawdoc)) {
+    appendGitHubMetadata(rawdoc);
+  }
   readerSourceOutput.textContent = sourceSummary(item, document);
   readerStateOutput.textContent = item?.state === "parsed"
     ? "Reader Ready"
@@ -274,6 +332,46 @@ function renderMetadata(item: KnowledgeItem | undefined, document: KnowledgeDocu
     const span = documentCreate("span", value);
     metaOutput.append(span);
   }
+}
+
+function appendGitHubMetadata(rawdoc: RawDoc): void {
+  const metadata = rawdoc.metadata as Record<string, unknown>;
+  const owner = stringValue(metadata.owner);
+  const repo = stringValue(metadata.repo);
+  const ref = stringValue(metadata.ref);
+  const path = stringValue(metadata.path);
+  const commitSha = stringValue(metadata.commitSha);
+  if (!owner || !repo || !ref || !path || !commitSha) return;
+
+  metaOutput.append(metadataLink("Repository", `${owner}/${repo}`, `https://github.com/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`));
+  metaOutput.append(metadataLink("Ref", ref, `https://github.com/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/tree/${encodeURIComponent(commitSha)}`));
+  metaOutput.append(metadataLink("Path", path, `https://github.com/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/blob/${encodeURIComponent(commitSha)}/${encodePath(path)}`));
+  metaOutput.append(metadataLink("Commit", commitSha.slice(0, 8), `https://github.com/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/commit/${encodeURIComponent(commitSha)}`));
+  const synced = stringValue(metadata.lastSyncedAt) ?? stringValue(metadata.lastCheckedAt);
+  if (synced) metaOutput.append(documentCreate("span", `Last synced ${formatDate(synced)}`));
+}
+
+function metadataLink(label: string, value: string, href: string): HTMLElement {
+  const span = document.createElement("span");
+  const link = document.createElement("a");
+  link.href = href;
+  link.target = "_blank";
+  link.rel = "noreferrer";
+  link.textContent = `${label}: ${value}`;
+  span.append(link);
+  return span;
+}
+
+function isGitHubRawdoc(rawdoc: RawDoc | undefined): boolean {
+  return rawdoc?.metadata?.provider === "github";
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function encodePath(path: string): string {
+  return path.split("/").map((part) => encodeURIComponent(part)).join("/");
 }
 
 interface HeadingNode {

@@ -118,6 +118,13 @@ Open the extension options page (`chrome://extensions` → **Details** →
 | `KNOWLEDGE_AI_OLLAMA_MODEL` | `qwen2.5:7b` | Ollama model name |
 | `KNOWLEDGE_FETCH_TIMEOUT_MS` | `15000` | Server fetch timeout |
 | `KNOWLEDGE_MAX_HTML_BYTES` | `10485760` | Max HTML payload size |
+| `KNOWLEDGE_GITHUB_TOKEN` | unset | Optional runtime-injected GitHub token for private repository Markdown |
+| `GITHUB_TOKEN` | unset | Legacy alias for `KNOWLEDGE_GITHUB_TOKEN` |
+| `GITHUB_API_URL` | `https://api.github.com` | GitHub API base URL |
+| `KNOWLEDGE_MAX_GITHUB_FILES` | `100` | Max Markdown files in one GitHub import |
+| `KNOWLEDGE_MAX_GITHUB_MARKDOWN_BYTES` | `5242880` | Max Markdown bytes in one GitHub import |
+| `KNOWLEDGE_MAX_GITHUB_ASSET_REFERENCES` | `500` | Max referenced images in one GitHub import |
+| `KNOWLEDGE_MAX_GITHUB_ASSET_BYTES` | `20971520` | Max private image proxy response size |
 
 ## Server Management
 
@@ -137,6 +144,14 @@ With a custom token:
 ```bash
 SERVER_TOKEN="your-token" make dev
 ```
+
+GitHub Markdown imports use `owner`, `repo`, `ref`, and a repository-relative `path`. The path may be a Markdown file or any nested directory; directory imports recurse through `.md` and `.markdown` files. For private repositories, inject a read-only GitHub token only at server runtime:
+
+```bash
+KNOWLEDGE_GITHUB_TOKEN="github_pat_..." make dev
+```
+
+GitHub Markdown images are not copied into the Knowledge Store. Public repository images use a commit-pinned `raw.githubusercontent.com` URL. Private repository images are fetched on demand through the authenticated Knowledge Server proxy, so the GitHub token never reaches the browser or the Store.
 
 The server persists data in `./knowledge-store/`. To reset:
 

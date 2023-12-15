@@ -1297,6 +1297,15 @@ export class KnowledgeStore {
     return { item: this.buildKnowledgeItem(row) as KnowledgeItem, html, rawdoc, content: html, contentExt: "html", toc };
   }
 
+  async updateRawdocMetadata(itemId: string, metadata: Record<string, unknown>): Promise<void> {
+    await this.ensure();
+    const row = this.database!.prepare("SELECT active_capture_id FROM items WHERE item_id = ?").get(itemId) as { active_capture_id: string | null } | undefined;
+    if (!row?.active_capture_id) throw new Error("Item has no active capture");
+    const rawdocPath = `rawdocs/${row.active_capture_id}.json`;
+    const rawdoc = await this.readJson<RawDoc>(rawdocPath);
+    await this.writeJson(rawdocPath, { ...rawdoc, metadata });
+  }
+
   // ── collection membership ──────────────────────────────────────────────
 
   async replaceCollectionMembers(collectionItemId: string, members: Array<{
@@ -1682,6 +1691,45 @@ export class KnowledgeStore {
   async loadMarkdown(docId: string): Promise<string> {
     await this.ensure();
     return this.readText(`markdown/${docId}.md`);
+  }
+
+  async loadGitHubAssetReference(itemId: string, assetRef: string): Promise<{
+    owner: string;
+    repo: string;
+    commitSha: string;
+    path: string;
+    blobSha?: string;
+    mediaType: string;
+    size?: number;
+  }> {
+    const detail = await this.loadItemDetail(itemId);
+    const metadata = detail.rawdoc?.metadata;
+    if (!metadata || metadata.provider !== "github") {
+      throw new Error("GitHub asset is not available for this item");
+    }
+    const assets = Array.isArray(metadata.assets) ? metadata.assets : [];
+    const asset = assets.find((value) => isObjectRecord(value) && value.assetRef === assetRef);
+    if (!asset || !isObjectRecord(asset)) {
+      throw new Error("GitHub asset does not exist");
+    }
+    const owner = stringValue(metadata.owner);
+    const repo = stringValue(metadata.repo);
+    const commitSha = stringValue(metadata.commitSha);
+    const path = stringValue(asset.path);
+    const blobSha = stringValue(asset.blobSha);
+    const mediaType = stringValue(asset.mediaType) ?? "application/octet-stream";
+    if (!owner || !repo || !commitSha || !path) {
+      throw new Error("GitHub asset metadata is incomplete");
+    }
+    return {
+      owner,
+      repo,
+      commitSha,
+      path,
+      ...(blobSha ? { blobSha } : {}),
+      mediaType,
+      size: numberValue(asset.size)
+    };
   }
 
   async loadAsset(assetId: string): Promise<{ path: string; contentType: string; bytes: Buffer }> {
@@ -2446,6 +2494,18 @@ function guessContentType(assetId: string): string {
     ".pdf": "application/pdf"
   };
   return map[ext] ?? "application/octet-stream";
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function numberValue(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
 // ── Search/context helpers ─────────────────────────────────────────────────

@@ -9,9 +9,12 @@ import {
 } from "./items-model.js";
 import { getSettings } from "./settings.js";
 import { openKnowledgePage } from "./tabs.js";
+import { parseGitHubMarkdownUrl } from "./github-markdown-url.js";
 import {
   CollectionDetail,
   CollectionSummary,
+  GitHubMarkdownRequest,
+  GitHubMarkdownScanResult,
   KnowledgeItem,
   KnowledgeSourceType
 } from "./types.js";
@@ -40,6 +43,7 @@ const importDialog = mustGet<HTMLDialogElement>("import-dialog");
 const importSourceType = mustGet<HTMLSelectElement>("import-source-type");
 const epubImportConfig = mustGet<HTMLElement>("epub-import-config");
 const markdownImportConfig = mustGet<HTMLElement>("markdown-import-config");
+const githubMarkdownImportConfig = mustGet<HTMLElement>("github-markdown-import-config");
 const markdownSourceMode = mustGet<HTMLSelectElement>("markdown-source-mode");
 const markdownFileRow = mustGet<HTMLElement>("markdown-file-row");
 const markdownFolderRow = mustGet<HTMLElement>("markdown-folder-row");
@@ -55,6 +59,11 @@ const markdownScanOutput = mustGet<HTMLElement>("markdown-scan-output");
 const importCancelButton = mustGet<HTMLButtonElement>("import-cancel");
 const markdownScanButton = mustGet<HTMLButtonElement>("markdown-scan");
 const markdownImportButton = mustGet<HTMLButtonElement>("markdown-import");
+const githubUrlInput = mustGet<HTMLInputElement>("github-url");
+const githubTagsInput = mustGet<HTMLInputElement>("github-tags-input");
+const githubScanOutput = mustGet<HTMLElement>("github-scan-output");
+const githubScanButton = mustGet<HTMLButtonElement>("github-scan");
+const githubImportButton = mustGet<HTMLButtonElement>("github-import");
 const itemList = mustGet<HTMLElement>("item-list");
 const refreshButton = mustGet<HTMLButtonElement>("refresh-items");
 const settingsButton = mustGet<HTMLButtonElement>("open-settings");
@@ -79,6 +88,7 @@ const query = new URLSearchParams(globalThis.location.search);
 let currentItems: KnowledgeItem[] = [];
 let currentCollections: CollectionSummary[] = [];
 let markdownScan: MarkdownImportScan | undefined;
+let githubScan: GitHubMarkdownScanResult | undefined;
 let markdownFolderHandle: MarkdownDirectoryHandle | undefined;
 let markdownResourceFolderHandle: MarkdownDirectoryHandle | undefined;
 let activeSourceFilter: SourceFilter = normalizeSourceFilter(query.get("source") ?? (query.get("collectionId") ? "collection" : "all"));
@@ -97,6 +107,8 @@ importForm.addEventListener("submit", (event) => {
   event.preventDefault();
   if (importSourceType.value === "markdown") {
     void importMarkdownFiles();
+  } else if (importSourceType.value === "github-markdown") {
+    void importGitHubMarkdown();
   } else {
     void importEpub();
   }
@@ -147,6 +159,14 @@ markdownSourceMode.addEventListener("change", () => {
 markdownScanButton.addEventListener("click", () => {
   void scanMarkdownFiles();
 });
+
+githubScanButton.addEventListener("click", () => {
+  void scanGitHubMarkdown();
+});
+
+for (const input of [githubUrlInput, githubTagsInput]) {
+  input.addEventListener("input", invalidateGitHubScan);
+}
 
 selectAll.addEventListener("change", () => {
   const checked = selectAll.checked;
@@ -316,21 +336,30 @@ function resetImportDialog(): void {
   markdownFolderHandle = undefined;
   markdownResourceFolderHandle = undefined;
   markdownScan = undefined;
+  githubScan = undefined;
   markdownScanOutput.textContent = "Choose a source and scan before importing.";
+  githubScanOutput.textContent = "Paste a GitHub URL and scan before importing.";
   updateMarkdownDirectoryNames();
   updateMarkdownSourceMode();
   updateImportSource();
 }
 
 function updateImportSource(): void {
+  const epub = importSourceType.value === "epub";
   const markdown = importSourceType.value === "markdown";
-  epubImportConfig.hidden = markdown;
+  const githubMarkdown = importSourceType.value === "github-markdown";
+  epubImportConfig.hidden = !epub;
   markdownImportConfig.hidden = !markdown;
-  uploadButton.hidden = markdown;
+  githubMarkdownImportConfig.hidden = !githubMarkdown;
+  uploadButton.hidden = markdown || githubMarkdown;
   markdownScanButton.hidden = !markdown;
   markdownImportButton.hidden = !markdown;
+  githubScanButton.hidden = !githubMarkdown;
+  githubImportButton.hidden = !githubMarkdown;
   if (markdown) {
     markdownImportButton.disabled = !markdownScan || markdownScan.documents.length === 0;
+  } else if (githubMarkdown) {
+    githubImportButton.disabled = !githubScan || githubScan.files.length === 0;
   } else {
     uploadButton.disabled = false;
   }
@@ -403,6 +432,92 @@ async function importMarkdownFiles(): Promise<void> {
     markdownImportButton.disabled = false;
     markdownScanButton.disabled = false;
   }
+}
+
+async function scanGitHubMarkdown(): Promise<void> {
+  if (!githubUrlInput.value.trim()) {
+    githubScanOutput.textContent = "Paste a GitHub Markdown URL first.";
+    githubImportButton.disabled = true;
+    return;
+  }
+  githubScanButton.disabled = true;
+  githubImportButton.disabled = true;
+  try {
+    const request = githubMarkdownRequest();
+    if (!request) {
+      githubScanOutput.textContent = "Paste a GitHub Markdown URL first.";
+      return;
+    }
+    githubScanOutput.textContent = "Scanning GitHub Markdown and image metadata...";
+    githubScan = await client.scanGitHubMarkdown(request);
+    renderGitHubScan(githubScan);
+    githubImportButton.disabled = githubScan.files.length === 0;
+  } catch (error) {
+    githubScan = undefined;
+    githubScanOutput.textContent = errorMessage(error);
+  } finally {
+    githubScanButton.disabled = false;
+  }
+}
+
+async function importGitHubMarkdown(): Promise<void> {
+  githubScanButton.disabled = true;
+  githubImportButton.disabled = true;
+  try {
+    const request = githubMarkdownRequest();
+    if (!request || !githubScan) {
+      githubScanOutput.textContent = request ? "Run Scan before importing." : "Paste a valid GitHub Markdown URL first.";
+      return;
+    }
+    githubScanOutput.textContent = "Importing GitHub Markdown...";
+    const result = await client.importGitHubMarkdown(request);
+    const succeeded = result.results.filter((item) => item.saved).length;
+    const failed = result.results.length - succeeded;
+    const warnings = result.results.reduce((sum, item) => sum + (item.warnings?.length ?? 0), 0);
+    const summary = `Imported ${succeeded}/${result.results.length} GitHub Markdown file(s).${warnings ? ` ${warnings} warning(s).` : ""}${failed ? ` ${failed} failed.` : ""}`;
+    githubScanOutput.textContent = [summary, ...result.results.filter((item) => item.error).map((item) => `${item.path}: ${item.error}`)].join("\n");
+    setStatus(summary);
+    const firstItem = result.results.find((item) => item.saved && item.knowledgeItem);
+    importDialog.close();
+    resetImportDialog();
+    await refreshItems();
+    if (firstItem?.knowledgeItem && result.results.length === 1 && failed === 0) {
+      openReader(firstItem.knowledgeItem.itemId);
+    }
+  } catch (error) {
+    githubScanOutput.textContent = errorMessage(error);
+  } finally {
+    githubScanButton.disabled = false;
+    githubImportButton.disabled = false;
+  }
+}
+
+function githubMarkdownRequest(): GitHubMarkdownRequest | undefined {
+  const parsed = parseGitHubMarkdownUrl(githubUrlInput.value);
+  if (!parsed) return undefined;
+  return { ...parsed, tags: parseTags(githubTagsInput.value) };
+}
+
+function invalidateGitHubScan(): void {
+  githubScan = undefined;
+  githubImportButton.disabled = true;
+  githubScanOutput.textContent = "GitHub URL or tags changed. Run Scan again.";
+}
+
+function renderGitHubScan(scan: GitHubMarkdownScanResult): void {
+  const imageCount = scan.files.reduce((sum, file) => sum + file.referencedAssetCount, 0);
+  const lines = [
+    `Source: ${scan.owner}/${scan.repo}@${scan.ref}:${scan.path}`,
+    `Resolved commit: ${scan.commitSha.slice(0, 12)}`,
+    `Markdown files: ${scan.files.length}`,
+    `Referenced images: ${imageCount}`,
+    `Image delivery: ${scan.private ? "server proxy" : "raw URL"}`
+  ];
+  if (scan.warnings.length > 0) {
+    lines.push("", ...scan.warnings.slice(0, 12));
+    if (scan.warnings.length > 12) lines.push(`... and ${scan.warnings.length - 12} more warning(s)`);
+  }
+  githubScanOutput.textContent = lines.join("\n");
 }
 
 function renderMarkdownScan(scan: MarkdownImportScan): void {

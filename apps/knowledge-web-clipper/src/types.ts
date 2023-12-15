@@ -207,6 +207,66 @@ export interface MarkdownImportResult extends EpubImportResult {
   warnings?: string[];
 }
 
+export interface GitHubMarkdownRequest {
+  owner: string;
+  repo: string;
+  ref: string;
+  path: string;
+  tags?: string[];
+}
+
+export interface GitHubMarkdownAssetSummary {
+  path: string;
+  blobSha?: string;
+  size?: number;
+  mediaType: string;
+  delivery: "raw" | "proxy";
+}
+
+export interface GitHubMarkdownScanFile {
+  path: string;
+  blobSha: string;
+  size: number;
+  referencedAssetCount: number;
+  assets: GitHubMarkdownAssetSummary[];
+  warnings: string[];
+}
+
+export interface GitHubMarkdownScanResult {
+  owner: string;
+  repo: string;
+  ref: string;
+  path: string;
+  commitSha: string;
+  private: boolean;
+  files: GitHubMarkdownScanFile[];
+  warnings: string[];
+}
+
+export interface GitHubMarkdownImportResult {
+  commitSha: string;
+  results: Array<{
+    path: string;
+    saved: boolean;
+    knowledgeItem?: KnowledgeItem;
+    warnings?: string[];
+    error?: string;
+  }>;
+}
+
+export interface GitHubMarkdownRefreshResult {
+  updated: boolean;
+  status: "up_to_date" | "updated" | "remote_deleted";
+  commitSha?: string;
+  checkedAt: string;
+  knowledgeItem?: KnowledgeItem;
+  rawdoc?: RawDoc;
+  document?: KnowledgeDocument;
+  markdown?: string;
+  warnings?: string[];
+  oldCommitSha?: string;
+}
+
 export interface SavedKnowledgeItem {
   normalizedUrl: string;
   urlHash: string;

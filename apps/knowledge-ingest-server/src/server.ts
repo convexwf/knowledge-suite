@@ -6,6 +6,9 @@ import {
   BatchDiscoverRequestSchema,
   BatchJobCreateRequestSchema,
   BatchJobItem,
+  GitHubMarkdownImportResponse,
+  GitHubMarkdownRefreshResponse,
+  GitHubMarkdownScanResponse,
   KnowledgeCapturePreviewRequestSchema,
   KnowledgeCaptureReparseRequestSchema,
   KnowledgeCaptureSaveRequestSchema,
@@ -23,6 +26,19 @@ import { createAIProvider } from "./ai-annotation/provider.js";
 import { taskManager } from "./ai-annotation/task.js";
 import { loadConfig, ServerConfig } from "./config.js";
 import { parseEpub, type CalibreMetadata, type PandocRunner, type TocEntry } from "./epub.js";
+import { GitHubClient, GitHubClientError } from "./github-client.js";
+import {
+  fetchGitHubMarkdown,
+  githubBlobUrl,
+  githubItemId,
+  githubRemoteAssetsForItem,
+  githubSourceKey,
+  parseGitHubMarkdownRequest,
+  type GitHubMarkdownDocument,
+  type GitHubMarkdownFetchOptions,
+  type GitHubMarkdownFetchResult,
+  type GitHubMarkdownRequest
+} from "./github-markdown-import.js";
 import { ResolvedInput, resolveKnowledgeCaptureInput } from "./input.js";
 import { documentToMarkdown } from "./markdown.js";
 import { parseMarkdown, type MarkdownAssetInput } from "./markdown-import.js";
@@ -37,12 +53,51 @@ type RuntimeServerConfig = Omit<ServerConfig, "maxImportBytes"> & {
 export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
   const maxImportBytes = config.maxImportBytes ?? 100 * 1024 * 1024;
   const effectiveConfig: ServerConfig = { ...config, maxImportBytes };
+  const githubClient = new GitHubClient({
+    apiUrl: config.githubApiUrl ?? "https://api.github.com",
+    token: config.githubToken,
+    timeoutMs: config.fetchTimeoutMs
+  });
+  const githubLimits = {
+    maxFiles: config.maxGithubFiles ?? 100,
+    maxMarkdownBytes: config.maxGithubMarkdownBytes ?? 5 * 1024 * 1024,
+    maxAssetReferences: config.maxGithubAssetReferences ?? 500,
+    maxAssetBytes: config.maxGithubAssetBytes ?? 20 * 1024 * 1024
+  };
   const app = fastify({
     logger: true,
     bodyLimit: Math.max(config.maxHtmlBytes, maxImportBytes)
   });
   const store = new KnowledgeStore(config.storeRoot);
   const activeBatchRuns = new Set<Promise<void>>();
+  const githubFetchCache = new Map<string, {
+    expiresAt: number;
+    promise: Promise<GitHubMarkdownFetchResult>;
+  }>();
+  const loadGitHubMarkdown = async (
+    input: GitHubMarkdownRequest,
+    options: GitHubMarkdownFetchOptions = {},
+    useCache = true
+  ): Promise<GitHubMarkdownFetchResult> => {
+    if (!useCache) {
+      return fetchGitHubMarkdown(githubClient, input, githubLimits, options);
+    }
+    const now = Date.now();
+    for (const [key, entry] of githubFetchCache) {
+      if (entry.expiresAt <= now) githubFetchCache.delete(key);
+    }
+    const key = `${input.owner}\u0000${input.repo}\u0000${input.ref}\u0000${input.path}`;
+    const cached = githubFetchCache.get(key);
+    if (cached && cached.expiresAt > now) return cached.promise;
+    const promise = fetchGitHubMarkdown(githubClient, input, githubLimits, options);
+    githubFetchCache.set(key, { expiresAt: now + 30_000, promise });
+    try {
+      return await promise;
+    } catch (error) {
+      if (githubFetchCache.get(key)?.promise === promise) githubFetchCache.delete(key);
+      throw error;
+    }
+  };
   let shuttingDown = false;
   await store.ensure();
   const recovered = await store.recoverStaleJobs();
@@ -74,6 +129,13 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
   });
 
   app.setErrorHandler(async (error, _request, reply) => {
+    if (error instanceof GitHubClientError) {
+      await reply.code(error.statusCode).send({
+        error: error.code,
+        message: githubErrorMessage(error.code)
+      });
+      return;
+    }
     if (isBodyTooLargeError(error)) {
       await reply.code(413).send({
         error: "payload_too_large",
@@ -460,6 +522,25 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
     await reply.type(asset.contentType).send(asset.bytes);
   });
 
+  app.get("/api/items/:itemId/github-asset/:assetRef", async (request, reply) => {
+    const params = request.params as { itemId: string; assetRef: string };
+    const assetRef = decodeURIComponent(params.assetRef);
+    const asset = await store.loadGitHubAssetReference(params.itemId, assetRef);
+    if (asset.size != null && asset.size > githubLimits.maxAssetBytes) {
+      throw new GitHubClientError("github_asset_too_large", 413);
+    }
+    const blob = asset.blobSha
+      ? await githubClient.blob(asset.owner, asset.repo, asset.blobSha, githubLimits.maxAssetBytes)
+      : await githubClient.contentFile(asset.owner, asset.repo, asset.path, asset.commitSha, githubLimits.maxAssetBytes);
+    if (!blob) {
+      throw new GitHubClientError("github_blob_invalid", 502);
+    }
+    await reply
+      .header("cache-control", "private, no-store")
+      .type(asset.mediaType)
+      .send(blob.bytes);
+  });
+
   app.get("/api/collections", async (request) => {
     const query = request.query as { limit?: string };
     return store.listCollections(query.limit ? Number(query.limit) : undefined);
@@ -658,6 +739,146 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
     }
   });
 
+  app.post("/api/import/github/markdown/scan", async (request): Promise<GitHubMarkdownScanResponse> => {
+    const input = parseGitHubMarkdownRequest(request.body);
+    const fetched = await loadGitHubMarkdown(input);
+    return githubScanResponse(fetched);
+  });
+
+  app.post("/api/import/github/markdown", async (request): Promise<GitHubMarkdownImportResponse> => {
+    const input = parseGitHubMarkdownRequest(request.body);
+    const fetched = await loadGitHubMarkdown(input);
+    const results: GitHubMarkdownImportResponse["results"] = [];
+    for (const document of fetched.documents) {
+      try {
+        const saved = await saveGitHubMarkdownDocument(store, fetched, document, input.tags);
+        results.push({
+          path: document.path,
+          saved: true,
+          knowledgeItem: saved.knowledgeItem,
+          ...(saved.warnings.length ? { warnings: saved.warnings } : {})
+        });
+      } catch (error) {
+        results.push({
+          path: document.path,
+          saved: false,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
+    }
+    return { commitSha: fetched.commitSha, results };
+  });
+
+  app.post("/api/items/:itemId/refresh", async (request): Promise<GitHubMarkdownRefreshResponse> => {
+    const params = request.params as { itemId: string };
+    const detail = await store.loadItemDetail(params.itemId);
+    const source = githubSourceFromRawdoc(detail.rawdoc?.metadata);
+    if (!source) {
+      throw new Error("GitHub refresh is only supported for GitHub Markdown items");
+    }
+    const checkedAt = new Date().toISOString();
+    const currentCommitSha = await githubClient.resolveRef(source.owner, source.repo, source.ref);
+    if (currentCommitSha === source.commitSha) {
+      await store.updateRawdocMetadata(params.itemId, {
+        ...(detail.rawdoc?.metadata ?? {}),
+        lastCheckedAt: checkedAt
+      });
+      return {
+        updated: false,
+        status: "up_to_date",
+        commitSha: currentCommitSha,
+        checkedAt
+      };
+    }
+
+    const currentMarkdown = /\.(?:md|markdown)$/i.test(source.path)
+      ? await githubClient.contentFile(
+        source.owner,
+        source.repo,
+        source.path,
+        currentCommitSha,
+        githubLimits.maxMarkdownBytes
+      )
+      : undefined;
+    if (currentMarkdown && currentMarkdown.sha === source.blobSha) {
+      await store.updateRawdocMetadata(params.itemId, {
+        ...(detail.rawdoc?.metadata ?? {}),
+        commitSha: currentCommitSha,
+        lastCheckedAt: checkedAt,
+        syncStatus: "up_to_date"
+      });
+      return {
+        updated: false,
+        status: "up_to_date",
+        commitSha: currentCommitSha,
+        checkedAt
+      };
+    }
+
+    let fetched: GitHubMarkdownFetchResult;
+    try {
+      fetched = await loadGitHubMarkdown({
+        owner: source.owner,
+        repo: source.repo,
+        ref: source.ref,
+        path: source.path,
+        tags: detail.item.tags
+      }, {
+        commitSha: currentCommitSha,
+        ...(source.private != null ? { private: source.private } : {}),
+        ...(currentMarkdown ? { directContent: currentMarkdown } : {})
+      }, false);
+    } catch (error) {
+      if (error instanceof GitHubClientError && error.code === "github_no_markdown_files") {
+        await store.updateRawdocMetadata(params.itemId, {
+          ...(detail.rawdoc?.metadata ?? {}),
+          commitSha: currentCommitSha,
+          lastCheckedAt: checkedAt,
+          syncStatus: "remote_deleted"
+        });
+        return {
+          updated: false,
+          status: "remote_deleted",
+          commitSha: currentCommitSha,
+          checkedAt
+        };
+      }
+      throw error;
+    }
+    const currentDocument = fetched.documents.find((document) => document.path === source.path);
+    if (!currentDocument) {
+      throw new GitHubClientError("github_no_markdown_files", 404);
+    }
+    if (currentDocument.blobSha === source.blobSha) {
+      await store.updateRawdocMetadata(params.itemId, {
+        ...(detail.rawdoc?.metadata ?? {}),
+        commitSha: fetched.commitSha,
+        lastCheckedAt: checkedAt,
+        syncStatus: "up_to_date"
+      });
+      return {
+        updated: false,
+        status: "up_to_date",
+        commitSha: fetched.commitSha,
+        checkedAt
+      };
+    }
+
+    const saved = await saveGitHubMarkdownDocument(store, fetched, currentDocument, detail.item.tags, checkedAt);
+    return {
+      updated: true,
+      status: "updated",
+      commitSha: fetched.commitSha,
+      oldCommitSha: source.commitSha,
+      checkedAt,
+      knowledgeItem: saved.knowledgeItem,
+      rawdoc: saved.rawdoc,
+      document: saved.document,
+      markdown: saved.markdown,
+      ...(saved.warnings.length ? { warnings: saved.warnings } : {})
+    };
+  });
+
   app.post("/api/items/:itemId/reparse", async (request): Promise<EpubImportResponse | MarkdownImportResponse> => {
     const params = request.params as { itemId: string };
     const capture = await store.loadRawContentForItem(params.itemId);
@@ -718,6 +939,31 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
     }
 
     if (capture.rawdoc.source_type === "markdown") {
+      if (capture.rawdoc.metadata?.provider === "github") {
+        const source = githubSourceFromRawdoc(capture.rawdoc.metadata);
+        if (!source) throw new Error("GitHub item metadata is incomplete");
+        const fetched = await loadGitHubMarkdown({
+          owner: source.owner,
+          repo: source.repo,
+          ref: source.ref,
+          path: source.path,
+          tags: capture.item.tags
+        }, {
+          ...(source.private != null ? { private: source.private } : {})
+        }, false);
+        const sourceDocument = fetched.documents.find((document) => document.path === source.path);
+        if (!sourceDocument) throw new GitHubClientError("github_no_markdown_files", 404);
+        const saved = await saveGitHubMarkdownDocument(store, fetched, sourceDocument, capture.item.tags);
+        return {
+          knowledgeItem: saved.knowledgeItem,
+          rawdoc: saved.rawdoc,
+          document: saved.document,
+          markdown: saved.markdown,
+          saved: true,
+          paths: saved.paths,
+          ...(saved.warnings.length ? { warnings: saved.warnings } : {})
+        };
+      }
       const oldDocument = oldDocId ? await store.loadDocument(oldDocId) : undefined;
       const parsed = await parseMarkdown(Buffer.from(capture.content, "utf8"), {
         rawdocId: capture.rawdoc.rawdoc_id,
@@ -1354,6 +1600,140 @@ function calibreMetadataFromRawdoc(rawdoc: RawDoc): CalibreMetadata | undefined 
   };
 }
 
+async function saveGitHubMarkdownDocument(
+  store: KnowledgeStore,
+  fetched: GitHubMarkdownFetchResult,
+  sourceDocument: GitHubMarkdownDocument,
+  tags?: string[],
+  checkedAt?: string
+): Promise<{
+  knowledgeItem: KnowledgeItem;
+  rawdoc: RawDoc;
+  document: KnowledgeDocument;
+  markdown: string;
+  paths: { rawContentPath: string; rawdocPath: string; documentPath: string; markdownPath: string };
+  warnings: string[];
+}> {
+  const itemId = githubItemId(fetched.owner, fetched.repo, fetched.ref, sourceDocument.path);
+  const sourceKey = githubSourceKey(fetched.owner, fetched.repo, fetched.ref, sourceDocument.path);
+  const sourceUri = githubBlobUrl(fetched.owner, fetched.repo, fetched.commitSha, sourceDocument.path);
+  const remoteAssets = githubRemoteAssetsForItem(itemId, fetched, sourceDocument.assets);
+  const parsed = await parseMarkdown(sourceDocument.content, {
+    sourceUri,
+    relativePath: sourceDocument.path,
+    tags,
+    remoteAssets: remoteAssets.inputs
+  });
+  try {
+    const syncedAt = checkedAt ?? parsed.rawdoc.fetch_time;
+    const rawdoc: RawDoc = {
+      ...parsed.rawdoc,
+      metadata: {
+        ...parsed.rawdoc.metadata,
+        provider: "github",
+        private: fetched.private,
+        owner: fetched.owner,
+        repo: fetched.repo,
+        ref: fetched.ref,
+        commitSha: fetched.commitSha,
+        blobSha: sourceDocument.blobSha,
+        path: sourceDocument.path,
+        sourceKey,
+        lastSyncedAt: syncedAt,
+        lastCheckedAt: syncedAt,
+        syncStatus: "synced",
+        assets: remoteAssets.metadata
+      }
+    };
+    const markdown = documentToMarkdown(parsed.document);
+    const previous = await store.loadItemDetail(itemId).catch(() => undefined);
+    const result = await store.saveImportItem({
+      itemId,
+      sourceType: "markdown",
+      sourceUri,
+      rawdocId: parsed.rawdoc.rawdoc_id,
+      rawdoc,
+      rawContentPath: sourceDocument.content,
+      document: parsed.document,
+      markdown,
+      pageTitle: parsed.document.meta.title,
+      language: parsed.document.meta.language,
+      creators: parsed.document.meta.authors,
+      tags: parsed.document.meta.tags,
+      identityHash: sourceKey,
+      content: sourceDocument.content,
+      contentExt: "md"
+    });
+    if (previous?.document?.doc_id && previous.document.doc_id !== result.document.doc_id) {
+      await store.migrateAnnotations(previous.document.doc_id, result.document.doc_id, result.document);
+    }
+    return {
+      knowledgeItem: result.knowledgeItem,
+      rawdoc,
+      document: result.document,
+      markdown: result.markdown,
+      paths: result.paths,
+      warnings: [...sourceDocument.warnings, ...parsed.warnings]
+    };
+  } finally {
+    await parsed.cleanup();
+  }
+}
+
+function githubScanResponse(fetched: GitHubMarkdownFetchResult): GitHubMarkdownScanResponse {
+  return {
+    owner: fetched.owner,
+    repo: fetched.repo,
+    ref: fetched.ref,
+    path: fetched.path,
+    commitSha: fetched.commitSha,
+    private: fetched.private,
+    files: fetched.documents.map((document) => ({
+      path: document.path,
+      blobSha: document.blobSha,
+      size: document.size,
+      referencedAssetCount: document.assets.reduce((sum, asset) => sum + asset.sourceReferences.length, 0),
+      assets: document.assets.map((asset) => ({
+        path: asset.path,
+        ...(asset.blobSha ? { blobSha: asset.blobSha } : {}),
+        ...(asset.size != null ? { size: asset.size } : {}),
+        mediaType: asset.mediaType,
+        delivery: fetched.private ? "proxy" as const : "raw" as const
+      })),
+      warnings: document.warnings
+    })),
+    warnings: fetched.warnings
+  };
+}
+
+function githubSourceFromRawdoc(metadata: Record<string, unknown> | undefined): {
+  owner: string;
+  repo: string;
+  ref: string;
+  path: string;
+  commitSha: string;
+  blobSha: string;
+  private?: boolean;
+} | undefined {
+  if (metadata?.provider !== "github") return undefined;
+  const owner = stringValue(metadata.owner);
+  const repo = stringValue(metadata.repo);
+  const ref = stringValue(metadata.ref);
+  const path = stringValue(metadata.path);
+  const commitSha = stringValue(metadata.commitSha);
+  const blobSha = stringValue(metadata.blobSha);
+  if (!owner || !repo || !ref || !path || !commitSha || !blobSha) return undefined;
+  return {
+    owner,
+    repo,
+    ref,
+    path,
+    commitSha,
+    blobSha,
+    ...(typeof metadata.private === "boolean" ? { private: metadata.private } : {})
+  };
+}
+
 function stringValue(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
@@ -1435,6 +1815,10 @@ function isClientInputError(message: string): boolean {
     "Document does not exist",
     "Asset does not exist",
     "reparse currently supports epub items only",
+    "GitHub refresh is only supported",
+    "GitHub asset is not available",
+    "GitHub asset does not exist",
+    "GitHub asset metadata is incomplete",
     "store clear confirmation is required",
     "store parsed-results clear confirmation is required"
   ].some((needle) => message.includes(needle));
@@ -1454,6 +1838,36 @@ function formatBytes(bytes: number): string {
     return `${mib} MiB`;
   }
   return `${bytes} bytes`;
+}
+
+function githubErrorMessage(code: string): string {
+  switch (code) {
+    case "github_access_denied":
+      return "GitHub repository is unavailable or access was denied.";
+    case "github_rate_limited":
+      return "GitHub API rate limit exceeded.";
+    case "github_timeout":
+      return "GitHub request timed out.";
+    case "github_unavailable":
+      return "GitHub API is temporarily unavailable.";
+    case "github_content_too_large":
+    case "github_markdown_limit_exceeded":
+    case "github_asset_too_large":
+      return "GitHub content exceeds the configured size limit.";
+    case "github_file_limit_exceeded":
+      return "GitHub path contains too many Markdown files.";
+    case "github_asset_reference_limit_exceeded":
+      return "GitHub Markdown contains too many image references.";
+    case "github_no_markdown_files":
+      return "The requested GitHub path contains no Markdown file.";
+    case "github_invalid_request":
+    case "github_invalid_repository":
+    case "github_invalid_ref":
+    case "github_invalid_path":
+      return "GitHub owner, repository, ref, and path are invalid.";
+    default:
+      return "GitHub import failed.";
+  }
 }
 
 async function migrateAnnotationsForReparse(

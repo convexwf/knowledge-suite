@@ -84,6 +84,7 @@
           <select id="import-source-type">
             <option value="epub">EPUB</option>
             <option value="markdown">Markdown</option>
+            <option value="github-markdown">GitHub Markdown</option>
           </select>
         </label>
 
@@ -145,11 +146,29 @@
           <div id="markdown-scan-output" class="status-output" role="status">Choose a source and scan before importing.</div>
         </section>
 
+        <section id="github-markdown-import-config" class="import-config" hidden>
+          <div class="import-config-heading">
+            <h3>GitHub Markdown configuration</h3>
+            <p>Paste a GitHub Markdown link. For a directory link, all Markdown files below it are imported. Images stay remote.</p>
+          </div>
+          <label>
+            GitHub Markdown URL
+            <input id="github-url" type="text" autocomplete="off" placeholder="https://github.com/owner/repo/blob/main/docs/intro.md" />
+          </label>
+          <label>
+            Tags
+            <input id="github-tags-input" type="text" autocomplete="off" placeholder="comma separated" />
+          </label>
+          <div id="github-scan-output" class="status-output" role="status">Paste a GitHub URL and scan before importing.</div>
+        </section>
+
         <div class="dialog-actions">
           <button id="import-cancel" type="button">Cancel</button>
           <button id="markdown-scan" type="button" hidden>Scan</button>
+          <button id="github-scan" type="button" hidden>Scan</button>
           <button id="upload-button" type="submit" class="primary-button">Import EPUB</button>
           <button id="markdown-import" type="submit" class="primary-button" hidden disabled>Import Markdown</button>
+          <button id="github-import" type="submit" class="primary-button" hidden disabled>Import from GitHub</button>
         </div>
       </form>
     </dialog>

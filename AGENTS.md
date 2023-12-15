@@ -20,3 +20,12 @@
 
 除非用户明确要求删除数据，否则不要执行 `make clean-store` 或其他破坏性
 清理命令。
+
+## GitHub Markdown 配置
+
+GitHub private repository 的访问 token 使用宿主机运行时环境变量
+`KNOWLEDGE_GITHUB_TOKEN` 注入 Docker 容器；修改 token 后必须重新创建容器，
+例如执行 `KNOWLEDGE_GITHUB_TOKEN="..." docker compose up -d --force-recreate`
+或 `KNOWLEDGE_GITHUB_TOKEN="..." make rebuild`。不要把 token 写入 Import 请求、
+Markdown、Knowledge Store、日志或提交内容。`GITHUB_TOKEN` 仍作为兼容旧配置的
+别名保留。

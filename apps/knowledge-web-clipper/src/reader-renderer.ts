@@ -2,6 +2,7 @@ import { KnowledgeDocument } from "./types.js";
 
 export interface ReaderRenderContext {
   resolveAsset?: (assetId: string) => Promise<string>;
+  resolveAssetUrl?: (sourceUrl: string) => Promise<string>;
   registerObjectUrl?: (url: string) => void;
   onDiagnostic?: (diagnostic: ReaderRenderDiagnostic) => void;
 }
@@ -137,6 +138,14 @@ async function imageFigure(src: string, alt: string, context: ReaderRenderContex
       image.src = blobUrl;
     } catch {
       image.alt = alt || `Missing asset ${assetId}`;
+    }
+  } else if (context.resolveAssetUrl && isProtectedAssetUrl(src)) {
+    try {
+      const blobUrl = await context.resolveAssetUrl(src);
+      context.registerObjectUrl?.(blobUrl);
+      image.src = blobUrl;
+    } catch {
+      image.alt = alt || "Unable to load remote image";
     }
   } else if (isSafeUrl(src, "image")) {
     image.src = src;
@@ -365,6 +374,10 @@ function isSafeUrl(value: string, kind: "image" | "link"): boolean {
   } catch {
     return false;
   }
+}
+
+function isProtectedAssetUrl(value: string): boolean {
+  return /^\/api\/items\/[^/]+\/github-asset\//.test(value);
 }
 
 function slugify(text: string, index: number): string {

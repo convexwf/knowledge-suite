@@ -11,6 +11,10 @@ import {
   ExtensionSettings,
   HealthResult,
   EpubImportResult,
+  GitHubMarkdownImportResult,
+  GitHubMarkdownRefreshResult,
+  GitHubMarkdownRequest,
+  GitHubMarkdownScanResult,
   MarkdownImportResult,
   KnowledgeDocument,
   KnowledgeCaptureRequestBody,
@@ -82,11 +86,15 @@ export interface KnowledgeApiClient {
     tags?: string[];
     assets?: Array<{ file: File; relativePath: string }>;
   }): Promise<MarkdownImportResult>;
+  scanGitHubMarkdown(body: GitHubMarkdownRequest): Promise<GitHubMarkdownScanResult>;
+  importGitHubMarkdown(body: GitHubMarkdownRequest): Promise<GitHubMarkdownImportResult>;
   reparseItem(itemId: string): Promise<EpubImportResult | MarkdownImportResult>;
+  refreshItem(itemId: string): Promise<GitHubMarkdownRefreshResult>;
   deleteItem(itemId: string, mode?: KnowledgeItemDeleteMode): Promise<KnowledgeItemDeleteResult>;
   document(docId: string): Promise<KnowledgeDocument>;
   documentMarkdown(docId: string): Promise<string>;
   assetBlobUrl(assetId: string): Promise<string>;
+  githubAssetBlobUrl(sourceUrl: string): Promise<string>;
   deleteByUrl(url: string, mode?: KnowledgeItemDeleteMode): Promise<KnowledgeDeleteByUrlResult>;
   reparseByUrl(url: string): Promise<PreviewResult>;
   preview(body: KnowledgeCaptureRequestBody): Promise<PreviewResult>;
@@ -262,11 +270,35 @@ export function createKnowledgeApiClient(settings: ExtensionSettings): Knowledge
       }
       return requestForm<MarkdownImportResult>(baseUrl, settings.token, "/api/import/markdown", form, options);
     },
+    scanGitHubMarkdown: (body) => request<GitHubMarkdownScanResult>(
+      baseUrl,
+      settings.token,
+      "POST",
+      "/api/import/github/markdown/scan",
+      body,
+      options
+    ),
+    importGitHubMarkdown: (body) => request<GitHubMarkdownImportResult>(
+      baseUrl,
+      settings.token,
+      "POST",
+      "/api/import/github/markdown",
+      body,
+      options
+    ),
     reparseItem: (itemId) => request<EpubImportResult | MarkdownImportResult>(
       baseUrl,
       settings.token,
       "POST",
       `/api/items/${encodeURIComponent(itemId)}/reparse`,
+      {},
+      options
+    ),
+    refreshItem: (itemId) => request<GitHubMarkdownRefreshResult>(
+      baseUrl,
+      settings.token,
+      "POST",
+      `/api/items/${encodeURIComponent(itemId)}/refresh`,
       {},
       options
     ),
@@ -294,6 +326,10 @@ export function createKnowledgeApiClient(settings: ExtensionSettings): Knowledge
     ),
     assetBlobUrl: async (assetId) => {
       const blob = await requestBlob(baseUrl, settings.token, `/api/assets/${encodeURIComponent(assetId)}`, options);
+      return URL.createObjectURL(blob);
+    },
+    githubAssetBlobUrl: async (sourceUrl) => {
+      const blob = await requestBlob(baseUrl, settings.token, sourceUrl, options);
       return URL.createObjectURL(blob);
     },
     deleteByUrl: (url, mode = "remove") => request<KnowledgeDeleteByUrlResult>(
