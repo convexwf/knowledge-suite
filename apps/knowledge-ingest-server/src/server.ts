@@ -43,7 +43,24 @@ import { ResolvedInput, resolveKnowledgeCaptureInput } from "./input.js";
 import { documentToMarkdown } from "./markdown.js";
 import { parseMarkdown, type MarkdownAssetInput } from "./markdown-import.js";
 import { parsePage, type ParsedPage } from "./parser.js";
-import { KnowledgeStore } from "./store.js";
+import { buildPackageManifest, PACKAGE_SCHEMA_VERSION, sha256Text } from "./package.js";
+import { guessContentType, KnowledgeStore } from "./store.js";
+import { buildZipArchive } from "./zip.js";
+
+function matchesEtag(header: string | string[] | undefined, etag: string): boolean {
+  const value = Array.isArray(header) ? header.join(",") : header;
+  if (!value) return false;
+  const unquoted = etag.replace(/^W\//, "").replace(/^"|"$/g, "");
+  return value
+    .split(",")
+    .map((entry) => entry.trim())
+    .some((entry) =>
+      entry === etag ||
+      entry === `W/${etag}` ||
+      entry === "*" ||
+      entry.replace(/^W\//, "").replace(/^"|"$/g, "") === unquoted
+    );
+}
 
 type RuntimeServerConfig = Omit<ServerConfig, "maxImportBytes"> & {
   maxImportBytes?: number;
@@ -275,6 +292,83 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
   app.get("/api/items/:itemId", async (request) => {
     const params = request.params as { itemId: string };
     return store.loadItemDetail(params.itemId);
+  });
+
+  // ── Sync routes (reader clients) ───────────────────────────────────────
+
+  app.get("/api/sync/catalog", async (request, reply) => {
+    const items = await store.listCatalogItems();
+    const entries = items.map((item) => ({
+      itemId: item.itemId,
+      docId: item.docId,
+      title: item.title,
+      sourceType: item.sourceType,
+      state: item.state,
+      updatedAt: item.updatedAt,
+      parsedAt: item.parsedAt,
+      contentHash: item.contentHash,
+      packageBytes: item.contentBytes,
+      assetCount: item.assetCount,
+      sectionCount: item.sectionCount
+    }));
+    // The ETag covers the item payload only, so repeated syncs can hit 304
+    // even though serverTime changes on every request.
+    const etag = `"${sha256Text(JSON.stringify({ schemaVersion: PACKAGE_SCHEMA_VERSION, items: entries }))}"`;
+    if (matchesEtag(request.headers["if-none-match"], etag)) {
+      return reply.code(304).header("etag", etag).send();
+    }
+    return reply.header("etag", etag).send({
+      schemaVersion: PACKAGE_SCHEMA_VERSION,
+      serverTime: new Date().toISOString(),
+      items: entries
+    });
+  });
+
+  app.get("/api/items/:itemId/package", async (request, reply) => {
+    const params = request.params as { itemId: string };
+    const loaded = await store.loadPackage(params.itemId);
+    if (!loaded) {
+      return reply.code(404).send({
+        error: "package_not_available",
+        message: "No parsed document is available for this item."
+      });
+    }
+
+    const etag = `"${loaded.contentHash}"`;
+    if (matchesEtag(request.headers["if-none-match"], etag)) {
+      return reply.code(304).header("etag", etag).send();
+    }
+
+    const manifest = buildPackageManifest({
+      itemId: loaded.item.itemId,
+      docId: loaded.document.doc_id,
+      sourceType: loaded.item.sourceType,
+      title: loaded.item.displayTitle ?? loaded.document.meta.title,
+      contentHash: loaded.contentHash,
+      generatedAt: new Date().toISOString(),
+      sections: loaded.document.sections.length,
+      entries: loaded.entries,
+      assets: loaded.entries
+        .filter((entry) => entry.path.startsWith("assets/"))
+        .map((entry) => ({
+          assetId: entry.path.slice("assets/".length),
+          path: entry.path,
+          mediaType: guessContentType(entry.path),
+          size: entry.bytes.byteLength
+        })),
+      warnings: loaded.warnings
+    });
+
+    const archive = buildZipArchive([
+      { path: "manifest.json", bytes: Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`, "utf8") },
+      ...loaded.entries
+    ]);
+
+    return reply
+      .header("etag", etag)
+      .header("cache-control", "private, no-store")
+      .type("application/zip")
+      .send(archive);
   });
 
   app.get("/api/documents/:docId", async (request) => {

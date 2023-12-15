@@ -1,0 +1,13 @@
+{
+  "pageUrl": "https://example.com/math-parser-fixture",
+  "canonicalUrl": "https://example.com/math-parser-fixture",
+  "title": "Math Inline And Display",
+  "pageTitle": "Math Inline And Display",
+  "text": "Math Inline And Display An inline formula such as score = relevance must keep its TeX source so readers can render it. The paragraph after the standalone equation keeps the surrounding prose in a separate section.",
+  "meta": {
+    "author": "Case Writer"
+  },
+  "diagnostics": {
+    "shadowRootCount": 0
+  }
+}

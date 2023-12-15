@@ -1,0 +1,37 @@
+{
+  "doc_id": "fixture-doc-math-inline-and-display",
+  "meta": {
+    "title": "Math Inline And Display",
+    "page_title": "Math Inline And Display",
+    "source": {
+      "type": "html",
+      "url": "https://example.com/math-parser-fixture",
+      "rawdoc_id": "fixture-rawdoc-math-inline-and-display"
+    },
+    "authors": [
+      "Case Writer"
+    ],
+    "published_at": null,
+    "ingested_at": "2026-09-13T00:00:00.000Z",
+    "language": "en",
+    "tags": [],
+    "parser_version": "knowledge-ingest-server/0.2:defuddle"
+  },
+  "sections": [
+    {
+      "type": "paragraph",
+      "content": "An inline formula such as score = relevance score = relevance must keep its TeX source so readers can render it.",
+      "section_id": "math-inline-and-display-section-1"
+    },
+    {
+      "type": "paragraph",
+      "content": "The paragraph after the standalone equation keeps the surrounding prose in a separate section.",
+      "section_id": "math-inline-and-display-section-2"
+    },
+    {
+      "type": "paragraph",
+      "content": "A display formula embedded in prose a^2 + b^2 = c^2 a2 + b2 = c2 shares the paragraph with the text around it.",
+      "section_id": "math-inline-and-display-section-3"
+    }
+  ]
+}

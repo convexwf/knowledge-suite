@@ -1,0 +1,61 @@
+[
+  {
+    "id": "defuddle",
+    "method": "defuddle",
+    "selected": true,
+    "serverSelected": true,
+    "score": 70.9,
+    "metrics": {
+      "textLength": 318,
+      "sectionCount": 3,
+      "headingCount": 0,
+      "linkCount": 0,
+      "imageCount": 0,
+      "tableCount": 0,
+      "codeCount": 0,
+      "linkDensity": 0
+    },
+    "warnings": [],
+    "reason": "Defuddle universal article extraction"
+  },
+  {
+    "id": "dom_fallback",
+    "method": "dom_fallback",
+    "selected": false,
+    "serverSelected": false,
+    "score": 29.8,
+    "metrics": {
+      "textLength": 295,
+      "sectionCount": 3,
+      "headingCount": 0,
+      "linkCount": 0,
+      "imageCount": 0,
+      "tableCount": 0,
+      "codeCount": 0,
+      "linkDensity": 0
+    },
+    "warnings": [],
+    "reason": "Generic DOM readable-root fallback"
+  },
+  {
+    "id": "rendered_text_fallback",
+    "method": "rendered_text_fallback",
+    "selected": false,
+    "serverSelected": false,
+    "score": 0.7,
+    "metrics": {
+      "textLength": 213,
+      "sectionCount": 1,
+      "headingCount": 0,
+      "linkCount": 0,
+      "imageCount": 0,
+      "tableCount": 0,
+      "codeCount": 0,
+      "linkDensity": 0
+    },
+    "warnings": [
+      "Rendered text fallback loses links, images, tables, and code structure."
+    ],
+    "reason": "Browser-rendered body innerText fallback"
+  }
+]

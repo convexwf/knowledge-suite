@@ -64,6 +64,7 @@ Priority labels:
 | P2 | Add JSON Schema validation | TS types exist, but not full output schema validation. |
 | P2 | Add SQLite delete/repair/orphan handling | Needed for crash recovery. |
 | P2 | Add optional Raw HTML persistence flag | Privacy-conscious mode. |
+| P2 | Decide whether the offline package writer stays hand-rolled | `src/zip.ts` is a ~100-line writer without ZIP64 or streaming; `fflate` (0 deps) or `yazl` (1 dep) would remove owned edge cases. Revisit before packages can get large. |
 
 ### Parser & Content Quality
 

@@ -546,7 +546,11 @@ function expectStoreSchema(root: string): void {
       "active_doc_id",
       "created_at",
       "updated_at",
-      "parsed_at"
+      "parsed_at",
+      "content_hash",
+      "content_bytes",
+      "section_count",
+      "asset_count"
     ]));
     expect(columnsByTable.item_aliases).toEqual(expect.arrayContaining([
       "alias_id",
@@ -682,7 +686,7 @@ function expectStoreSchema(root: string): void {
     ]));
 
     const userVersion = database.prepare("PRAGMA user_version").get() as { user_version: number };
-    expect(userVersion.user_version).toBe(11);
+    expect(userVersion.user_version).toBe(12);
 
     for (const columns of Object.values(columnsByTable)) {
       expect(columns.filter((column) => column.endsWith("_path") && column !== "heading_path")).toEqual([]);

@@ -1,0 +1,23 @@
+{
+  "id": "math-inline-and-display",
+  "title": "Math Inline And Display",
+  "priority": "p0",
+  "status": "active",
+  "source": {
+    "pageUrl": "https://example.com/math-parser-fixture",
+    "canonicalUrl": "https://example.com/math-parser-fixture",
+    "capturedAt": "2026-09-13T00:00:00.000Z",
+    "captureMode": "browser_html",
+    "notes": "Characterization baseline for the current math defects: the defuddle candidate strips the annotation encoding attribute and moves TeX into data-latex, so inline math loses its $...$ markers and duplicates its text, and a standalone block equation is dropped because the section selector does not include math. Expectations here must be regenerated when the parser fixes math output. See knowledge-reader-flutter/doc/rendering-layer.md section 4.6."
+  },
+  "expectations": {
+    "minTextLength": 120,
+    "titleIncludes": ["Math Inline And Display"],
+    "markdownIncludes": [
+      "An inline formula such as score = relevance score = relevance must keep its TeX source"
+    ],
+    "markdownExcludes": [
+      "E = mc^2"
+    ]
+  }
+}

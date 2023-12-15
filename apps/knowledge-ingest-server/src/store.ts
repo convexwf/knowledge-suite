@@ -29,9 +29,30 @@ import {
   urlHash
 } from "@uknowledge/knowledge-schema";
 import { buildChunks } from "./chunks.js";
+import {
+  packageContentBytes,
+  packageContentHash,
+  serializeDocumentFile,
+  serializeMarkdownFile,
+  type PackageEntry
+} from "./package.js";
 import { resolveInsideRoot } from "./path-guard.js";
 
 // ── Row interfaces (target model) ──────────────────────────────────────────
+
+export interface KnowledgeCatalogItem {
+  itemId: string;
+  docId: string | null;
+  title: string;
+  sourceType: string;
+  state: string;
+  updatedAt: string;
+  parsedAt: string | null;
+  contentHash: string | null;
+  contentBytes: number | null;
+  sectionCount: number | null;
+  assetCount: number | null;
+}
 
 interface ItemRow {
   item_id: string;
@@ -226,7 +247,7 @@ interface CollectionItemDetail extends CollectionItem {
   language?: string;
 }
 
-const STORE_SCHEMA_VERSION = 11;
+const STORE_SCHEMA_VERSION = 12;
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -379,7 +400,21 @@ export class KnowledgeStore {
       return;
     }
 
+    // Version 12+: package fingerprint columns on items (lazy backfilled)
+    if (currentVersion < 12) {
+      this.addColumnIfMissing("items", "content_hash", "TEXT");
+      this.addColumnIfMissing("items", "content_bytes", "INTEGER");
+      this.addColumnIfMissing("items", "section_count", "INTEGER");
+      this.addColumnIfMissing("items", "asset_count", "INTEGER");
+    }
+
     this.database!.exec(`PRAGMA user_version = ${STORE_SCHEMA_VERSION}`);
+  }
+
+  private addColumnIfMissing(table: string, column: string, type: string): void {
+    const columns = this.database!.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+    if (columns.some((entry) => entry.name === column)) return;
+    this.database!.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
   }
 
   private createTargetTables(): void {
@@ -400,7 +435,11 @@ export class KnowledgeStore {
         active_doc_id TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
-        parsed_at TEXT
+        parsed_at TEXT,
+        content_hash TEXT,
+        content_bytes INTEGER,
+        section_count INTEGER,
+        asset_count INTEGER
       );
 
       CREATE TABLE IF NOT EXISTS item_aliases (
@@ -925,6 +964,12 @@ export class KnowledgeStore {
         parserInfo.version, parserInfo.method, parserInfo.profile, contentHash, nowIso, nowIso
       );
 
+      this.storePackageFingerprint(
+        itemId,
+        await this.buildPackageEntries(params.document, params.markdown),
+        params.document.sections.length
+      );
+
       // chunks
       this.replaceChunks(params.document, params.rawdoc, itemId, captureId, parserInfo, nowIso);
 
@@ -1071,6 +1116,12 @@ export class KnowledgeStore {
 
       this.replaceChunks(params.document, { rawdoc_id: captureId, source_type: params.sourceType } as RawDoc, params.itemId, captureId, parserInfo, now);
 
+      this.storePackageFingerprint(
+        params.itemId,
+        await this.buildPackageEntries(params.document, params.markdown),
+        params.document.sections.length
+      );
+
       // Cleanup replaced versions
       if (replacedDocId) {
         this.database!.prepare("DELETE FROM chunks WHERE doc_id = ?").run(replacedDocId);
@@ -1205,6 +1256,12 @@ export class KnowledgeStore {
       );
 
       this.replaceChunks(params.document, { rawdoc_id: captureId, source_type: params.sourceType } as RawDoc, params.itemId, captureId, parserInfo, now);
+
+      this.storePackageFingerprint(
+        params.itemId,
+        await this.buildPackageEntries(params.document, params.markdown),
+        params.document.sections.length
+      );
 
       // Cleanup replaced doc version
       if (replacedDocId) {
@@ -1737,6 +1794,165 @@ export class KnowledgeStore {
     const bytes = await readFile(assetPath);
     const contentType = guessContentType(assetId);
     return { path: assetPath, contentType, bytes };
+  }
+
+  // ── offline package (reader contract) ──────────────────────────────────
+
+  async buildPackageEntries(document: KnowledgeDocument, markdown: string): Promise<{
+    entries: PackageEntry[];
+    contentHash: string;
+    contentBytes: number;
+    assetCount: number;
+    warnings: string[];
+  }> {
+    const entries: PackageEntry[] = [
+      { path: "document.json", bytes: serializeDocumentFile(document) },
+      { path: "markdown.md", bytes: serializeMarkdownFile(markdown) }
+    ];
+    const warnings: string[] = [];
+    const seen = new Set<string>();
+    const assetIdFromReference = (assetId?: string, path?: string): string | undefined => {
+      if (assetId) return assetId;
+      if (!path) return undefined;
+      return /(?:^|\/)assets\/([^/]+)$/.exec(path)?.[1];
+    };
+
+    for (const section of document.sections) {
+      for (const asset of section.assets ?? []) {
+        const assetId = assetIdFromReference(asset.asset_id, asset.path);
+        if (!assetId || seen.has(assetId)) continue;
+        seen.add(assetId);
+        const loaded = await this.loadAsset(assetId).catch(() => undefined);
+        if (!loaded) {
+          warnings.push(`missing_asset:${assetId}`);
+          continue;
+        }
+        entries.push({ path: `assets/${assetId}`, bytes: loaded.bytes });
+      }
+    }
+
+    return {
+      entries,
+      contentHash: packageContentHash(entries),
+      contentBytes: packageContentBytes(entries),
+      assetCount: entries.filter((entry) => entry.path.startsWith("assets/")).length,
+      warnings
+    };
+  }
+
+  private storePackageFingerprint(itemId: string, built: {
+    contentHash: string;
+    contentBytes: number;
+    assetCount: number;
+  }, sectionCount: number): void {
+    this.database!.prepare(
+      "UPDATE items SET content_hash = ?, content_bytes = ?, section_count = ?, asset_count = ? WHERE item_id = ?"
+    ).run(built.contentHash, built.contentBytes, sectionCount, built.assetCount, itemId);
+  }
+
+  async loadPackage(itemId: string): Promise<{
+    item: KnowledgeItem;
+    document: KnowledgeDocument;
+    markdown: string;
+    entries: PackageEntry[];
+    contentHash: string;
+    contentBytes: number;
+    warnings: string[];
+  } | undefined> {
+    // Unknown items throw upstream; the package API treats them as "not available".
+    const detail = await this.loadItemDetail(itemId).catch(() => undefined);
+    if (!detail?.item || !detail.document) return undefined;
+    const markdown = await this.loadMarkdown(detail.document.doc_id);
+    const built = await this.buildPackageEntries(detail.document, markdown);
+    return {
+      item: detail.item,
+      document: detail.document,
+      markdown,
+      entries: built.entries,
+      contentHash: built.contentHash,
+      contentBytes: built.contentBytes,
+      warnings: built.warnings
+    };
+  }
+
+  async listCatalogItems(): Promise<KnowledgeCatalogItem[]> {
+    await this.ensure();
+    const rows = this.database!.prepare(`
+      SELECT item_id, active_doc_id, title, source_type, state, updated_at, parsed_at,
+             content_hash, content_bytes, section_count, asset_count
+      FROM items
+      WHERE item_type = 'document'
+      ORDER BY COALESCE(parsed_at, updated_at) DESC, item_id ASC
+    `).all() as Array<{
+      item_id: string;
+      active_doc_id: string | null;
+      title: string | null;
+      source_type: string;
+      state: string;
+      updated_at: string;
+      parsed_at: string | null;
+      content_hash: string | null;
+      content_bytes: number | null;
+      section_count: number | null;
+      asset_count: number | null;
+    }>;
+
+    const items: KnowledgeCatalogItem[] = [];
+    for (const row of rows) {
+      if (row.content_hash && row.content_bytes !== null) {
+        items.push({
+          itemId: row.item_id,
+          docId: row.active_doc_id,
+          title: row.title ?? row.item_id,
+          sourceType: row.source_type,
+          state: row.state,
+          updatedAt: row.updated_at,
+          parsedAt: row.parsed_at,
+          contentHash: row.content_hash,
+          contentBytes: row.content_bytes,
+          sectionCount: row.section_count,
+          assetCount: row.asset_count
+        });
+        continue;
+      }
+
+      // Lazy backfill for items written before the fingerprint columns existed.
+      const document = row.active_doc_id ? await this.loadDocument(row.active_doc_id).catch(() => undefined) : undefined;
+      if (!document || !row.active_doc_id) {
+        items.push({
+          itemId: row.item_id,
+          docId: row.active_doc_id,
+          title: row.title ?? row.item_id,
+          sourceType: row.source_type,
+          state: row.state,
+          updatedAt: row.updated_at,
+          parsedAt: row.parsed_at,
+          contentHash: null,
+          contentBytes: null,
+          sectionCount: null,
+          assetCount: null
+        });
+        continue;
+      }
+
+      const markdown = await this.loadMarkdown(row.active_doc_id).catch(() => "");
+      const built = await this.buildPackageEntries(document, markdown);
+      this.storePackageFingerprint(row.item_id, built, document.sections.length);
+      items.push({
+        itemId: row.item_id,
+        docId: row.active_doc_id,
+        title: row.title ?? document.meta.title,
+        sourceType: row.source_type,
+        state: row.state,
+        updatedAt: row.updated_at,
+        parsedAt: row.parsed_at,
+        contentHash: built.contentHash,
+        contentBytes: built.contentBytes,
+        sectionCount: document.sections.length,
+        assetCount: built.assetCount
+      });
+    }
+    return items;
   }
 
   async prepareDocumentAssets(document: KnowledgeDocument): Promise<KnowledgeDocument> {
@@ -2486,7 +2702,7 @@ async function countFiles(path: string): Promise<number> {
   return counts.reduce((sum, count) => sum + count, 0);
 }
 
-function guessContentType(assetId: string): string {
+export function guessContentType(assetId: string): string {
   const ext = extname(assetId).toLowerCase();
   const map: Record<string, string> = {
     ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
