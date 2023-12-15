@@ -309,7 +309,8 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
       contentHash: item.contentHash,
       packageBytes: item.contentBytes,
       assetCount: item.assetCount,
-      sectionCount: item.sectionCount
+      sectionCount: item.sectionCount,
+      sourceUrl: item.sourceUrl
     }));
     // The ETag covers the item payload only, so repeated syncs can hit 304
     // even though serverTime changes on every request.

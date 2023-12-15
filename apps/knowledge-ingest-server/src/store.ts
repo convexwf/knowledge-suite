@@ -52,6 +52,7 @@ export interface KnowledgeCatalogItem {
   contentBytes: number | null;
   sectionCount: number | null;
   assetCount: number | null;
+  sourceUrl: string | null;
 }
 
 interface ItemRow {
@@ -1878,11 +1879,14 @@ export class KnowledgeStore {
   async listCatalogItems(): Promise<KnowledgeCatalogItem[]> {
     await this.ensure();
     const rows = this.database!.prepare(`
-      SELECT item_id, active_doc_id, title, source_type, state, updated_at, parsed_at,
-             content_hash, content_bytes, section_count, asset_count
-      FROM items
-      WHERE item_type = 'document'
-      ORDER BY COALESCE(parsed_at, updated_at) DESC, item_id ASC
+      SELECT i.item_id, i.active_doc_id, i.title, i.source_type, i.state, i.updated_at, i.parsed_at,
+             i.content_hash, i.content_bytes, i.section_count, i.asset_count,
+             a.alias_value AS source_url
+      FROM items i
+      LEFT JOIN item_aliases a
+        ON a.item_id = i.item_id AND a.alias_type = 'normalized_url'
+      WHERE i.item_type = 'document'
+      ORDER BY COALESCE(i.parsed_at, i.updated_at) DESC, i.item_id ASC
     `).all() as Array<{
       item_id: string;
       active_doc_id: string | null;
@@ -1895,6 +1899,7 @@ export class KnowledgeStore {
       content_bytes: number | null;
       section_count: number | null;
       asset_count: number | null;
+      source_url: string | null;
     }>;
 
     const items: KnowledgeCatalogItem[] = [];
@@ -1911,7 +1916,8 @@ export class KnowledgeStore {
           contentHash: row.content_hash,
           contentBytes: row.content_bytes,
           sectionCount: row.section_count,
-          assetCount: row.asset_count
+          assetCount: row.asset_count,
+          sourceUrl: row.source_url
         });
         continue;
       }
@@ -1930,7 +1936,8 @@ export class KnowledgeStore {
           contentHash: null,
           contentBytes: null,
           sectionCount: null,
-          assetCount: null
+          assetCount: null,
+          sourceUrl: row.source_url
         });
         continue;
       }
@@ -1949,7 +1956,8 @@ export class KnowledgeStore {
         contentHash: built.contentHash,
         contentBytes: built.contentBytes,
         sectionCount: document.sections.length,
-        assetCount: built.assetCount
+        assetCount: built.assetCount,
+        sourceUrl: row.source_url
       });
     }
     return items;

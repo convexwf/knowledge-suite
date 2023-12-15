@@ -123,7 +123,8 @@ describe("sync api", () => {
       itemId,
       docId,
       sourceType: "url",
-      state: "parsed"
+      state: "parsed",
+      sourceUrl: "https://example.com/sync-fixture"
     });
     expect(snapshot.items[0].contentHash).toMatch(/^[0-9a-f]{64}$/);
     expect(snapshot.items[0].packageBytes).toBeGreaterThan(0);
