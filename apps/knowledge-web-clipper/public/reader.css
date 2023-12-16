@@ -101,6 +101,17 @@ h2 {
   justify-content: end;
 }
 
+.profile-switcher {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.profile-switcher select {
+  max-width: 180px;
+}
+
 .reader-layout {
   align-items: start;
   display: grid;

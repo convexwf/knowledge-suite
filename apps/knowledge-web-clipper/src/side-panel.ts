@@ -1,7 +1,8 @@
 import { createKnowledgeApiClient, type ItemListItem } from "./api-client.js";
 import { renderMarkdownPreview } from "./markdown-preview/render.js";
 import { stripSectionAnchors } from "./markdown-utils.js";
-import { getSettings, saveSettings } from "./settings.js";
+import { getSettings, saveSettings, setActiveServerProfile } from "./settings.js";
+import { renderServerProfileOptions } from "./server-profiles.js";
 import { openKnowledgePage } from "./tabs.js";
 import {
   ActiveTabInfo,
@@ -33,6 +34,7 @@ const pageTitleEl = mustGet<HTMLElement>("page-title");
 const pageUrlEl = mustGet<HTMLElement>("page-url");
 const moreMenu = mustGet<HTMLDetailsElement>("more-menu");
 const settingsButton = mustGet<HTMLButtonElement>("settings-button");
+const serverProfileSelect = mustGet<HTMLSelectElement>("server-profile");
 const refreshButton = mustGet<HTMLButtonElement>("refresh-button");
 const saveButton = mustGet<HTMLButtonElement>("save-button");
 const saveDropdown = mustGet<HTMLButtonElement>("save-dropdown");
@@ -77,6 +79,8 @@ let pendingAction: "batch" | "delete" | "preview" | "save" | undefined;
 let statusToastTimer: number | undefined;
 let currentCollectionTitle: string | undefined;
 let batchJobId: string | undefined;
+let settingsReloadPromise: Promise<void> | undefined;
+let profileGeneration = 0;
 
 applySettingsToUi();
 setMode(currentInputMode, false);
@@ -84,6 +88,10 @@ setView(activeView, false);
 await refreshActiveTab();
 await preview();
 updateActionButtons();
+
+serverProfileSelect.addEventListener("change", () => {
+  void switchServerProfile(serverProfileSelect.value);
+});
 
 refreshButton.addEventListener("click", () => preview());
 settingsButton.addEventListener("click", () => {
@@ -201,18 +209,21 @@ async function preview(): Promise<void> {
   }
 
   pendingAction = "preview";
+  const generation = profileGeneration;
   updateActionButtons();
   setStatus("Previewing");
   try {
     await refreshServerStatus();
+    if (generation !== profileGeneration) return;
     const body = await buildRequestBody();
     const nextPreview = await createKnowledgeApiClient(settings).preview(body);
+    if (generation !== profileGeneration) return;
     setLastPreview(nextPreview);
     setStatus(statusLabel(nextPreview.status));
     renderOutput();
     updateActionButtons();
     if (nextPreview.status.state !== "empty") {
-      void loadSavedItems();
+      void loadSavedItems(generation);
     }
   } catch (error) {
     setStatus("Error");
@@ -237,15 +248,18 @@ async function save(): Promise<void> {
   }
 
   const previousStatus = lastPreview?.status;
+  const generation = profileGeneration;
   pendingAction = "save";
   updateActionButtons();
   setStatus("Saving");
   try {
     await refreshServerStatus();
+    if (generation !== profileGeneration) return;
     const body = await buildSaveRequestBody();
     const nextPreview = await createKnowledgeApiClient(settings).save(body);
+    if (generation !== profileGeneration) return;
     setLastPreview(nextPreview);
-    await loadSavedItems();
+    await loadSavedItems(generation);
     await notifyBadgeRefresh();
     setStatus("Saved", summarizeSave(previousStatus, nextPreview));
     renderOutput();
@@ -363,10 +377,13 @@ async function collectNavigationLinks(mode: "navigation" | "list" = "navigation"
 }
 
 function pollBatchJob(jobId: string): void {
+  const generation = profileGeneration;
   window.clearTimeout(batchPollTimer);
   batchPollTimer = window.setTimeout(async () => {
     try {
+      if (generation !== profileGeneration) return;
       batchJob = await createKnowledgeApiClient(settings).batchJob(jobId);
+      if (generation !== profileGeneration) return;
       renderBatchProgress();
       const done = batchJob.saved + batchJob.skipped + batchJob.failed + batchJob.cancelled;
       setStatus(
@@ -376,7 +393,7 @@ function pollBatchJob(jobId: string): void {
       if (batchJob.state === "queued" || batchJob.state === "running") {
         pollBatchJob(jobId);
       } else {
-        await loadSavedItems();
+        await loadSavedItems(generation);
         await notifyBadgeRefresh();
       }
     } catch (error) {
@@ -620,12 +637,15 @@ async function refreshServerStatus(): Promise<void> {
   }
 }
 
-async function loadSavedItems(): Promise<void> {
+async function loadSavedItems(expectedGeneration = profileGeneration): Promise<void> {
+  const requestClient = createKnowledgeApiClient(settings);
+  const requestLimit = settings.savedListLimit;
   try {
     const [itemsResult, collectionsResult] = await Promise.all([
-      createKnowledgeApiClient(settings).list(settings.savedListLimit),
-      createKnowledgeApiClient(settings).listCollections()
+      requestClient.list(requestLimit),
+      requestClient.listCollections()
     ]);
+    if (expectedGeneration !== profileGeneration) return;
     savedItems = itemsResult.items.filter(
       (item) => item.sourceType !== "epub" && item.sourceType !== "pdf"
     );
@@ -638,6 +658,7 @@ async function loadSavedItems(): Promise<void> {
       renderSavedList(collectionsResult.collections, standaloneItems);
     }
   } catch (error) {
+    if (expectedGeneration !== profileGeneration) return;
     savedItems = [];
     if (activeView === "saved") {
       savedList.replaceChildren(makeEmptyState(error instanceof Error ? error.message : String(error)));
@@ -1098,10 +1119,42 @@ function renderBatchProgress(): void {
 }
 
 async function reloadSettings(): Promise<void> {
+  if (settingsReloadPromise) return settingsReloadPromise;
+  settingsReloadPromise = reloadSettingsInternal();
+  try {
+    await settingsReloadPromise;
+  } finally {
+    settingsReloadPromise = undefined;
+  }
+}
+
+async function reloadSettingsInternal(): Promise<void> {
+  const previousProfile = settings.profiles.find((profile) => profile.id === settings.activeProfileId);
+  const previousProfileSignature = previousProfile
+    ? `${previousProfile.serverUrl}\u0000${previousProfile.token}`
+    : "";
   const previousMode = currentInputMode;
   settings = await getSettings();
+  const activeProfile = settings.profiles.find((profile) => profile.id === settings.activeProfileId);
+  const profileChanged = settings.activeProfileId !== (previousProfile?.id ?? "") ||
+    `${activeProfile?.serverUrl ?? ""}\u0000${activeProfile?.token ?? ""}` !== previousProfileSignature;
   currentInputMode = settings.defaultInputMode;
   applySettingsToUi();
+  if (profileChanged) {
+    profileGeneration += 1;
+    lastPreview = undefined;
+    activeCandidateId = undefined;
+    savedItems = [];
+    window.clearTimeout(batchPollTimer);
+    batchDiscover = undefined;
+    batchJob = undefined;
+    batchJobId = undefined;
+    currentCollectionTitle = undefined;
+    batchModal.hidden = true;
+    batchModalBody.replaceChildren();
+    renderOutput();
+    setStatus("Library changed");
+  }
   if (activeTab?.isFileUrl) {
     currentInputMode = "browser_html";
   } else if (!settings.allowServerFetch && previousMode === "server_fetch") {
@@ -1110,9 +1163,26 @@ async function reloadSettings(): Promise<void> {
   setMode(currentInputMode, false);
   setView(settings.defaultPanelTab, false);
   updateActionButtons();
+  if (profileChanged && activeTab) {
+    await preview();
+  }
+}
+
+async function switchServerProfile(profileId: string): Promise<void> {
+  serverProfileSelect.disabled = true;
+  try {
+    await setActiveServerProfile(profileId);
+    await reloadSettings();
+  } catch (error) {
+    renderServerProfileOptions(serverProfileSelect, settings);
+    renderError(error);
+  } finally {
+    serverProfileSelect.disabled = false;
+  }
 }
 
 function applySettingsToUi(): void {
+  renderServerProfileOptions(serverProfileSelect, settings);
   diagnosticsButton.hidden = !settings.showParserDiagnostics;
   tabParserButton.hidden = !settings.showParserDiagnostics;
   if (!settings.showParserDiagnostics && activeView === "parser") {
@@ -1124,8 +1194,8 @@ function applySettingsToUi(): void {
 
 function hasSettingsChange(changes: Record<string, chrome.storage.StorageChange>): boolean {
   return [
-    "serverUrl",
-    "token",
+    "serverProfiles",
+    "activeServerProfileId",
     "defaultInputMode",
     "allowServerFetch",
     "autoRefresh",

@@ -114,6 +114,120 @@ p {
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
 }
 
+.profile-management {
+  align-items: end;
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(220px, 1fr) auto;
+}
+
+.profile-actions {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: end;
+}
+
+.profile-actions-menu {
+  position: relative;
+}
+
+.profile-actions-menu summary {
+  background: #ffffff;
+  border: 1px solid #c9d4e2;
+  border-radius: 6px;
+  color: #172033;
+  cursor: pointer;
+  list-style: none;
+  padding: 9px 12px;
+  white-space: nowrap;
+}
+
+.profile-actions-menu summary::-webkit-details-marker {
+  display: none;
+}
+
+.profile-actions-menu summary::after {
+  content: "▾";
+  font-size: 11px;
+  margin-left: 8px;
+}
+
+.profile-actions-menu[open] summary,
+.profile-actions-menu summary:hover {
+  border-color: #6b8afd;
+}
+
+.profile-actions-menu-panel {
+  background: #ffffff;
+  border: 1px solid #c9d4e2;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgb(23 32 51 / 16%);
+  display: grid;
+  gap: 4px;
+  min-width: 170px;
+  padding: 6px;
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 10;
+}
+
+.profile-actions-menu-panel button {
+  border: 0;
+  border-radius: 5px;
+  padding: 8px 10px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.profile-actions-menu-panel button:hover {
+  background: #f1f5f9;
+  border-color: transparent;
+}
+
+.profile-actions-menu-panel button:disabled {
+  background: transparent;
+}
+
+dialog {
+  background: #ffffff;
+  border: 1px solid #c9d4e2;
+  border-radius: 8px;
+  color: #172033;
+  max-width: 560px;
+  padding: 0;
+  width: calc(100% - 32px);
+}
+
+dialog::backdrop {
+  background: rgb(23 32 51 / 42%);
+}
+
+.profile-dialog-form {
+  display: grid;
+  gap: 16px;
+  padding: 20px;
+}
+
+.profile-dialog-form textarea {
+  background: #f8fafc;
+  border: 1px solid #c9d4e2;
+  border-radius: 6px;
+  color: #172033;
+  font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  min-height: 150px;
+  padding: 10px;
+  resize: vertical;
+  width: 100%;
+}
+
+.dialog-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
 .maintenance-actions {
   align-items: end;
   display: grid;
@@ -233,6 +347,14 @@ input[type="checkbox"] {
   .form-actions {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .profile-management {
+    grid-template-columns: 1fr;
+  }
+
+  .profile-actions {
+    justify-content: start;
   }
 
   .toggle-row {

@@ -7,7 +7,8 @@ import {
   resolveCollectionShellsToDelete,
   SourceFilter
 } from "./items-model.js";
-import { getSettings } from "./settings.js";
+import { getSettings, setActiveServerProfile } from "./settings.js";
+import { hasServerProfileChange, renderServerProfileOptions } from "./server-profiles.js";
 import { openKnowledgePage } from "./tabs.js";
 import { parseGitHubMarkdownUrl } from "./github-markdown-url.js";
 import {
@@ -67,6 +68,7 @@ const githubImportButton = mustGet<HTMLButtonElement>("github-import");
 const itemList = mustGet<HTMLElement>("item-list");
 const refreshButton = mustGet<HTMLButtonElement>("refresh-items");
 const settingsButton = mustGet<HTMLButtonElement>("open-settings");
+const serverProfileSelect = mustGet<HTMLSelectElement>("server-profile");
 const sourceFilterBar = mustGet<HTMLElement>("source-filter");
 const selectAll = mustGet<HTMLInputElement>("select-all");
 const selectCount = mustGet<HTMLElement>("select-count");
@@ -81,8 +83,8 @@ const overviewTotalDetail = mustGet<HTMLElement>("overview-total-detail");
 const overviewParsedDetail = mustGet<HTMLElement>("overview-parsed-detail");
 const overviewLatestDetail = mustGet<HTMLElement>("overview-latest-detail");
 
-const settings = await getSettings();
-const client = createKnowledgeApiClient(settings);
+let settings = await getSettings();
+let client = createKnowledgeApiClient(settings);
 const query = new URLSearchParams(globalThis.location.search);
 
 let currentItems: KnowledgeItem[] = [];
@@ -94,6 +96,20 @@ let markdownResourceFolderHandle: MarkdownDirectoryHandle | undefined;
 let activeSourceFilter: SourceFilter = normalizeSourceFilter(query.get("source") ?? (query.get("collectionId") ? "collection" : "all"));
 const focusCollectionId = query.get("collectionId") || "";
 const collectionDetailCache = new Map<string, Promise<CollectionDetail>>();
+let refreshGeneration = 0;
+let profileReloadPromise: Promise<void> | undefined;
+
+renderServerProfileOptions(serverProfileSelect, settings);
+
+serverProfileSelect.addEventListener("change", () => {
+  void switchServerProfile(serverProfileSelect.value);
+});
+
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName === "local" && hasServerProfileChange(changes)) {
+    void reloadServerProfile();
+  }
+});
 
 settingsButton.addEventListener("click", () => {
   void chrome.tabs.create({ url: chrome.runtime.getURL("options.html") });
@@ -577,6 +593,9 @@ function webkitRelativePath(file: File | undefined): string | undefined {
 }
 
 async function refreshItems(): Promise<void> {
+  const generation = ++refreshGeneration;
+  const requestClient = client;
+  const requestLimit = settings.savedListLimit;
   refreshButton.disabled = true;
   itemList.replaceChildren(loadingNode());
   collectionDetailCache.clear();
@@ -585,23 +604,71 @@ async function refreshItems(): Promise<void> {
       ? activeSourceFilter as KnowledgeSourceType
       : undefined;
     const [result, collectionsResult] = await Promise.all([
-      client.listItems(sourceType, settings.savedListLimit),
-      client.listCollections()
+      requestClient.listItems(sourceType, requestLimit),
+      requestClient.listCollections()
     ]);
+    if (generation !== refreshGeneration) return;
     currentCollections = collectionsResult.collections;
-    currentItems = await hydrateCollectionIds(result.items);
+    currentItems = await hydrateCollectionIds(result.items, requestClient);
+    if (generation !== refreshGeneration) return;
     renderItems(currentItems);
   } catch (error) {
+    if (generation !== refreshGeneration) return;
     itemList.replaceChildren(emptyNode(errorMessage(error)));
   } finally {
-    refreshButton.disabled = false;
+    if (generation === refreshGeneration) {
+      refreshButton.disabled = false;
+    }
   }
 }
 
-async function hydrateCollectionIds(items: KnowledgeItem[]): Promise<KnowledgeItem[]> {
+async function switchServerProfile(profileId: string): Promise<void> {
+  serverProfileSelect.disabled = true;
+  try {
+    await setActiveServerProfile(profileId);
+    await reloadServerProfile();
+  } catch (error) {
+    setStatus(errorMessage(error));
+    renderServerProfileOptions(serverProfileSelect, settings);
+  } finally {
+    serverProfileSelect.disabled = false;
+  }
+}
+
+async function reloadServerProfile(): Promise<void> {
+  if (profileReloadPromise) return profileReloadPromise;
+  profileReloadPromise = reloadServerProfileInternal();
+  try {
+    await profileReloadPromise;
+  } finally {
+    profileReloadPromise = undefined;
+  }
+}
+
+async function reloadServerProfileInternal(): Promise<void> {
+  const previousProfile = settings.profiles.find((profile) => profile.id === settings.activeProfileId);
+  const previousSignature = previousProfile
+    ? `${previousProfile.id}\u0000${previousProfile.serverUrl}\u0000${previousProfile.token}`
+    : "";
+  settings = await getSettings();
+  client = createKnowledgeApiClient(settings);
+  renderServerProfileOptions(serverProfileSelect, settings);
+  const activeProfile = settings.profiles.find((profile) => profile.id === settings.activeProfileId);
+  const nextSignature = activeProfile
+    ? `${activeProfile.id}\u0000${activeProfile.serverUrl}\u0000${activeProfile.token}`
+    : "";
+  if (previousSignature === nextSignature) return;
+  currentItems = [];
+  currentCollections = [];
+  collectionDetailCache.clear();
+  renderFilterBar();
+  await refreshItems();
+}
+
+async function hydrateCollectionIds(items: KnowledgeItem[], requestClient = client): Promise<KnowledgeItem[]> {
   return Promise.all(items.map(async (item) => {
     try {
-      const detail = await client.item(item.itemId);
+      const detail = await requestClient.item(item.itemId);
       return { ...item, collectionIds: detail.collectionIds ?? [] };
     } catch {
       return { ...item, collectionIds: [] };

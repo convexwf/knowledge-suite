@@ -57,6 +57,19 @@ select {
   position: relative;
 }
 
+.profile-switcher {
+  align-items: center;
+  display: flex;
+  gap: 4px;
+  max-width: 150px;
+  white-space: nowrap;
+}
+
+.profile-switcher select {
+  min-width: 0;
+  width: 100%;
+}
+
 h1 {
   font-size: 20px;
   line-height: 1.2;

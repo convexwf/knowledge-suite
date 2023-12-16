@@ -2,7 +2,8 @@ import { createKnowledgeApiClient } from "./api-client.js";
 import { applyCascadeSelection, normalizeHeadingSelections } from "./heading-cascade.js";
 import { stripSectionAnchors } from "./markdown-utils.js";
 import { renderDocument } from "./reader-renderer.js";
-import { getSettings } from "./settings.js";
+import { getSettings, setActiveServerProfile } from "./settings.js";
+import { hasServerProfileChange, renderServerProfileOptions } from "./server-profiles.js";
 import { openKnowledgePage } from "./tabs.js";
 import { Annotation, KnowledgeDocument, KnowledgeItem, RawDoc, SummaryAnnotation } from "./types.js";
 
@@ -38,9 +39,10 @@ const readerAnnotationCountOutput = mustGet<HTMLElement>("reader-annotation-coun
 const collectionNav = mustGet<HTMLElement>("collection-nav");
 const prevInCollectionBtn = mustGet<HTMLButtonElement>("prev-in-collection");
 const nextInCollectionBtn = mustGet<HTMLButtonElement>("next-in-collection");
+const serverProfileSelect = mustGet<HTMLSelectElement>("server-profile");
 
-const settings = await getSettings();
-const client = createKnowledgeApiClient(settings);
+let settings = await getSettings();
+let client = createKnowledgeApiClient(settings);
 const query = new URLSearchParams(globalThis.location.search);
 const itemId = query.get("itemId") || undefined;
 let currentItemId = itemId || "";
@@ -59,6 +61,18 @@ let aiAbortController: AbortController | null = null;
 let aiTaskId: string | null = null;
 let aiPollCleanup: (() => void) | null = null;
 let aiCascadeRows: Array<{ checkbox: HTMLInputElement; level: number }> = [];
+let profileSwitchInProgress = false;
+
+renderServerProfileOptions(serverProfileSelect, settings);
+
+serverProfileSelect.addEventListener("change", () => {
+  void switchServerProfile(serverProfileSelect.value);
+});
+
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName !== "local" || !hasServerProfileChange(changes)) return;
+  void reloadServerProfile();
+});
 
 backButton.addEventListener("click", () => {
   void openKnowledgePage("items.html");
@@ -169,6 +183,32 @@ globalThis.addEventListener("unload", () => {
 });
 
 await loadReader();
+
+async function switchServerProfile(profileId: string): Promise<void> {
+  profileSwitchInProgress = true;
+  serverProfileSelect.disabled = true;
+  try {
+    await setActiveServerProfile(profileId);
+    await openKnowledgePage("items.html");
+  } catch (error) {
+    profileSwitchInProgress = false;
+    renderServerProfileOptions(serverProfileSelect, settings);
+    showMessage(error instanceof Error ? error.message : String(error));
+  } finally {
+    serverProfileSelect.disabled = false;
+  }
+}
+
+async function reloadServerProfile(): Promise<void> {
+  settings = await getSettings();
+  client = createKnowledgeApiClient(settings);
+  renderServerProfileOptions(serverProfileSelect, settings);
+  if (profileSwitchInProgress) {
+    profileSwitchInProgress = false;
+    return;
+  }
+  await openKnowledgePage("items.html");
+}
 
 async function loadReader(): Promise<void> {
   showMessage("Loading document...");

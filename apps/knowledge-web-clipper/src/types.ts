@@ -26,6 +26,8 @@ export interface PageSnapshot {
 export interface ExtensionSettings {
   serverUrl: string;
   token: string;
+  profiles: ServerProfile[];
+  activeProfileId: string;
   defaultInputMode: InputMode;
   allowServerFetch: boolean;
   autoRefresh: boolean;
@@ -34,6 +36,22 @@ export interface ExtensionSettings {
   showParserDiagnostics: boolean;
   savedListLimit: number;
   defaultPanelTab: PanelView;
+}
+
+export interface ServerProfile {
+  id: string;
+  name: string;
+  serverUrl: string;
+  token: string;
+}
+
+export interface ServerProfileState {
+  profiles: ServerProfile[];
+  activeProfileId: string;
+}
+
+export interface ServerProfileExportPayload extends ServerProfileState {
+  schemaVersion: 1;
 }
 
 export type KnowledgeCaptureRequestBody =

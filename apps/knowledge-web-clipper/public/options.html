@@ -15,22 +15,38 @@
         </div>
         <div class="header-actions">
           <button id="open-items" type="button">Knowledge Items</button>
-          <button id="test-connection" type="button">Test Connection</button>
         </div>
       </header>
 
       <form id="settings-form" class="settings-form">
         <section class="settings-section">
-          <h2>Server</h2>
+          <h2>Server Profiles</h2>
+          <div class="profile-management">
+            <label>
+              Current library
+              <select id="server-profile-select"></select>
+            </label>
+            <div class="profile-actions">
+              <button id="test-connection" type="button">Test Connection</button>
+              <details id="profile-actions-menu" class="profile-actions-menu">
+                <summary>Manage</summary>
+                <div class="profile-actions-menu-panel">
+                  <button id="add-server-profile" type="button">Add Profile</button>
+                  <button id="edit-server-profile" type="button">Edit Profile</button>
+                  <button id="delete-server-profile" class="danger-button" type="button">Delete Profile</button>
+                  <button id="export-server-profiles" type="button">Export Profiles</button>
+                  <button id="import-server-profiles" type="button">Import Profiles</button>
+                </div>
+              </details>
+            </div>
+          </div>
+          <p class="section-description">Switch the library used by the extension. Export or import all profiles as one string.</p>
+          <div id="connection-status" class="status-output compact" role="status"></div>
+        </section>
+
+        <section class="settings-section">
+          <h2>Connection</h2>
           <div class="field-grid">
-            <label>
-              Server URL
-              <input id="server-url" type="url" placeholder="http://127.0.0.1:18765" />
-            </label>
-            <label>
-              Server Token
-              <input id="server-token" type="password" autocomplete="off" />
-            </label>
             <label>
               Request Timeout
               <input id="request-timeout-ms" type="number" min="3000" max="60000" step="1000" />
@@ -133,6 +149,52 @@
           <button type="submit">Save Settings</button>
         </footer>
       </form>
+
+      <dialog id="server-profile-dialog">
+        <form id="server-profile-form" class="profile-dialog-form">
+          <h2 id="server-profile-dialog-title">Add Server Profile</h2>
+          <label>
+            Name
+            <input id="profile-name" type="text" autocomplete="off" required />
+          </label>
+          <label>
+            Server URL
+            <input id="profile-url" type="url" placeholder="http://127.0.0.1:18765" required />
+          </label>
+          <label>
+            Server Token
+          <input id="profile-token" type="password" autocomplete="off" />
+          </label>
+          <div id="profile-test-status" class="status-output compact" role="status" hidden></div>
+          <div class="dialog-actions">
+            <button id="profile-dialog-cancel" type="button">Cancel</button>
+            <button id="profile-test-connection" type="button">Test Connection</button>
+            <button type="submit">Save Profile</button>
+          </div>
+        </form>
+      </dialog>
+
+      <dialog id="server-profile-export-dialog">
+        <div class="profile-dialog-form">
+          <h2>Export Server Profiles</h2>
+          <textarea id="profile-export-value" readonly></textarea>
+          <div class="dialog-actions">
+            <button id="profile-export-copy" type="button">Copy</button>
+            <button id="profile-export-close" type="button">Close</button>
+          </div>
+        </div>
+      </dialog>
+
+      <dialog id="server-profile-import-dialog">
+        <form id="server-profile-import-form" class="profile-dialog-form">
+          <h2>Import Server Profiles</h2>
+          <textarea id="profile-import-value" placeholder="Paste exported profile string" required></textarea>
+          <div class="dialog-actions">
+            <button id="profile-import-cancel" type="button">Cancel</button>
+            <button type="submit">Import</button>
+          </div>
+        </form>
+      </dialog>
     </main>
     <script type="module" src="options.js"></script>
   </body>

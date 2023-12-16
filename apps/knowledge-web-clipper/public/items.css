@@ -70,6 +70,17 @@ button:disabled {
   gap: 12px;
 }
 
+.profile-switcher {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.profile-switcher select {
+  max-width: 180px;
+}
+
 .page-header,
 .list-toolbar {
   justify-content: space-between;
