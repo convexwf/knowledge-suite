@@ -266,7 +266,10 @@ h2 {
   font-size: 22px;
 }
 
-.reader-content h3 {
+.reader-content h3,
+.reader-content h4,
+.reader-content h5,
+.reader-content h6 {
   font-size: 18px;
 }
 
