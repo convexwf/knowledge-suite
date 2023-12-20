@@ -230,10 +230,14 @@ function normalizeDocument(document: KnowledgeDocument, fixtureCase: ParserFixtu
     sections: document.sections.map((section, index) => ({
       ...section,
       section_id: `${fixtureCase.id}-section-${index + 1}`,
-      assets: section.assets?.map((asset, assetIndex) => ({
-        ...asset,
-        asset_id: `${fixtureCase.id}-asset-${assetIndex + 1}`
-      }))
+      ...(section.assets
+        ? {
+            assets: section.assets.map((asset, assetIndex) => ({
+              ...asset,
+              asset_id: `${fixtureCase.id}-asset-${assetIndex + 1}`
+            }))
+          }
+        : {})
     }))
   };
 }

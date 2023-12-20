@@ -1001,7 +1001,11 @@ function normalizeDate(value: string | undefined): string | null {
   if (!value) {
     return null;
   }
-  const date = new Date(value);
+  const trimmed = value.trim();
+  const dateOnly = /^(\d{4})[\/-](\d{2})[\/-](\d{2})$/.exec(trimmed);
+  const date = dateOnly
+    ? new Date(`${dateOnly[1]}-${dateOnly[2]}-${dateOnly[3]}T00:00:00.000Z`)
+    : new Date(trimmed);
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
