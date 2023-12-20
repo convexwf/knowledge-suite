@@ -86,6 +86,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Build shared workspace packages
+        run: npm run build -w @uknowledge/knowledge-schema
+
       - name: Check workspaces
         run: npm run check
 
