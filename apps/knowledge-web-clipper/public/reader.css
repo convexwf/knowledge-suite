@@ -282,6 +282,30 @@ h2 {
   overflow-wrap: anywhere;
 }
 
+.reader-content .math-inline {
+  display: inline-block;
+  max-width: 100%;
+  overflow-x: auto;
+  vertical-align: baseline;
+}
+
+.reader-content .math-display {
+  box-sizing: border-box;
+  max-width: 100%;
+  overflow-x: auto;
+  padding: 10px 12px;
+  text-align: center;
+}
+
+.reader-content .math-display .katex-display {
+  margin: 0;
+}
+
+.reader-content .math-source {
+  font-family: Cambria, "Times New Roman", serif;
+  white-space: pre-wrap;
+}
+
 .reader-content ul,
 .reader-content ol {
   margin: 0;

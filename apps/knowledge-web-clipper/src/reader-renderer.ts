@@ -1,5 +1,23 @@
 import { KnowledgeDocument } from "./types.js";
 
+declare global {
+  interface Window {
+    katex?: {
+      render: (
+        source: string,
+        element: HTMLElement,
+        options: {
+          displayMode?: boolean;
+          output?: "html" | "mathml" | "htmlAndMathml";
+          strict?: "ignore" | "warn" | "error" | boolean;
+          throwOnError?: boolean;
+          trust?: boolean;
+        }
+      ) => void;
+    };
+  }
+}
+
 export interface ReaderRenderContext {
   resolveAsset?: (assetId: string) => Promise<string>;
   resolveAssetUrl?: (sourceUrl: string) => Promise<string>;
@@ -52,11 +70,11 @@ async function renderSection(
         ? [headingNode(section.level ?? 2, section.content, nextHeadingIndex(), section.anchor_id)]
         : [];
     case "paragraph":
-      return section.content ? [paragraphNode(section.content)] : [];
+      return section.content ? paragraphNodes(section.content) : [];
     case "blockquote": {
       if (!section.content) return [];
       const quote = document.createElement("blockquote");
-      quote.textContent = section.content;
+      appendInline(quote, section.content);
       return [quote];
     }
     case "list": {
@@ -73,24 +91,47 @@ async function renderSection(
         blocks.push(await imageFigure(src, asset.alt || asset.caption || "", context));
       }
       if (section.content) {
-        blocks.push(paragraphNode(section.content));
+        blocks.push(...paragraphNodes(section.content));
       }
       return blocks;
     }
     case "table": {
       const rows = normalizeSectionRows(section.rows);
       if (rows.length) return [tableNode(rows)];
-      return section.content ? [paragraphNode(section.content)] : [];
+      return section.content ? paragraphNodes(section.content) : [];
     }
     default:
-      return section.content ? [paragraphNode(section.content)] : [];
+      return section.content ? paragraphNodes(section.content) : [];
   }
 }
 
-function paragraphNode(text: string): HTMLElement {
+function paragraphNodes(text: string): HTMLElement[] {
+  const blocks: HTMLElement[] = [];
+  const pattern = /(`[^`]*`)|(\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\])/g;
+  let lastIndex = 0;
+
+  for (const match of text.matchAll(pattern)) {
+    const delimitedMath = match[2];
+    if (delimitedMath === undefined) continue;
+
+    appendParagraphText(blocks, text.slice(lastIndex, match.index));
+    blocks.push(renderMath(delimitedMath.slice(2, -2), true));
+    lastIndex = match.index + match[0].length;
+  }
+
+  appendParagraphText(blocks, text.slice(lastIndex));
+  if (blocks.length > 0) return blocks;
+
   const paragraph = document.createElement("p");
   appendInline(paragraph, text);
-  return paragraph;
+  return [paragraph];
+}
+
+function appendParagraphText(blocks: HTMLElement[], text: string): void {
+  if (!text.trim()) return;
+  const paragraph = document.createElement("p");
+  appendInline(paragraph, text.trim());
+  blocks.push(paragraph);
 }
 
 function buildSectionList(items: NonNullable<ReaderSection["items"]>): HTMLElement {
@@ -194,7 +235,7 @@ function tableRow(values: string[], cellName: "td" | "th"): HTMLTableRowElement 
 }
 
 function appendInline(parent: HTMLElement, text: string): void {
-  const pattern = /(`([^`]+)`|\[([^\]]+)]\(([^)]+)\)|\$([^$\n]+)\$)/g;
+  const pattern = /(`([^`]+)`|\[([^\]]+)]\(([^)]+)\)|\\\((.+?)\\\)|(?<!\$)\$([^$\n]+?)\$(?!\$))/g;
   let lastIndex = 0;
   for (const match of text.matchAll(pattern)) {
     if (match.index > lastIndex) {
@@ -215,16 +256,43 @@ function appendInline(parent: HTMLElement, text: string): void {
         parent.append(document.createTextNode(match[3]));
       }
     } else if (match[5] !== undefined) {
-      const span = document.createElement("span");
-      span.className = "math-inline";
-      span.textContent = match[5];
-      parent.append(span);
+      parent.append(renderMath(match[5], false));
+    } else if (match[6] !== undefined) {
+      parent.append(renderMath(match[6], false));
     }
     lastIndex = match.index + match[0].length;
   }
   if (lastIndex < text.length) {
     appendFormattedText(parent, text.slice(lastIndex));
   }
+}
+
+function renderMath(source: string, display: boolean): HTMLElement {
+  const element = document.createElement(display ? "div" : "span");
+  element.className = display ? "math-display" : "math-inline";
+  element.dataset.mathSource = source;
+  const normalized = source.trim();
+
+  const katex = typeof window === "undefined" ? undefined : window.katex;
+  if (katex) {
+    try {
+      katex.render(normalized, element, {
+        displayMode: display,
+        output: "htmlAndMathml",
+        strict: "ignore",
+        throwOnError: false,
+        trust: false
+      });
+      element.classList.add("math-rendered");
+      return element;
+    } catch {
+      element.replaceChildren();
+    }
+  }
+
+  element.classList.add("math-source");
+  element.textContent = normalized;
+  return element;
 }
 
 function appendFormattedText(parent: HTMLElement, text: string): void {
