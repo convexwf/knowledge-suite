@@ -3,7 +3,7 @@
 @import url("./styles/components.css");
 
 :root {
-  color-scheme: light dark;
+  color-scheme: light;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
@@ -110,6 +110,18 @@ h2 {
 
 .profile-switcher select {
   max-width: 180px;
+}
+
+.theme-switcher {
+  align-items: center;
+  color: var(--text-body);
+  display: flex;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.theme-switcher select {
+  max-width: 120px;
 }
 
 .reader-layout {
@@ -1335,4 +1347,271 @@ h2 {
     bottom: 74px;
     right: 14px;
   }
+}
+
+:root[data-theme="dark"] body {
+  background: var(--bg-app-accent);
+  color: var(--text-strong);
+}
+
+:root[data-theme="dark"] button,
+:root[data-theme="dark"] input,
+:root[data-theme="dark"] select {
+  background: var(--bg-panel-strong);
+  border-color: var(--border-strong);
+  color: var(--text-strong);
+}
+
+:root[data-theme="dark"] button:hover {
+  border-color: var(--accent-primary);
+}
+
+:root[data-theme="dark"] .theme-switcher,
+:root[data-theme="dark"] #reader-kicker,
+:root[data-theme="dark"] .reader-meta,
+:root[data-theme="dark"] .reader-fact-label,
+:root[data-theme="dark"] .reader-content figcaption,
+:root[data-theme="dark"] .annotation-summary-meta,
+:root[data-theme="dark"] .annotation-summary-detail,
+:root[data-theme="dark"] .message-state {
+  color: var(--text-muted);
+}
+
+:root[data-theme="dark"] h1,
+:root[data-theme="dark"] .reader-content h1,
+:root[data-theme="dark"] .reader-content h2,
+:root[data-theme="dark"] .reader-content h3,
+:root[data-theme="dark"] .reader-content h4,
+:root[data-theme="dark"] .reader-content h5,
+:root[data-theme="dark"] .reader-content h6,
+:root[data-theme="dark"] .annotation-header h2,
+:root[data-theme="dark"] .reader-fact-value,
+:root[data-theme="dark"] .annotation-count-label,
+:root[data-theme="dark"] .anno-item-body,
+:root[data-theme="dark"] .annotation-popup-body,
+:root[data-theme="dark"] .outline-link.depth-0 {
+  color: var(--text-strong);
+}
+
+:root[data-theme="dark"] .reader-content p,
+:root[data-theme="dark"] .reader-content li,
+:root[data-theme="dark"] .reader-content blockquote,
+:root[data-theme="dark"] .anno-item-ref,
+:root[data-theme="dark"] .annotation-popup-ref,
+:root[data-theme="dark"] .annotation-item {
+  color: var(--text-body);
+}
+
+:root[data-theme="dark"] .annotation-empty-state {
+  color: var(--text-faint);
+}
+
+:root[data-theme="dark"] .outline-link.depth-1 {
+  color: var(--text-body);
+}
+
+:root[data-theme="dark"] .outline-link.depth-2,
+:root[data-theme="dark"] .outline-toggle,
+:root[data-theme="dark"] .anno-item-section,
+:root[data-theme="dark"] .anno-item-meta,
+:root[data-theme="dark"] .annotation-popup-section {
+  color: var(--text-faint);
+}
+
+:root[data-theme="dark"] .outline-panel,
+:root[data-theme="dark"] .reader-content,
+:root[data-theme="dark"] .annotation-panel,
+:root[data-theme="dark"] .reader-fact,
+:root[data-theme="dark"] .annotation-item,
+:root[data-theme="dark"] .annotation-empty-state,
+:root[data-theme="dark"] .annotation-popup,
+:root[data-theme="dark"] #annotation-toolbar,
+:root[data-theme="dark"] #ai-dialog,
+:root[data-theme="dark"] .ai-dialog-content,
+:root[data-theme="dark"] .summary-inline-popup {
+  background: var(--bg-panel);
+  border-color: var(--border-subtle);
+  box-shadow: var(--shadow-soft);
+}
+
+:root[data-theme="dark"] .outline-link:hover,
+:root[data-theme="dark"] .reader-content th,
+:root[data-theme="dark"] .reader-content code,
+:root[data-theme="dark"] .reader-meta span,
+:root[data-theme="dark"] .anno-item-ref,
+:root[data-theme="dark"] .annotation-popup-ref,
+:root[data-theme="dark"] .summary-inline-header,
+:root[data-theme="dark"] .ai-heading-list,
+:root[data-theme="dark"] .ai-dialog-actions button {
+  background: var(--bg-soft);
+}
+
+:root[data-theme="dark"] .reader-content th,
+:root[data-theme="dark"] .reader-content td,
+:root[data-theme="dark"] .reader-content img,
+:root[data-theme="dark"] .annotation-filter-btn,
+:root[data-theme="dark"] .ai-heading-list,
+:root[data-theme="dark"] .ai-dialog-actions button,
+:root[data-theme="dark"] .summary-inline-popup {
+  border-color: var(--border-subtle);
+}
+
+:root[data-theme="dark"] .reader-content blockquote {
+  background: var(--bg-soft);
+  border-left-color: var(--border-strong);
+}
+
+:root[data-theme="dark"] .reader-content code {
+  color: var(--text-strong);
+}
+
+:root[data-theme="dark"] .reader-content pre {
+  background: #0d1420;
+  border-color: #27354a;
+  color: #e7edf6;
+}
+
+:root[data-theme="dark"] .reader-content pre code {
+  background: transparent;
+  border: 0;
+  color: inherit;
+}
+
+:root[data-theme="dark"] .reader-content th,
+:root[data-theme="dark"] .reader-meta span,
+:root[data-theme="dark"] .anno-item-ref,
+:root[data-theme="dark"] .annotation-popup-ref {
+  color: var(--text-body);
+}
+
+:root[data-theme="dark"] .outline-link:hover,
+:root[data-theme="dark"] .annotation-item:hover,
+:root[data-theme="dark"] .more-menu-panel button:hover,
+:root[data-theme="dark"] .ai-heading-item:hover {
+  background: var(--bg-hover);
+}
+
+:root[data-theme="dark"] .ai-overlay {
+  background: var(--overlay);
+}
+
+:root[data-theme="dark"] .annotation-filter-btn {
+  background: var(--bg-accent-soft);
+  color: var(--accent-primary);
+}
+
+:root[data-theme="dark"] .annotation-filter-btn.active {
+  background: var(--accent-primary-soft);
+  border-color: var(--border-strong);
+  color: var(--accent-primary);
+}
+
+:root[data-theme="dark"] .annotation-item:hover {
+  border-color: var(--border-strong);
+  color: var(--text-strong);
+}
+
+:root[data-theme="dark"] .annotation-highlight {
+  background-color: var(--annotation-highlight);
+  color: #fff4c4;
+}
+
+:root[data-theme="dark"] .anno-item-ref,
+:root[data-theme="dark"] .annotation-popup-ref {
+  border-left-color: var(--border-strong);
+}
+
+:root[data-theme="dark"] .annotation-popup-badge {
+  background: var(--accent-warm-soft);
+  color: var(--accent-warm);
+}
+
+:root[data-theme="dark"] .annotation-popup-delete {
+  background: transparent;
+  border-color: var(--state-danger-border);
+  color: var(--state-danger-fg);
+}
+
+:root[data-theme="dark"] .annotation-popup-delete:hover {
+  background: var(--bg-danger);
+}
+
+:root[data-theme="dark"] .annotation-orphan-warning {
+  background: var(--bg-warning);
+  border-color: var(--accent-warm);
+  color: #f3d7a4;
+}
+
+:root[data-theme="dark"] #annotation-toolbar button,
+:root[data-theme="dark"] #outline-collapse-toggle,
+:root[data-theme="dark"] .panel-toggle,
+:root[data-theme="dark"] .outline-toggle {
+  background: transparent;
+}
+
+:root[data-theme="dark"] #annotation-toolbar button,
+:root[data-theme="dark"] .reader-content a,
+:root[data-theme="dark"] .reader-collection-link,
+:root[data-theme="dark"] #outline-collapse-toggle:hover,
+:root[data-theme="dark"] .panel-toggle:hover,
+:root[data-theme="dark"] #ai-generate,
+:root[data-theme="dark"] #ai-summarize {
+  color: var(--accent-link);
+}
+
+:root[data-theme="dark"] #annotation-toolbar button:hover {
+  background: var(--bg-accent-soft);
+  border-color: var(--accent-primary);
+}
+
+:root[data-theme="dark"] .ai-dialog-desc,
+:root[data-theme="dark"] .ai-heading-item,
+:root[data-theme="dark"] .summary-inline-body {
+  color: var(--text-body);
+}
+
+:root[data-theme="dark"] .summary-inline-header {
+  border-bottom-color: var(--border-subtle);
+}
+
+:root[data-theme="dark"] .annotation-popup-close {
+  background: transparent;
+  color: var(--text-faint);
+}
+
+:root[data-theme="dark"] .annotation-popup-close:hover {
+  color: var(--text-strong);
+}
+
+:root[data-theme="dark"] .summary-indicator,
+:root[data-theme="dark"] .annotation-item[data-type="summary"] .anno-icon,
+:root[data-theme="dark"] .summary-inline-header,
+:root[data-theme="dark"] .ai-progress span,
+:root[data-theme="dark"] .ai-heading-item.has-summary {
+  color: var(--accent-primary);
+}
+
+:root[data-theme="dark"] .ai-dialog-actions button:hover {
+  background: var(--bg-hover);
+}
+
+:root[data-theme="dark"] #ai-generate,
+:root[data-theme="dark"] #ai-summarize,
+:root[data-theme="dark"] .back-to-top,
+:root[data-theme="dark"] .collection-nav button {
+  background: var(--accent-primary);
+  border-color: var(--accent-primary);
+  color: #111722;
+}
+
+:root[data-theme="dark"] #ai-generate:hover,
+:root[data-theme="dark"] #ai-summarize:hover,
+:root[data-theme="dark"] .back-to-top:hover,
+:root[data-theme="dark"] .collection-nav button:not(:disabled):hover {
+  background: var(--accent-primary-strong);
+  border-color: var(--accent-primary-strong);
+}
+
+:root[data-theme="dark"] .reader-content .math-display {
+  color: var(--text-strong);
 }

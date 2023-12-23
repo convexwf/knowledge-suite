@@ -3,6 +3,7 @@ import { applyCascadeSelection, normalizeHeadingSelections } from "./heading-cas
 import { stripSectionAnchors } from "./markdown-utils.js";
 import { renderDocument } from "./reader-renderer.js";
 import { getSettings, setActiveServerProfile } from "./settings.js";
+import { bindThemeModeControl } from "./theme.js";
 import { hasServerProfileChange, renderServerProfileOptions } from "./server-profiles.js";
 import { openKnowledgePage } from "./tabs.js";
 import { Annotation, KnowledgeDocument, KnowledgeItem, RawDoc, SummaryAnnotation } from "./types.js";
@@ -40,9 +41,11 @@ const collectionNav = mustGet<HTMLElement>("collection-nav");
 const prevInCollectionBtn = mustGet<HTMLButtonElement>("prev-in-collection");
 const nextInCollectionBtn = mustGet<HTMLButtonElement>("next-in-collection");
 const serverProfileSelect = mustGet<HTMLSelectElement>("server-profile");
+const themeModeSelect = mustGet<HTMLSelectElement>("theme-mode");
 
 let settings = await getSettings();
 let client = createKnowledgeApiClient(settings);
+bindThemeModeControl(themeModeSelect, settings.themeMode);
 const query = new URLSearchParams(globalThis.location.search);
 const itemId = query.get("itemId") || undefined;
 let currentItemId = itemId || "";

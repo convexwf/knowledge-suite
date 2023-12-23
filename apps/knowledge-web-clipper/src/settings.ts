@@ -4,7 +4,8 @@ import {
   PanelView,
   ServerProfile,
   ServerProfileExportPayload,
-  ServerProfileState
+  ServerProfileState,
+  ThemeMode
 } from "./types.js";
 
 export const SERVER_PROFILES_KEY = "serverProfiles";
@@ -31,7 +32,8 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
   requestTimeoutMs: 15000,
   showParserDiagnostics: true,
   savedListLimit: 50,
-  defaultPanelTab: "preview"
+  defaultPanelTab: "preview",
+  themeMode: "system"
 };
 
 export async function getSettings(): Promise<ExtensionSettings> {
@@ -54,7 +56,8 @@ export async function resetSettings(): Promise<ExtensionSettings> {
     requestTimeoutMs: DEFAULT_SETTINGS.requestTimeoutMs,
     showParserDiagnostics: DEFAULT_SETTINGS.showParserDiagnostics,
     savedListLimit: DEFAULT_SETTINGS.savedListLimit,
-    defaultPanelTab: DEFAULT_SETTINGS.defaultPanelTab
+    defaultPanelTab: DEFAULT_SETTINGS.defaultPanelTab,
+    themeMode: DEFAULT_SETTINGS.themeMode
   });
   return DEFAULT_SETTINGS;
 }
@@ -81,8 +84,13 @@ export function normalizeSettings(stored: Record<string, unknown> | null | undef
     requestTimeoutMs,
     showParserDiagnostics: source.showParserDiagnostics !== false,
     savedListLimit,
-    defaultPanelTab: asPanelView(source.defaultPanelTab, DEFAULT_SETTINGS.defaultPanelTab)
+    defaultPanelTab: asPanelView(source.defaultPanelTab, DEFAULT_SETTINGS.defaultPanelTab),
+    themeMode: normalizeThemeMode(source.themeMode)
   };
+}
+
+export function normalizeThemeMode(value: unknown): ThemeMode {
+  return value === "light" || value === "dark" ? value : "system";
 }
 
 export async function getServerProfileState(): Promise<ServerProfileState> {

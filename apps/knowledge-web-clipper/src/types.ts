@@ -36,7 +36,10 @@ export interface ExtensionSettings {
   showParserDiagnostics: boolean;
   savedListLimit: number;
   defaultPanelTab: PanelView;
+  themeMode: ThemeMode;
 }
+
+export type ThemeMode = "system" | "light" | "dark";
 
 export interface ServerProfile {
   id: string;

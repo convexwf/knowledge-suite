@@ -3,7 +3,7 @@
 @import url("./styles/components.css");
 
 :root {
-  color-scheme: light dark;
+  color-scheme: light;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
@@ -79,6 +79,18 @@ button:disabled {
 
 .profile-switcher select {
   max-width: 180px;
+}
+
+.theme-switcher {
+  align-items: center;
+  color: var(--text-body);
+  display: flex;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.theme-switcher select {
+  max-width: 120px;
 }
 
 .page-header,
@@ -807,4 +819,133 @@ select {
   .collection-actions {
     flex-wrap: wrap;
   }
+}
+
+:root[data-theme="dark"] body {
+  background: var(--bg-app-accent);
+  color: var(--text-strong);
+}
+
+:root[data-theme="dark"] button,
+:root[data-theme="dark"] input,
+:root[data-theme="dark"] select {
+  background: var(--bg-panel-strong);
+  border-color: var(--border-strong);
+  color: var(--text-strong);
+}
+
+:root[data-theme="dark"] button:hover {
+  border-color: var(--accent-primary);
+}
+
+:root[data-theme="dark"] .primary-button,
+:root[data-theme="dark"] #upload-button {
+  background: var(--accent-primary);
+  border-color: var(--accent-primary);
+  color: #111722;
+}
+
+:root[data-theme="dark"] .primary-button:hover,
+:root[data-theme="dark"] #upload-button:hover {
+  background: var(--accent-primary-strong);
+  border-color: var(--accent-primary-strong);
+}
+
+:root[data-theme="dark"] .danger-button {
+  background: var(--state-danger-bg);
+  border-color: var(--state-danger-border);
+  color: var(--state-danger-fg);
+}
+
+:root[data-theme="dark"] p,
+:root[data-theme="dark"] .file-picker-name,
+:root[data-theme="dark"] .item-creator,
+:root[data-theme="dark"] .item-summary-line,
+:root[data-theme="dark"] .item-tags,
+:root[data-theme="dark"] .status-output,
+:root[data-theme="dark"] .batch-select-all,
+:root[data-theme="dark"] .overview-label {
+  color: var(--text-muted);
+}
+
+:root[data-theme="dark"] label,
+:root[data-theme="dark"] .item-details th {
+  color: var(--text-body);
+}
+
+:root[data-theme="dark"] .item-title,
+:root[data-theme="dark"] .overview-value,
+:root[data-theme="dark"] .item-details td {
+  color: var(--text-strong);
+}
+
+:root[data-theme="dark"] .panel,
+:root[data-theme="dark"] .overview-card,
+:root[data-theme="dark"] .item-row,
+:root[data-theme="dark"] .collection-row,
+:root[data-theme="dark"] .nested-item-row,
+:root[data-theme="dark"] .more-menu summary,
+:root[data-theme="dark"] .more-menu-panel,
+:root[data-theme="dark"] #import-dialog,
+:root[data-theme="dark"] .empty-state {
+  background: var(--bg-panel);
+  border-color: var(--border-subtle);
+  color: var(--text-body);
+  box-shadow: var(--shadow-soft);
+}
+
+:root[data-theme="dark"] .status-output,
+:root[data-theme="dark"] .item-details,
+:root[data-theme="dark"] .import-config,
+:root[data-theme="dark"] .collection-members {
+  background: var(--bg-soft);
+  border-color: var(--border-subtle);
+}
+
+:root[data-theme="dark"] .item-details th,
+:root[data-theme="dark"] .item-details td {
+  border-color: var(--border-subtle);
+}
+
+:root[data-theme="dark"] .batch-bar,
+:root[data-theme="dark"] .filter-chip[data-active="true"] {
+  background: var(--bg-accent-soft);
+  border-color: var(--accent-primary);
+}
+
+:root[data-theme="dark"] .filter-chip {
+  background: var(--bg-panel-strong);
+  border-color: var(--border-subtle);
+  color: var(--text-body);
+}
+
+:root[data-theme="dark"] .filter-chip:hover,
+:root[data-theme="dark"] .filter-chip[data-active="true"] {
+  color: var(--accent-primary);
+}
+
+:root[data-theme="dark"] .more-menu-panel button:hover {
+  background: var(--bg-hover);
+}
+
+:root[data-theme="dark"] .collection-avatar {
+  background: linear-gradient(135deg, rgba(132, 157, 255, 0.2), rgba(148, 163, 184, 0.12));
+  border-color: var(--border-subtle);
+  color: var(--text-strong);
+}
+
+:root[data-theme="dark"] .item-row:hover,
+:root[data-theme="dark"] .collection-row.focused,
+:root[data-theme="dark"] .collection-row[data-selected="true"] {
+  border-color: var(--accent-primary);
+  box-shadow: 0 12px 26px rgba(0, 0, 0, 0.22);
+}
+
+:root[data-theme="dark"] .item-badge.collection {
+  background: var(--bg-accent-soft);
+  color: var(--accent-primary);
+}
+
+:root[data-theme="dark"] #import-dialog::backdrop {
+  background: var(--overlay);
 }

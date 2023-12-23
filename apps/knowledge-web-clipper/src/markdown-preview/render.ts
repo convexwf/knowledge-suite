@@ -34,7 +34,7 @@ declare global {
         options: {
           displayMode?: boolean;
           output?: "html" | "mathml" | "htmlAndMathml";
-          strict?: boolean | string;
+          strict?: "ignore" | "warn" | "error" | boolean;
           throwOnError?: boolean;
           trust?: boolean;
         }
