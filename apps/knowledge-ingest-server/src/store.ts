@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
-import { access, copyFile, mkdir, readFile, readdir, rm, stat, unlink, writeFile } from "node:fs/promises";
+import { access, copyFile, link, mkdir, readFile, readdir, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { dirname, extname, isAbsolute, join } from "node:path";
 import {
   Annotation,
@@ -15,6 +15,9 @@ import {
   CollectionSummary,
   ContextCitation,
   ContextPackResponse,
+  DocumentOutlineEntry,
+  DocumentOutlineFile,
+  DocumentOutlineResponse,
   KnowledgeItem,
   KnowledgeItemDeleteMode,
   KnowledgeItemDeleteResponse,
@@ -248,7 +251,14 @@ interface CollectionItemDetail extends CollectionItem {
   language?: string;
 }
 
-const STORE_SCHEMA_VERSION = 12;
+const STORE_SCHEMA_VERSION = 13;
+
+export class InvalidOutlineError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "InvalidOutlineError";
+  }
+}
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -311,6 +321,16 @@ function sanitizeExtension(ext: string): string {
   return ext.replace(/[^a-zA-Z0-9]/g, "").slice(0, 10);
 }
 
+function isMissingFile(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error &&
+    (error as NodeJS.ErrnoException).code === "ENOENT";
+}
+
+function isAlreadyExists(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error &&
+    (error as NodeJS.ErrnoException).code === "EEXIST";
+}
+
 function contentExtension(sourceType: string): string {
   if (sourceType === "epub") return "epub";
   if (sourceType === "pdf") return "pdf";
@@ -325,6 +345,64 @@ function pathsFor(docId: string, captureId: string) {
     documentPath: `documents/${docId}.json`,
     markdownPath: `markdown/${docId}.md`
   };
+}
+
+function outlinePathFor(docId: string): string {
+  return `outlines/${docId}.json`;
+}
+
+function initialOutlineFor(document: KnowledgeDocument): DocumentOutlineFile {
+  const entries: DocumentOutlineEntry[] = [
+    { title: document.meta.title, level: 1, target: "top" }
+  ];
+
+  for (const section of document.sections) {
+    if (section.type !== "heading" || !section.section_id || !section.content?.trim()) continue;
+    const level = section.level ?? 2;
+    if (!Number.isInteger(level) || level < 1 || level > 3) continue;
+    entries.push({ title: section.content.trim(), level, target: section.section_id });
+  }
+
+  return { formatVersion: 1, docId: document.doc_id, entries };
+}
+
+function validateOutlineFile(value: unknown, docId: string): DocumentOutlineFile {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new InvalidOutlineError("Outline file must contain a JSON object.");
+  }
+  const outline = value as Record<string, unknown>;
+  if (outline.formatVersion !== 1) {
+    throw new InvalidOutlineError("Unsupported Outline formatVersion. Expected 1.");
+  }
+  if (outline.docId !== docId) {
+    throw new InvalidOutlineError(`Outline docId does not match requested document ${docId}.`);
+  }
+  if (!Array.isArray(outline.entries)) {
+    throw new InvalidOutlineError("Outline entries must be an array.");
+  }
+
+  const entries = outline.entries.map((entry, index): DocumentOutlineEntry => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      throw new InvalidOutlineError(`Outline entry ${index + 1} must be an object.`);
+    }
+    const candidate = entry as Record<string, unknown>;
+    if (typeof candidate.title !== "string" || !candidate.title.trim()) {
+      throw new InvalidOutlineError(`Outline entry ${index + 1} must have a non-empty title.`);
+    }
+    if (typeof candidate.level !== "number" || !Number.isInteger(candidate.level) || candidate.level < 1 || candidate.level > 6) {
+      throw new InvalidOutlineError(`Outline entry ${index + 1} level must be an integer from 1 to 6.`);
+    }
+    if (typeof candidate.target !== "string" || !candidate.target.trim()) {
+      throw new InvalidOutlineError(`Outline entry ${index + 1} must have a non-empty target.`);
+    }
+    return {
+      title: candidate.title,
+      level: candidate.level,
+      target: candidate.target
+    };
+  });
+
+  return { formatVersion: 1, docId, entries };
 }
 
 function pathsForActiveCapture(captureId: string) {
@@ -347,6 +425,7 @@ export class KnowledgeStore {
     await Promise.all([
       mkdir(join(this.root, "rawdocs"), { recursive: true }),
       mkdir(join(this.root, "documents"), { recursive: true }),
+      mkdir(join(this.root, "outlines"), { recursive: true }),
       mkdir(join(this.root, "markdown"), { recursive: true }),
       mkdir(join(this.root, "assets"), { recursive: true })
     ]);
@@ -407,6 +486,10 @@ export class KnowledgeStore {
       this.addColumnIfMissing("items", "content_bytes", "INTEGER");
       this.addColumnIfMissing("items", "section_count", "INTEGER");
       this.addColumnIfMissing("items", "asset_count", "INTEGER");
+    }
+
+    if (currentVersion < 13) {
+      this.addColumnIfMissing("documents", "outline_path", "TEXT");
     }
 
     this.database!.exec(`PRAGMA user_version = ${STORE_SCHEMA_VERSION}`);
@@ -485,6 +568,7 @@ export class KnowledgeStore {
         parser_method TEXT NOT NULL,
         parser_profile TEXT,
         content_hash TEXT,
+        outline_path TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         FOREIGN KEY(item_id) REFERENCES items(item_id),
@@ -878,6 +962,7 @@ export class KnowledgeStore {
       this.writeText(paths.rawHtmlPath, params.html),
       this.writeJson(paths.rawdocPath, params.rawdoc),
       this.writeJson(paths.documentPath, params.document),
+      this.writeJsonIfMissing(outlinePathFor(docId), initialOutlineFor(params.document)),
       this.writeText(paths.markdownPath, params.markdown)
     ]);
 
@@ -942,8 +1027,8 @@ export class KnowledgeStore {
 
       // documents
       this.database!.prepare(`
-        INSERT INTO documents (doc_id, item_id, capture_id, title, page_title, source_url, language, authors_json, published_at, parser_version, parser_method, parser_profile, content_hash, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO documents (doc_id, item_id, capture_id, title, page_title, source_url, language, authors_json, published_at, parser_version, parser_method, parser_profile, content_hash, outline_path, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(doc_id) DO UPDATE SET
           item_id = excluded.item_id,
           capture_id = excluded.capture_id,
@@ -957,12 +1042,13 @@ export class KnowledgeStore {
           parser_method = excluded.parser_method,
           parser_profile = excluded.parser_profile,
           content_hash = excluded.content_hash,
+          outline_path = excluded.outline_path,
           updated_at = excluded.updated_at
       `).run(
         docId, itemId, captureId, contentTitle, pageTitle, sourceUrl,
         params.document.meta.language ?? null, authorsJson,
         params.document.meta.published_at ?? null,
-        parserInfo.version, parserInfo.method, parserInfo.profile, contentHash, nowIso, nowIso
+        parserInfo.version, parserInfo.method, parserInfo.profile, contentHash, outlinePathFor(docId), nowIso, nowIso
       );
 
       this.storePackageFingerprint(
@@ -1052,6 +1138,7 @@ export class KnowledgeStore {
     await Promise.all([
       this.writeJson(paths.rawdocPath, rawdoc),
       this.writeJson(paths.documentPath, params.document),
+      this.writeJsonIfMissing(outlinePathFor(docId), initialOutlineFor(params.document)),
       this.writeText(paths.markdownPath, params.markdown),
       // Save raw content for reparse (file-based import)
       ...(params.content != null
@@ -1095,8 +1182,8 @@ export class KnowledgeStore {
       );
 
       this.database!.prepare(`
-        INSERT INTO documents (doc_id, item_id, capture_id, title, page_title, source_url, language, authors_json, published_at, parser_version, parser_method, parser_profile, content_hash, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, NULL, ?, ?, NULL, ?, ?, ?, ?, ?, ?)
+        INSERT INTO documents (doc_id, item_id, capture_id, title, page_title, source_url, language, authors_json, published_at, parser_version, parser_method, parser_profile, content_hash, outline_path, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, NULL, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(doc_id) DO UPDATE SET
           item_id = excluded.item_id,
           capture_id = excluded.capture_id,
@@ -1108,11 +1195,12 @@ export class KnowledgeStore {
           parser_method = excluded.parser_method,
           parser_profile = excluded.parser_profile,
           content_hash = excluded.content_hash,
+          outline_path = excluded.outline_path,
           updated_at = excluded.updated_at
       `).run(
         docId, params.itemId, captureId, params.document.meta.title,
         params.pageTitle ?? null, language, authorsJson,
-        parserInfo.version, parserInfo.method, parserInfo.profile, contentHash, now, now
+        parserInfo.version, parserInfo.method, parserInfo.profile, contentHash, outlinePathFor(docId), now, now
       );
 
       this.replaceChunks(params.document, { rawdoc_id: captureId, source_type: params.sourceType } as RawDoc, params.itemId, captureId, parserInfo, now);
@@ -1210,6 +1298,7 @@ export class KnowledgeStore {
     await Promise.all([
       this.writeJson(paths.rawdocPath, params.rawdoc),
       this.writeJson(paths.documentPath, params.document),
+      this.writeJsonIfMissing(outlinePathFor(docId), initialOutlineFor(params.document)),
       this.writeText(paths.markdownPath, params.markdown)
     ]);
 
@@ -1236,8 +1325,8 @@ export class KnowledgeStore {
       );
 
       this.database!.prepare(`
-        INSERT INTO documents (doc_id, item_id, capture_id, title, page_title, source_url, language, authors_json, published_at, parser_version, parser_method, parser_profile, content_hash, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, NULL, ?, ?, NULL, ?, ?, ?, ?, ?, ?)
+        INSERT INTO documents (doc_id, item_id, capture_id, title, page_title, source_url, language, authors_json, published_at, parser_version, parser_method, parser_profile, content_hash, outline_path, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, NULL, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(doc_id) DO UPDATE SET
           item_id = excluded.item_id,
           capture_id = excluded.capture_id,
@@ -1249,11 +1338,12 @@ export class KnowledgeStore {
           parser_method = excluded.parser_method,
           parser_profile = excluded.parser_profile,
           content_hash = excluded.content_hash,
+          outline_path = excluded.outline_path,
           updated_at = excluded.updated_at
       `).run(
         docId, params.itemId, captureId, params.document.meta.title,
         params.pageTitle ?? null, language, authorsJson,
-        parserInfo.version, parserInfo.method, parserInfo.profile, contentHash, now, now
+        parserInfo.version, parserInfo.method, parserInfo.profile, contentHash, outlinePathFor(docId), now, now
       );
 
       this.replaceChunks(params.document, { rawdoc_id: captureId, source_type: params.sourceType } as RawDoc, params.itemId, captureId, parserInfo, now);
@@ -1744,6 +1834,50 @@ export class KnowledgeStore {
   async loadDocument(docId: string): Promise<KnowledgeDocument | undefined> {
     await this.ensure();
     return this.readJson<KnowledgeDocument>(`documents/${docId}.json`).catch(() => undefined);
+  }
+
+  async loadOutline(docId: string): Promise<DocumentOutlineResponse | undefined> {
+    await this.ensure();
+    const row = this.database!.prepare(
+      "SELECT outline_path FROM documents WHERE doc_id = ?"
+    ).get(docId) as { outline_path: string | null } | undefined;
+    if (!row) return undefined;
+
+    const document = await this.loadDocument(docId);
+    if (!document) return undefined;
+
+    const relativePath = row.outline_path || outlinePathFor(docId);
+    let contents: string;
+    try {
+      contents = await this.readText(relativePath);
+    } catch (error) {
+      if (!isMissingFile(error)) throw error;
+      await this.writeJsonIfMissing(relativePath, initialOutlineFor(document));
+      contents = await this.readText(relativePath);
+    }
+    if (!row.outline_path) {
+      this.database!.prepare("UPDATE documents SET outline_path = ? WHERE doc_id = ?")
+        .run(relativePath, docId);
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(contents) as unknown;
+    } catch {
+      throw new InvalidOutlineError("Outline file contains invalid JSON.");
+    }
+    const outline = validateOutlineFile(parsed, docId);
+    const sectionIds = new Set(document.sections.map((section) => section.section_id).filter(Boolean));
+    const diagnostics: DocumentOutlineResponse["diagnostics"] = [];
+    const entries = outline.entries.map((entry, entryIndex) => {
+      const targetAvailable = entry.target === "top" || sectionIds.has(entry.target);
+      if (!targetAvailable) {
+        diagnostics.push({ entryIndex, code: "target_not_found", target: entry.target });
+      }
+      return { ...entry, targetAvailable };
+    });
+
+    return { formatVersion: 1, docId, entries, diagnostics };
   }
 
   async loadMarkdown(docId: string): Promise<string> {
@@ -2457,6 +2591,7 @@ export class KnowledgeStore {
     const databaseSize = (await stat(join(this.root, "index.sqlite3")).catch(() => ({ size: -1 }))).size;
     const rawdocFiles = await countFiles(join(this.root, "rawdocs"));
     const documentFiles = await countFiles(join(this.root, "documents"));
+    const outlineFiles = await countFiles(join(this.root, "outlines"));
     const markdownFiles = await countFiles(join(this.root, "markdown"));
     const assetFiles = await countFiles(join(this.root, "assets"));
     const tables = {
@@ -2472,7 +2607,7 @@ export class KnowledgeStore {
       batchItems: this.countRows("batch_items")
     };
     const rows = Object.values(tables).reduce((sum, count) => sum + count, 0);
-    const totalContentFiles = rawdocFiles + documentFiles + markdownFiles + assetFiles;
+    const totalContentFiles = rawdocFiles + documentFiles + outlineFiles + markdownFiles + assetFiles;
     const parsedItems = this.countRowsWhere("items", "active_doc_id IS NOT NULL");
     const collectionItemRefs = this.countRowsWhere("collection_memberships", "member_item_id IS NOT NULL");
     const batchItemRefs = this.countRowsWhere("batch_items", "doc_id IS NOT NULL");
@@ -2482,7 +2617,7 @@ export class KnowledgeStore {
       scannedAt: new Date().toISOString(),
       database: { exists: databaseSize >= 0, path: "index.sqlite3", sizeBytes: Math.max(databaseSize, 0) },
       tables,
-      files: { rawdocs: rawdocFiles, documents: documentFiles, markdown: markdownFiles, assets: assetFiles, totalContentFiles },
+      files: { rawdocs: rawdocFiles, documents: documentFiles, outlines: outlineFiles, markdown: markdownFiles, assets: assetFiles, totalContentFiles },
       totals: { rows, contentFiles: totalContentFiles },
       parsedResults: {
         parsedItems,
@@ -2491,7 +2626,7 @@ export class KnowledgeStore {
         chunkRows: tables.chunks,
         collectionItemRefs,
         batchItemRefs,
-        derivedFiles: documentFiles + markdownFiles + assetFiles
+        derivedFiles: documentFiles + outlineFiles + markdownFiles + assetFiles
       }
     };
   }
@@ -2520,6 +2655,7 @@ export class KnowledgeStore {
     }
     await rm(join(this.root, "rawdocs"), { recursive: true }).catch(ignoreMissing);
     await rm(join(this.root, "documents"), { recursive: true }).catch(ignoreMissing);
+    await rm(join(this.root, "outlines"), { recursive: true }).catch(ignoreMissing);
     await rm(join(this.root, "markdown"), { recursive: true }).catch(ignoreMissing);
     await rm(join(this.root, "assets"), { recursive: true }).catch(ignoreMissing);
     await rm(join(this.root, "annotations"), { recursive: true }).catch(ignoreMissing);
@@ -2544,6 +2680,7 @@ export class KnowledgeStore {
       throw error;
     }
     await rm(join(this.root, "documents"), { recursive: true }).catch(ignoreMissing);
+    await rm(join(this.root, "outlines"), { recursive: true }).catch(ignoreMissing);
     await rm(join(this.root, "markdown"), { recursive: true }).catch(ignoreMissing);
     await rm(join(this.root, "assets"), { recursive: true }).catch(ignoreMissing);
     await rm(join(this.root, "annotations"), { recursive: true }).catch(ignoreMissing);
@@ -2557,6 +2694,8 @@ export class KnowledgeStore {
     await unlink(markdownPath).then(() => files.push(`markdown/${docId}.md`)).catch(ignoreMissing);
     const annotationsPath = resolveInsideRoot(this.root, `annotations/${docId}.json`);
     await unlink(annotationsPath).then(() => files.push(`annotations/${docId}.json`)).catch(ignoreMissing);
+    const outlinePath = resolveInsideRoot(this.root, outlinePathFor(docId));
+    await unlink(outlinePath).then(() => files.push(outlinePathFor(docId))).catch(ignoreMissing);
     // delete document json
     const docPath = resolveInsideRoot(this.root, `documents/${docId}.json`);
     await unlink(docPath).then(() => files.push(`documents/${docId}.json`)).catch(ignoreMissing);
@@ -2608,6 +2747,21 @@ export class KnowledgeStore {
 
   private async writeJson(relativePath: string, data: unknown): Promise<void> {
     await this.writeText(relativePath, JSON.stringify(data, null, 2));
+  }
+
+  private async writeJsonIfMissing(relativePath: string, data: unknown): Promise<void> {
+    const path = resolveInsideRoot(this.root, relativePath);
+    const tempRelativePath = `${relativePath}.tmp-${makeId()}`;
+    const tempPath = resolveInsideRoot(this.root, tempRelativePath);
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(tempPath, JSON.stringify(data, null, 2), { encoding: "utf-8", flag: "wx" });
+    try {
+      await link(tempPath, path);
+    } catch (error) {
+      if (!isAlreadyExists(error)) throw error;
+    } finally {
+      await unlink(tempPath).catch(ignoreMissing);
+    }
   }
 
   private async writeBuffer(relativePath: string, data: Buffer): Promise<void> {

@@ -163,6 +163,24 @@ export interface KnowledgeDocument {
   }>;
 }
 
+export interface DocumentOutlineEntry {
+  title: string;
+  level: number;
+  target: string;
+  targetAvailable: boolean;
+}
+
+export interface DocumentOutlineResult {
+  formatVersion: 1;
+  docId: string;
+  entries: DocumentOutlineEntry[];
+  diagnostics: Array<{
+    entryIndex: number;
+    code: "target_not_found";
+    target: string;
+  }>;
+}
+
 export interface KnowledgeItem {
   itemId: string;
   sourceType: KnowledgeSourceType;
@@ -376,6 +394,7 @@ export interface StoreMaintenanceScan {
   files: {
     rawdocs: number;
     documents: number;
+    outlines: number;
     markdown: number;
     assets: number;
     totalContentFiles: number;

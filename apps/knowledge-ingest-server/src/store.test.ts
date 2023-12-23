@@ -252,7 +252,7 @@ describe("KnowledgeStore", () => {
 
     const scan = await store.scanMaintenance();
     expect(scan.totals.rows).toBeGreaterThanOrEqual(4);
-    expect(scan.totals.contentFiles).toBe(4);
+    expect(scan.totals.contentFiles).toBe(5);
     expect(scan.tables.webItems).toBe(1);
     expect(scan.tables.rawdocs).toBe(1);
     expect(scan.tables.documents).toBe(1);
@@ -260,12 +260,13 @@ describe("KnowledgeStore", () => {
     expect(scan.files).toMatchObject({
       rawdocs: 2,
       documents: 1,
+      outlines: 1,
       markdown: 1
     });
 
     const cleared = await store.clearAll();
     expect(cleared.cleared).toBe(true);
-    expect(cleared.before.totals.contentFiles).toBe(4);
+    expect(cleared.before.totals.contentFiles).toBe(5);
     expect(cleared.after.totals.rows).toBe(0);
     expect(cleared.after.totals.contentFiles).toBe(0);
     expect(tableCount(storeRoot, "items")).toBe(0);
@@ -290,7 +291,7 @@ describe("KnowledgeStore", () => {
     expect(scan.parsedResults).toMatchObject({
       parsedWebItems: 1,
       documentRows: 1,
-      derivedFiles: 2
+      derivedFiles: 3
     });
     expect(scan.parsedResults.chunkRows).toBeGreaterThan(0);
 
@@ -574,6 +575,7 @@ function expectStoreSchema(root: string): void {
       "parser_method",
       "parser_profile",
       "content_hash",
+      "outline_path",
       "created_at",
       "updated_at"
     ]));
@@ -686,10 +688,11 @@ function expectStoreSchema(root: string): void {
     ]));
 
     const userVersion = database.prepare("PRAGMA user_version").get() as { user_version: number };
-    expect(userVersion.user_version).toBe(12);
+    expect(userVersion.user_version).toBe(13);
 
-    for (const columns of Object.values(columnsByTable)) {
-      expect(columns.filter((column) => column.endsWith("_path") && column !== "heading_path")).toEqual([]);
+    for (const [table, columns] of Object.entries(columnsByTable)) {
+      expect(columns.filter((column) => column.endsWith("_path") && column !== "heading_path"))
+        .toEqual(table === "documents" ? ["outline_path"] : []);
     }
   } finally {
     database.close();

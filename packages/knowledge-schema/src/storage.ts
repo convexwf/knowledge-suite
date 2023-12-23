@@ -25,6 +25,7 @@ export interface StoreMaintenanceScan {
   files: {
     rawdocs: number;
     documents: number;
+    outlines: number;
     markdown: number;
     assets: number;
     totalContentFiles: number;

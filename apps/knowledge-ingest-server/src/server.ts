@@ -44,7 +44,7 @@ import { documentToMarkdown } from "./markdown.js";
 import { parseMarkdown, type MarkdownAssetInput } from "./markdown-import.js";
 import { parsePage, type ParsedPage } from "./parser.js";
 import { buildPackageManifest, PACKAGE_SCHEMA_VERSION, sha256Text } from "./package.js";
-import { guessContentType, KnowledgeStore } from "./store.js";
+import { guessContentType, InvalidOutlineError, KnowledgeStore } from "./store.js";
 import { buildZipArchive } from "./zip.js";
 
 function matchesEtag(header: string | string[] | undefined, etag: string): boolean {
@@ -164,6 +164,10 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
     }
 
     const message = error instanceof Error ? error.message : String(error);
+    if (error instanceof InvalidOutlineError) {
+      await reply.code(422).send({ error: "invalid_outline", message });
+      return;
+    }
     const statusCode = isClientInputError(message) ? 400 : 500;
     await reply.code(statusCode).send({
       error: statusCode === 400 ? "bad_request" : "internal_error",
@@ -375,6 +379,15 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
   app.get("/api/documents/:docId", async (request) => {
     const params = request.params as { docId: string };
     return store.loadDocument(params.docId);
+  });
+
+  app.get("/api/documents/:docId/outline", async (request, reply) => {
+    const params = request.params as { docId: string };
+    const outline = await store.loadOutline(params.docId);
+    if (!outline) {
+      return reply.code(404).send({ error: "document_not_found", message: "Parsed document was not found." });
+    }
+    return reply.header("cache-control", "no-store").send(outline);
   });
 
   app.get("/api/documents/:docId/markdown", async (request, reply) => {

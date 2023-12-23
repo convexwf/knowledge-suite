@@ -6,7 +6,15 @@ import { getSettings, setActiveServerProfile } from "./settings.js";
 import { bindThemeModeControl } from "./theme.js";
 import { hasServerProfileChange, renderServerProfileOptions } from "./server-profiles.js";
 import { openKnowledgePage } from "./tabs.js";
-import { Annotation, KnowledgeDocument, KnowledgeItem, RawDoc, SummaryAnnotation } from "./types.js";
+import {
+  Annotation,
+  DocumentOutlineEntry,
+  DocumentOutlineResult,
+  KnowledgeDocument,
+  KnowledgeItem,
+  RawDoc,
+  SummaryAnnotation
+} from "./types.js";
 
 const titleOutput = mustGet<HTMLElement>("reader-title");
 const kickerOutput = mustGet<HTMLElement>("reader-kicker");
@@ -250,10 +258,10 @@ async function loadReader(): Promise<void> {
       registerObjectUrl: (url) => objectUrls.add(url),
       onDiagnostic: (diagnostic) => console.warn("[Reader] section diagnostic", diagnostic)
     });
-    renderOutline();
+    currentDocId = currentDocument.doc_id;
+    await loadAndRenderOutline(currentDocId);
     copyButton.disabled = !currentMarkdown;
 
-    currentDocId = currentDocument.doc_id;
     aiSummarizeBtn.disabled = false;
     await loadAndApplyAnnotations();
     await loadCollectionContext();
@@ -281,10 +289,10 @@ async function reparseCurrentItem(value: string): Promise<void> {
       registerObjectUrl: (url) => objectUrls.add(url),
       onDiagnostic: (diagnostic) => console.warn("[Reader] section diagnostic", diagnostic)
     });
-    renderOutline();
+    currentDocId = currentDocument.doc_id;
+    await loadAndRenderOutline(currentDocId);
     copyButton.disabled = false;
 
-    currentDocId = currentDocument.doc_id;
     aiSummarizeBtn.disabled = false;
     await loadAndApplyAnnotations();
     const warnings = (result as unknown as Record<string, unknown>).annotationWarnings as
@@ -329,9 +337,9 @@ async function refreshCurrentItem(value: string): Promise<void> {
       registerObjectUrl: (url) => objectUrls.add(url),
       onDiagnostic: (diagnostic) => console.warn("[Reader] section diagnostic", diagnostic)
     });
-    renderOutline();
-    copyButton.disabled = !currentMarkdown;
     currentDocId = currentDocument.doc_id;
+    await loadAndRenderOutline(currentDocId);
+    copyButton.disabled = !currentMarkdown;
     aiSummarizeBtn.disabled = false;
     await loadAndApplyAnnotations();
     showMessage(`GitHub Markdown refreshed${result.commitSha ? ` to ${result.commitSha.slice(0, 8)}` : ""}.`);
@@ -417,37 +425,27 @@ function encodePath(path: string): string {
   return path.split("/").map((part) => encodeURIComponent(part)).join("/");
 }
 
-interface HeadingNode {
-  level: number;
-  element: HTMLHeadingElement;
-  children: HeadingNode[];
+interface OutlineNode {
+  entry: DocumentOutlineEntry;
+  children: OutlineNode[];
 }
 
-function buildHeadingTree(headings: HTMLHeadingElement[]): HeadingNode[] {
-  const root: HeadingNode[] = [];
-  const stack: HeadingNode[] = [];
+function buildOutlineTree(entries: DocumentOutlineEntry[]): OutlineNode[] {
+  const root: OutlineNode[] = [];
+  const stack: OutlineNode[] = [];
 
-  for (const heading of headings) {
-    const level = Number(heading.tagName.slice(1));
-    const node: HeadingNode = { level, element: heading, children: [] };
-
-    while (stack.length > 0 && stack[stack.length - 1].level >= level) {
-      stack.pop();
-    }
-
-    if (stack.length === 0) {
-      root.push(node);
-    } else {
-      stack[stack.length - 1].children.push(node);
-    }
-
+  for (const entry of entries) {
+    const node: OutlineNode = { entry, children: [] };
+    while (stack.length > 0 && stack[stack.length - 1].entry.level >= entry.level) stack.pop();
+    if (stack.length === 0) root.push(node);
+    else stack[stack.length - 1].children.push(node);
     stack.push(node);
   }
 
   return root;
 }
 
-function renderOutlineTree(nodes: HeadingNode[], parentElement: HTMLElement, depth: number = 0): void {
+function renderOutlineTree(nodes: OutlineNode[], parentElement: HTMLElement, depth: number = 0): void {
   const list = document.createElement("ul");
   list.className = "outline-tree";
 
@@ -455,11 +453,25 @@ function renderOutlineTree(nodes: HeadingNode[], parentElement: HTMLElement, dep
     const li = document.createElement("li");
     li.className = "outline-item";
 
-    const link = document.createElement("a");
-    link.href = `#${node.element.id}`;
-    link.textContent = node.element.textContent || "Section";
-    link.className = `outline-link depth-${Math.min(depth, 2)}`;
-    li.append(link);
+    const target = node.entry.target;
+    if (node.entry.targetAvailable && hasOutlineTarget(target)) {
+      const link = document.createElement("a");
+      link.href = "#";
+      link.textContent = node.entry.title;
+      link.className = `outline-link depth-${Math.min(depth, 2)}`;
+      link.addEventListener("click", (event) => {
+        event.preventDefault();
+        scrollToOutlineTarget(target);
+      });
+      li.append(link);
+    } else {
+      const label = document.createElement("span");
+      label.textContent = node.entry.title;
+      label.className = `outline-link outline-link-disabled depth-${Math.min(depth, 2)}`;
+      label.title = "This section is not present in the current document.";
+      label.setAttribute("aria-disabled", "true");
+      li.append(label);
+    }
 
     if (node.children.length > 0) {
       const childList = document.createElement("ul");
@@ -489,24 +501,44 @@ function renderOutlineTree(nodes: HeadingNode[], parentElement: HTMLElement, dep
   parentElement.append(list);
 }
 
-function renderOutline(): void {
+function hasOutlineTarget(target: string): boolean {
+  if (target === "top") return true;
+  return Array.from(contentOutput.querySelectorAll<HTMLElement>("[data-section-id]"))
+    .some((element) => element.dataset.sectionId === target);
+}
+
+function scrollToOutlineTarget(target: string): void {
+  if (target === "top") {
+    globalThis.scrollTo({ top: 0, behavior: "smooth" });
+    return;
+  }
+  const element = Array.from(contentOutput.querySelectorAll<HTMLElement>("[data-section-id]"))
+    .find((candidate) => candidate.dataset.sectionId === target);
+  element?.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function renderOutline(outline: DocumentOutlineResult): void {
   outlineOutput.replaceChildren();
-  const headings = Array.from(contentOutput.querySelectorAll("h1, h2, h3"));
-  if (headings.length === 0) {
+  if (outline.entries.length === 0) {
     outlineOutput.append(documentCreate("span", "No headings"));
     return;
   }
 
-  headings.forEach((heading, index) => {
-    if (!heading.id) {
-      heading.id = slugify(heading.textContent || `section-${index + 1}`, index);
-    }
-  });
-
-  const tree = buildHeadingTree(headings as HTMLHeadingElement[]);
+  const tree = buildOutlineTree(outline.entries);
   renderOutlineTree(tree, outlineOutput);
   outlineCollapseToggle.dataset.collapsed = "false";
   outlineCollapseToggle.textContent = "Collapse all";
+}
+
+async function loadAndRenderOutline(docId: string): Promise<void> {
+  try {
+    renderOutline(await client.documentOutline(docId));
+  } catch (error) {
+    outlineOutput.replaceChildren(documentCreate(
+      "span",
+      `Could not load outline: ${error instanceof Error ? error.message : String(error)}`
+    ));
+  }
 }
 
 function showMessage(message: string): void {
@@ -530,14 +562,6 @@ function documentCreate(tagName: "span" | "div", text: string): HTMLElement {
 function formatDate(value: string): string {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
-}
-
-function slugify(text: string, index: number): string {
-  const slug = text.toLowerCase()
-    .replace(/[^a-z0-9\u4e00-\u9fa5]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 64);
-  return slug ? `${slug}-${index + 1}` : `section-${index + 1}`;
 }
 
 function mustGet<T extends HTMLElement>(id: string): T {

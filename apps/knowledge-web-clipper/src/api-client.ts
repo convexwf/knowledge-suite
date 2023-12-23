@@ -17,6 +17,7 @@ import {
   GitHubMarkdownScanResult,
   MarkdownImportResult,
   KnowledgeDocument,
+  DocumentOutlineResult,
   KnowledgeCaptureRequestBody,
   KnowledgeCaptureSaveRequestBody,
   KnowledgeItem,
@@ -92,6 +93,7 @@ export interface KnowledgeApiClient {
   refreshItem(itemId: string): Promise<GitHubMarkdownRefreshResult>;
   deleteItem(itemId: string, mode?: KnowledgeItemDeleteMode): Promise<KnowledgeItemDeleteResult>;
   document(docId: string): Promise<KnowledgeDocument>;
+  documentOutline(docId: string): Promise<DocumentOutlineResult>;
   documentMarkdown(docId: string): Promise<string>;
   assetBlobUrl(assetId: string): Promise<string>;
   githubAssetBlobUrl(sourceUrl: string): Promise<string>;
@@ -315,6 +317,14 @@ export function createKnowledgeApiClient(settings: ExtensionSettings): Knowledge
       settings.token,
       "GET",
       `/api/documents/${encodeURIComponent(docId)}`,
+      undefined,
+      options
+    ),
+    documentOutline: (docId) => request<DocumentOutlineResult>(
+      baseUrl,
+      settings.token,
+      "GET",
+      `/api/documents/${encodeURIComponent(docId)}/outline`,
       undefined,
       options
     ),

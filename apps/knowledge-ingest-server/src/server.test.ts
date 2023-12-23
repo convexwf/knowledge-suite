@@ -907,8 +907,9 @@ describe("knowledge ingest server", () => {
       files: {
         rawdocs: 2,
         documents: 1,
+        outlines: 1,
         markdown: 1,
-        totalContentFiles: 4
+        totalContentFiles: 5
       }
     });
 
@@ -934,7 +935,7 @@ describe("knowledge ingest server", () => {
       cleared: true,
       before: {
         totals: {
-          contentFiles: 4
+          contentFiles: 5
         }
       },
       after: {

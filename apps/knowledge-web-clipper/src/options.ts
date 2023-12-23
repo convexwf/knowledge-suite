@@ -492,7 +492,7 @@ function formatStoreScan(scan: StoreMaintenanceScan): string {
     `Content files: ${scan.totals.contentFiles}`,
     `Parsed impact: items=${impact.items}, webItems=${impact.webItems}, rows=${impact.rows}, files=${impact.files}, collectionRefs=${impact.collectionItemRefs}, batchRefs=${impact.batchItemRefs}`,
     `Tables: knowledgeItems=${scan.tables.knowledgeItems ?? 0}, webItems=${scan.tables.webItems}, epubMetadata=${scan.tables.epubMetadata ?? 0}, rawdocs=${scan.tables.rawdocs}, documents=${scan.tables.documents}, chunks=${scan.tables.chunks}, collections=${scan.tables.collections}, collectionItems=${scan.tables.collectionItems}, batchJobs=${scan.tables.batchJobs}, batchItems=${scan.tables.batchItems}`,
-    `Files: rawdocs=${scan.files.rawdocs}, documents=${scan.files.documents}, markdown=${scan.files.markdown}, assets=${scan.files.assets}`,
+    `Files: rawdocs=${scan.files.rawdocs}, documents=${scan.files.documents}, outlines=${scan.files.outlines}, markdown=${scan.files.markdown}, assets=${scan.files.assets}`,
     `Scanned at: ${scan.scannedAt}`
   ].join("\n");
 }
@@ -521,7 +521,7 @@ function parsedImpact(scan: StoreMaintenanceScan): {
     items: scan.tables.knowledgeItems ?? 0,
     webItems: scan.tables.documents,
     rows: scan.tables.documents + scan.tables.chunks,
-    files: scan.files.documents + scan.files.markdown + scan.files.assets,
+    files: scan.files.documents + scan.files.outlines + scan.files.markdown + scan.files.assets,
     collectionItemRefs: 0,
     batchItemRefs: 0
   };
