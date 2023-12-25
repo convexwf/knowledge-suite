@@ -10,6 +10,7 @@ import {
   saveServerProfileState,
   saveSettings
 } from "./settings.js";
+import { bindThemeModeControl } from "./theme.js";
 import { openKnowledgePage } from "./tabs.js";
 import {
   ExtensionSettings,
@@ -53,6 +54,7 @@ const requestTimeoutInput = mustGet<HTMLInputElement>("request-timeout-ms");
 const showParserInput = mustGet<HTMLInputElement>("show-parser-diagnostics");
 const savedListLimitInput = mustGet<HTMLInputElement>("saved-list-limit");
 const defaultPanelTabSelect = mustGet<HTMLSelectElement>("default-panel-tab");
+const themeModeSelect = mustGet<HTMLSelectElement>("theme-mode");
 const openItemsButton = mustGet<HTMLButtonElement>("open-items");
 const testButton = mustGet<HTMLButtonElement>("test-connection");
 const resetButton = mustGet<HTMLButtonElement>("reset-settings");
@@ -65,6 +67,7 @@ const versionOutput = mustGet<HTMLElement>("extension-version");
 
 versionOutput.textContent = chrome.runtime.getManifest().version;
 let settings = await getSettings();
+bindThemeModeControl(themeModeSelect, settings.themeMode);
 let latestStoreScan: StoreMaintenanceScan | undefined;
 let editingProfileId: string | undefined;
 let profilesReloadPromise: Promise<void> | undefined;
@@ -259,6 +262,7 @@ async function clearParsedResults(): Promise<void> {
 
 function renderSettings(value: ExtensionSettings): void {
   renderProfileOptions(value);
+  themeModeSelect.value = value.themeMode;
   defaultInputModeSelect.value = value.defaultInputMode;
   allowServerFetchInput.checked = value.allowServerFetch;
   autoRefreshInput.checked = value.autoRefresh;

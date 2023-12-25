@@ -1,3 +1,5 @@
+@import url("./styles/tokens.css");
+
 :root {
   color-scheme: light dark;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -366,4 +368,74 @@ input[type="checkbox"] {
     align-items: stretch;
     grid-template-columns: 1fr;
   }
+}
+
+:root[data-theme="dark"] body {
+  background: var(--bg-app-accent);
+  color: var(--text-strong);
+}
+
+:root[data-theme="dark"] h1,
+:root[data-theme="dark"] h2,
+:root[data-theme="dark"] .toggle-row strong {
+  color: var(--text-strong);
+}
+
+:root[data-theme="dark"] p,
+:root[data-theme="dark"] label,
+:root[data-theme="dark"] .section-description,
+:root[data-theme="dark"] .toggle-description {
+  color: var(--text-muted);
+}
+
+:root[data-theme="dark"] button,
+:root[data-theme="dark"] input,
+:root[data-theme="dark"] select,
+:root[data-theme="dark"] textarea,
+:root[data-theme="dark"] .profile-actions-menu summary {
+  background: var(--bg-panel-strong);
+  border-color: var(--border-strong);
+  color: var(--text-strong);
+}
+
+:root[data-theme="dark"] .settings-section,
+:root[data-theme="dark"] .profile-actions-menu-panel,
+:root[data-theme="dark"] dialog,
+:root[data-theme="dark"] .toggle-list,
+:root[data-theme="dark"] .toggle-row,
+:root[data-theme="dark"] .status-output,
+:root[data-theme="dark"] .profile-dialog-form textarea {
+  background: var(--bg-panel);
+  border-color: var(--border-subtle);
+  color: var(--text-body);
+}
+
+:root[data-theme="dark"] h2,
+:root[data-theme="dark"] .form-actions {
+  border-color: var(--border-subtle);
+}
+
+:root[data-theme="dark"] .form-actions button[type="submit"] {
+  background: var(--accent-primary);
+  border-color: var(--accent-primary);
+  color: #111722;
+}
+
+:root[data-theme="dark"] .form-actions button[type="submit"]:hover {
+  background: var(--accent-primary-strong);
+  border-color: var(--accent-primary-strong);
+}
+
+:root[data-theme="dark"] .danger-button {
+  background: var(--state-danger-bg);
+  border-color: var(--state-danger-border);
+  color: var(--state-danger-fg);
+}
+
+:root[data-theme="dark"] .profile-actions-menu-panel button:hover {
+  background: var(--bg-hover);
+}
+
+:root[data-theme="dark"] dialog::backdrop {
+  background: var(--overlay);
 }

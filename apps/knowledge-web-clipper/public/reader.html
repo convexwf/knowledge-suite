@@ -20,14 +20,6 @@
             Library
             <select id="server-profile" aria-label="Current library"></select>
           </label>
-          <label class="theme-switcher">
-            Theme
-            <select id="theme-mode" aria-label="Theme preference">
-              <option value="system">System</option>
-              <option value="light">Light</option>
-              <option value="dark">Dark</option>
-            </select>
-          </label>
           <button id="back-to-items" type="button">Items</button>
           <button id="copy-markdown" type="button">Copy Markdown</button>
           <button id="reparse-item" type="button">Reparse</button>
@@ -98,6 +90,9 @@
     </div>
     <div id="ai-overlay" class="ai-overlay" hidden></div>
     <button id="back-to-top" class="back-to-top" type="button" hidden>Back to top</button>
+    <div class="reader-action-group" role="group" aria-label="Reader actions">
+      <button id="back-to-items-bottom" type="button">Items</button>
+    </div>
     <script src="vendor/katex/katex.min.js"></script>
     <script type="module" src="reader.js"></script>
   </body>

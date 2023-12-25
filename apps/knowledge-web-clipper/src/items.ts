@@ -8,7 +8,7 @@ import {
   SourceFilter
 } from "./items-model.js";
 import { getSettings, setActiveServerProfile } from "./settings.js";
-import { bindThemeModeControl } from "./theme.js";
+import { bindThemeModePreference } from "./theme.js";
 import { hasServerProfileChange, renderServerProfileOptions } from "./server-profiles.js";
 import { openKnowledgePage } from "./tabs.js";
 import { parseGitHubMarkdownUrl } from "./github-markdown-url.js";
@@ -70,7 +70,6 @@ const itemList = mustGet<HTMLElement>("item-list");
 const refreshButton = mustGet<HTMLButtonElement>("refresh-items");
 const settingsButton = mustGet<HTMLButtonElement>("open-settings");
 const serverProfileSelect = mustGet<HTMLSelectElement>("server-profile");
-const themeModeSelect = mustGet<HTMLSelectElement>("theme-mode");
 const sourceFilterBar = mustGet<HTMLElement>("source-filter");
 const selectAll = mustGet<HTMLInputElement>("select-all");
 const selectCount = mustGet<HTMLElement>("select-count");
@@ -87,7 +86,7 @@ const overviewLatestDetail = mustGet<HTMLElement>("overview-latest-detail");
 
 let settings = await getSettings();
 let client = createKnowledgeApiClient(settings);
-bindThemeModeControl(themeModeSelect, settings.themeMode);
+bindThemeModePreference(settings.themeMode);
 const query = new URLSearchParams(globalThis.location.search);
 
 let currentItems: KnowledgeItem[] = [];

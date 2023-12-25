@@ -3,7 +3,7 @@ import { applyCascadeSelection, normalizeHeadingSelections } from "./heading-cas
 import { stripSectionAnchors } from "./markdown-utils.js";
 import { renderDocument } from "./reader-renderer.js";
 import { getSettings, setActiveServerProfile } from "./settings.js";
-import { bindThemeModeControl } from "./theme.js";
+import { bindThemeModePreference } from "./theme.js";
 import { hasServerProfileChange, renderServerProfileOptions } from "./server-profiles.js";
 import { openKnowledgePage } from "./tabs.js";
 import {
@@ -24,6 +24,7 @@ const outlineOutput = mustGet<HTMLElement>("outline-list");
 const copyButton = mustGet<HTMLButtonElement>("copy-markdown");
 const reparseButton = mustGet<HTMLButtonElement>("reparse-item");
 const backButton = mustGet<HTMLButtonElement>("back-to-items");
+const bottomBackButton = mustGet<HTMLButtonElement>("back-to-items-bottom");
 const topButton = mustGet<HTMLButtonElement>("back-to-top");
 const outlineCollapseToggle = mustGet<HTMLButtonElement>("outline-collapse-toggle");
 const annotationPanelToggle = mustGet<HTMLButtonElement>("annotation-panel-toggle");
@@ -49,11 +50,10 @@ const collectionNav = mustGet<HTMLElement>("collection-nav");
 const prevInCollectionBtn = mustGet<HTMLButtonElement>("prev-in-collection");
 const nextInCollectionBtn = mustGet<HTMLButtonElement>("next-in-collection");
 const serverProfileSelect = mustGet<HTMLSelectElement>("server-profile");
-const themeModeSelect = mustGet<HTMLSelectElement>("theme-mode");
 
 let settings = await getSettings();
 let client = createKnowledgeApiClient(settings);
-bindThemeModeControl(themeModeSelect, settings.themeMode);
+bindThemeModePreference(settings.themeMode);
 const query = new URLSearchParams(globalThis.location.search);
 const itemId = query.get("itemId") || undefined;
 let currentItemId = itemId || "";
@@ -86,6 +86,10 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
 });
 
 backButton.addEventListener("click", () => {
+  void openKnowledgePage("items.html");
+});
+
+bottomBackButton.addEventListener("click", () => {
   void openKnowledgePage("items.html");
 });
 
