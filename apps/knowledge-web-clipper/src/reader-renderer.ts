@@ -74,7 +74,7 @@ async function renderSection(
     case "blockquote": {
       if (!section.content) return [];
       const quote = document.createElement("blockquote");
-      appendInline(quote, section.content);
+      quote.append(...paragraphNodes(section.content));
       return [quote];
     }
     case "list": {

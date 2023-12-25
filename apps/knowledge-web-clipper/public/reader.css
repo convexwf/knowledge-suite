@@ -299,13 +299,6 @@ h2 {
   overflow-wrap: anywhere;
 }
 
-.reader-content .math-inline {
-  display: inline-block;
-  max-width: 100%;
-  overflow-x: auto;
-  vertical-align: baseline;
-}
-
 .reader-content .math-display {
   box-sizing: border-box;
   max-width: 100%;

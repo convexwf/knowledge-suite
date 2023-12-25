@@ -94,6 +94,20 @@ describe("section-first reader renderer", () => {
       .toEqual(["blob:asset-1", "blob:asset-2"]);
   });
 
+  it("renders display math inside blockquotes", async () => {
+    const model = documentModel();
+    const quote = model.sections.find((section) => section.type === "blockquote");
+    if (!quote || quote.type !== "blockquote") throw new Error("blockquote fixture missing");
+    quote.content = "An equation:\n\n$$E = mc^2$$";
+
+    const target = document.createElement("main");
+    await renderDocument(model, target);
+
+    const renderedQuote = target.querySelector("blockquote");
+    expect(renderedQuote?.querySelector("p")?.textContent).toBe("An equation:");
+    expect(renderedQuote?.querySelector(".math-display")?.dataset.mathSource).toBe("E = mc^2");
+  });
+
   it("resolves protected GitHub images through the authenticated URL resolver", async () => {
     const resolved: string[] = [];
     const model = documentModel();
