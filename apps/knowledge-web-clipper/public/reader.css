@@ -43,7 +43,7 @@ button:disabled {
 
 .reader-shell {
   margin: 0 auto;
-  max-width: 1240px;
+  max-width: 1680px;
   padding: 24px;
 }
 
@@ -128,12 +128,12 @@ h2 {
   align-items: start;
   display: grid;
   gap: 22px;
-  grid-template-columns: 240px minmax(0, 1fr);
+  grid-template-columns: 280px minmax(0, 1fr);
   margin-top: 24px;
 }
 
 .reader-layout.annot-visible {
-  grid-template-columns: 200px minmax(0, 1fr) 220px;
+  grid-template-columns: 280px minmax(0, 1fr) 220px;
 }
 
 .outline-panel {
@@ -804,6 +804,14 @@ h2 {
   }
 }
 
+@media (max-width: 840px) {
+  .reader-header,
+  .reader-layout,
+  .reader-layout.annot-visible {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* ---- Annotation Toolbar ---- */
 
 #annotation-toolbar {
@@ -1047,7 +1055,7 @@ h2 {
 }
 
 .reader-shell {
-  padding: 28px 24px 36px;
+  padding: 28px clamp(16px, 2vw, 32px) 36px;
 }
 
 .reader-header h1 {
@@ -1100,7 +1108,7 @@ h2 {
   border-color: #d9e1ea;
   border-radius: var(--radius-xl);
   box-shadow: 0 12px 28px rgba(15, 23, 42, 0.06);
-  padding: 32px;
+  padding: clamp(18px, 2vw, 32px);
 }
 
 .reader-content p,
@@ -1110,6 +1118,12 @@ h2 {
   font-family: var(--font-reading);
   font-size: 17px;
   line-height: 1.76;
+}
+
+.reader-content > :is(h1, h2, h3, h4, h5, h6, p, blockquote, ul, ol) {
+  justify-self: start;
+  max-width: 74rem;
+  width: 100%;
 }
 
 .reader-content blockquote {
