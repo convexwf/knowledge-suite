@@ -187,21 +187,21 @@ h2 {
 }
 
 .outline-item {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
+  display: grid;
+  align-items: start;
+  grid-template-columns: 18px minmax(0, 1fr);
 }
 
 .outline-item > .outline-tree {
   box-sizing: border-box;
-  flex: 0 0 100%;
+  grid-column: 1 / -1;
   padding-left: 24px;
 }
 
 .outline-link {
   border-radius: 6px;
   display: block;
-  flex: 1;
+  grid-column: 2;
   font-size: 13px;
   line-height: 1.35;
   min-width: 0;
@@ -240,7 +240,7 @@ h2 {
   border: none;
   color: #8a9bb0;
   cursor: pointer;
-  flex-shrink: 0;
+  grid-column: 1;
   font-size: 12px;
   line-height: 1.5;
   margin-top: 3px;
