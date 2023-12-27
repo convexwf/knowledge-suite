@@ -44,6 +44,24 @@ button:disabled {
   opacity: 0.55;
 }
 
+#reparse-item[data-update-available="true"] {
+  padding-right: 28px;
+  position: relative;
+}
+
+#reparse-item[data-update-available="true"]::after {
+  background: #e5484d;
+  border: 2px solid var(--bg-panel-strong);
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(229, 72, 77, 0.18);
+  content: "";
+  height: 9px;
+  position: absolute;
+  right: 9px;
+  top: 7px;
+  width: 9px;
+}
+
 .reader-shell {
   margin: 0 auto;
   max-width: 1680px;

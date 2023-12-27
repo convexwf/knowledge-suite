@@ -75,6 +75,7 @@ let aiPollCleanup: (() => void) | null = null;
 let aiCascadeRows: Array<{ checkbox: HTMLInputElement; level: number }> = [];
 let profileSwitchInProgress = false;
 let toastTimer: number | undefined;
+let updateCheckGeneration = 0;
 
 renderServerProfileOptions(serverProfileSelect, settings);
 
@@ -240,6 +241,11 @@ async function loadReader(): Promise<void> {
       currentDocument = detail.document;
       reparseButton.disabled = detail.item.sourceType !== "epub" && detail.item.sourceType !== "markdown";
       reparseButton.textContent = isGitHubRawdoc(currentRawdoc) ? "Refresh" : "Reparse";
+      setRefreshUpdateAvailable(false);
+      const loadedRawdoc = currentRawdoc;
+      if (loadedRawdoc && isGitHubRawdoc(loadedRawdoc)) {
+        void checkGitHubUpdateAvailability(currentItemId, loadedRawdoc);
+      }
       if (!currentDocument && detail.item.activeDocId) {
         currentDocument = await client.document(detail.item.activeDocId);
       }
@@ -317,16 +323,19 @@ async function reparseCurrentItem(value: string): Promise<void> {
 }
 
 async function refreshCurrentItem(value: string): Promise<void> {
+  updateCheckGeneration += 1;
   reparseButton.disabled = true;
   aiSummarizeBtn.disabled = true;
   showToast("Checking GitHub for updates...", "neutral", null);
   try {
     const result = await client.refreshItem(value);
     if (result.status === "up_to_date") {
+      setRefreshUpdateAvailable(false);
       showToast(`GitHub Markdown is already up to date${result.commitSha ? ` (${result.commitSha.slice(0, 8)})` : ""}.`, "neutral");
       return;
     }
     if (result.status === "remote_deleted") {
+      setRefreshUpdateAvailable(false);
       showToast("The GitHub Markdown file was deleted remotely. The local copy is kept.", "warning");
       return;
     }
@@ -337,6 +346,7 @@ async function refreshCurrentItem(value: string): Promise<void> {
     currentRawdoc = result.rawdoc;
     currentDocument = result.document;
     currentMarkdown = result.markdown ?? currentMarkdown;
+    setRefreshUpdateAvailable(false);
     renderMetadata(currentItem, currentDocument, currentRawdoc);
     await renderDocument(currentDocument, contentOutput, {
       resolveAsset: (assetId) => client.assetBlobUrl(assetId),
@@ -356,6 +366,31 @@ async function refreshCurrentItem(value: string): Promise<void> {
   } finally {
     reparseButton.disabled = false;
   }
+}
+
+async function checkGitHubUpdateAvailability(value: string, expectedRawdoc: RawDoc): Promise<void> {
+  const generation = ++updateCheckGeneration;
+  try {
+    const result = await client.checkItemUpdateStatus(value);
+    if (generation !== updateCheckGeneration || currentItemId !== value || currentRawdoc !== expectedRawdoc) return;
+    if (result.status !== "unavailable") {
+      setRefreshUpdateAvailable(result.status === "update_available");
+    }
+  } catch (error) {
+    console.warn("[Reader] GitHub update check failed", error);
+  }
+}
+
+function setRefreshUpdateAvailable(available: boolean): void {
+  if (!available || !isGitHubRawdoc(currentRawdoc)) {
+    delete reparseButton.dataset.updateAvailable;
+    reparseButton.removeAttribute("title");
+    reparseButton.removeAttribute("aria-label");
+    return;
+  }
+  reparseButton.dataset.updateAvailable = "true";
+  reparseButton.title = "GitHub Markdown update available";
+  reparseButton.setAttribute("aria-label", "Refresh; GitHub Markdown update available");
 }
 
 function renderMetadata(item: KnowledgeItem | undefined, document: KnowledgeDocument | undefined, rawdoc?: RawDoc): void {

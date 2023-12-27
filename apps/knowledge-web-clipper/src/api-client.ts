@@ -15,6 +15,7 @@ import {
   GitHubMarkdownRefreshResult,
   GitHubMarkdownRequest,
   GitHubMarkdownScanResult,
+  GitHubMarkdownUpdateStatusResult,
   MarkdownImportResult,
   KnowledgeDocument,
   DocumentOutlineResult,
@@ -91,6 +92,7 @@ export interface KnowledgeApiClient {
   importGitHubMarkdown(body: GitHubMarkdownRequest): Promise<GitHubMarkdownImportResult>;
   reparseItem(itemId: string): Promise<EpubImportResult | MarkdownImportResult>;
   refreshItem(itemId: string): Promise<GitHubMarkdownRefreshResult>;
+  checkItemUpdateStatus(itemId: string): Promise<GitHubMarkdownUpdateStatusResult>;
   deleteItem(itemId: string, mode?: KnowledgeItemDeleteMode): Promise<KnowledgeItemDeleteResult>;
   document(docId: string): Promise<KnowledgeDocument>;
   documentOutline(docId: string): Promise<DocumentOutlineResult>;
@@ -302,6 +304,14 @@ export function createKnowledgeApiClient(settings: ExtensionSettings): Knowledge
       "POST",
       `/api/items/${encodeURIComponent(itemId)}/refresh`,
       {},
+      options
+    ),
+    checkItemUpdateStatus: (itemId) => request<GitHubMarkdownUpdateStatusResult>(
+      baseUrl,
+      settings.token,
+      "GET",
+      `/api/items/${encodeURIComponent(itemId)}/update-status`,
+      undefined,
       options
     ),
     deleteItem: (itemId, mode = "remove") => request<KnowledgeItemDeleteResult>(

@@ -306,6 +306,12 @@ export interface GitHubMarkdownRefreshResult {
   oldCommitSha?: string;
 }
 
+export interface GitHubMarkdownUpdateStatusResult {
+  status: "up_to_date" | "update_available" | "remote_deleted" | "unavailable";
+  commitSha?: string;
+  checkedAt: string;
+}
+
 export interface SavedKnowledgeItem {
   normalizedUrl: string;
   urlHash: string;

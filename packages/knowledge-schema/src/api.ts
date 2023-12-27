@@ -201,6 +201,12 @@ export interface GitHubMarkdownRefreshResponse {
   oldCommitSha?: string;
 }
 
+export interface GitHubMarkdownUpdateStatusResponse {
+  status: "up_to_date" | "update_available" | "remote_deleted" | "unavailable";
+  commitSha?: string;
+  checkedAt: string;
+}
+
 export interface KnowledgeItemListResponse {
   items: KnowledgeItem[];
 }

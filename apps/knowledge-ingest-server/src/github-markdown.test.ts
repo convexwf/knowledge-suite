@@ -204,6 +204,65 @@ describe("GitHub Markdown import", () => {
     expect(rawdoc.metadata.assets[0].blobSha).toBeUndefined();
     await app.close();
   });
+
+  it("checks for changes to the exact Markdown file without updating the local item", async () => {
+    const app = await buildServer({
+      host: "127.0.0.1",
+      port: 0,
+      token: "server-token",
+      githubToken: "github-secret",
+      storeRoot,
+      fetchTimeoutMs: 1000,
+      maxHtmlBytes: 1024 * 1024,
+      maxImportBytes: 1024 * 1024
+    });
+    const imported = await app.inject({
+      method: "POST",
+      url: "/api/import/github/markdown",
+      headers: { authorization: "Bearer server-token" },
+      payload: { owner: "convexwf", repo: "easy-rl", ref: "master", path: "docs/ch1/intro.md" }
+    });
+    const itemId = imported.json().results[0].knowledgeItem.itemId as string;
+
+    const current = await app.inject({
+      method: "GET",
+      url: `/api/items/${encodeURIComponent(itemId)}/update-status`,
+      headers: { authorization: "Bearer server-token" }
+    });
+    expect(current.statusCode).toBe(200);
+    expect(current.json()).toMatchObject({ status: "up_to_date", commitSha: "commit-one" });
+
+    commitSha = "commit-two";
+    imageSha = "image-two";
+    const unrelatedCommit = await app.inject({
+      method: "GET",
+      url: `/api/items/${encodeURIComponent(itemId)}/update-status`,
+      headers: { authorization: "Bearer server-token" }
+    });
+    expect(unrelatedCommit.json()).toMatchObject({ status: "up_to_date", commitSha: "commit-two" });
+
+    commitSha = "commit-three";
+    markdownSha = "markdown-two";
+    const changedMarkdown = await app.inject({
+      method: "GET",
+      url: `/api/items/${encodeURIComponent(itemId)}/update-status`,
+      headers: { authorization: "Bearer server-token" }
+    });
+    expect(changedMarkdown.statusCode).toBe(200);
+    expect(changedMarkdown.json()).toMatchObject({ status: "update_available", commitSha: "commit-three" });
+
+    const detail = await app.inject({
+      method: "GET",
+      url: `/api/items/${encodeURIComponent(itemId)}`,
+      headers: { authorization: "Bearer server-token" }
+    });
+    expect(detail.json().rawdoc.metadata).toMatchObject({
+      commitSha: "commit-one",
+      blobSha: "markdown-one"
+    });
+    expect(changedMarkdown.json()).not.toHaveProperty("document");
+    await app.close();
+  });
 });
 
 async function mockGitHubFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {

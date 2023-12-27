@@ -18,6 +18,7 @@ import {
   normalizeUrlForKnowledge,
   RawDoc,
   EpubImportResponse,
+  GitHubMarkdownUpdateStatusResponse,
   StoreClearParsedRequestSchema,
   StoreClearRequestSchema,
   urlHash
@@ -875,6 +876,39 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
       }
     }
     return { commitSha: fetched.commitSha, results };
+  });
+
+  app.get("/api/items/:itemId/update-status", async (request): Promise<GitHubMarkdownUpdateStatusResponse> => {
+    const params = request.params as { itemId: string };
+    const detail = await store.loadItemDetail(params.itemId);
+    const source = githubSourceFromRawdoc(detail.rawdoc?.metadata);
+    if (!source) {
+      throw new Error("GitHub update status is only supported for GitHub Markdown items");
+    }
+    const checkedAt = new Date().toISOString();
+    const currentCommitSha = await githubClient.resolveRef(source.owner, source.repo, source.ref);
+    if (currentCommitSha === source.commitSha) {
+      return { status: "up_to_date", commitSha: currentCommitSha, checkedAt };
+    }
+
+    let remoteBlobSha: string | undefined;
+    try {
+      const files = await githubClient.contents(source.owner, source.repo, source.path, currentCommitSha);
+      remoteBlobSha = files.find((file) => file.type === "blob" && file.path === source.path)?.sha;
+    } catch (error) {
+      if (error instanceof GitHubClientError && error.code === "github_access_denied") {
+        return { status: "unavailable", commitSha: currentCommitSha, checkedAt };
+      }
+      throw error;
+    }
+    if (!remoteBlobSha) {
+      return { status: "remote_deleted", commitSha: currentCommitSha, checkedAt };
+    }
+    return {
+      status: remoteBlobSha === source.blobSha ? "up_to_date" : "update_available",
+      commitSha: currentCommitSha,
+      checkedAt
+    };
   });
 
   app.post("/api/items/:itemId/refresh", async (request): Promise<GitHubMarkdownRefreshResponse> => {
