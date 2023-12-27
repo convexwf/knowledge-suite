@@ -20,6 +20,7 @@ const titleOutput = mustGet<HTMLElement>("reader-title");
 const kickerOutput = mustGet<HTMLElement>("reader-kicker");
 const metaOutput = mustGet<HTMLElement>("reader-meta");
 const contentOutput = mustGet<HTMLElement>("reader-content");
+const toastOutput = mustGet<HTMLElement>("reader-toast");
 const outlineOutput = mustGet<HTMLElement>("outline-list");
 const copyButton = mustGet<HTMLButtonElement>("copy-markdown");
 const reparseButton = mustGet<HTMLButtonElement>("reparse-item");
@@ -73,6 +74,7 @@ let aiTaskId: string | null = null;
 let aiPollCleanup: (() => void) | null = null;
 let aiCascadeRows: Array<{ checkbox: HTMLInputElement; level: number }> = [];
 let profileSwitchInProgress = false;
+let toastTimer: number | undefined;
 
 renderServerProfileOptions(serverProfileSelect, settings);
 
@@ -208,7 +210,7 @@ async function switchServerProfile(profileId: string): Promise<void> {
   } catch (error) {
     profileSwitchInProgress = false;
     renderServerProfileOptions(serverProfileSelect, settings);
-    showMessage(error instanceof Error ? error.message : String(error));
+    showToast(error instanceof Error ? error.message : String(error), "danger");
   } finally {
     serverProfileSelect.disabled = false;
   }
@@ -226,7 +228,7 @@ async function reloadServerProfile(): Promise<void> {
 }
 
 async function loadReader(): Promise<void> {
-  showMessage("Loading document...");
+  showReaderPlaceholder("Loading document...");
   reparseButton.disabled = !itemId;
   aiSummarizeBtn.disabled = true;
   try {
@@ -243,14 +245,14 @@ async function loadReader(): Promise<void> {
       }
       currentMarkdown = detail.item.activeDocId ? await client.documentMarkdown(detail.item.activeDocId) : "";
     } else {
-      showMessage("Open the reader from a saved item.");
+      showReaderPlaceholder("Open the reader from a saved item.");
       copyButton.disabled = true;
       return;
     }
 
     if (!currentDocument) {
       renderMetadata(currentItem, undefined, currentRawdoc);
-      showMessage("This item has no parsed document yet. Reparse it from this page or the item list.");
+      showReaderPlaceholder("This item has no parsed document yet. Reparse it from this page or the item list.");
       copyButton.disabled = true;
       return;
     }
@@ -270,7 +272,7 @@ async function loadReader(): Promise<void> {
     await loadAndApplyAnnotations();
     await loadCollectionContext();
   } catch (error) {
-    showMessage(error instanceof Error ? error.message : String(error));
+    showReaderPlaceholder(error instanceof Error ? error.message : String(error));
     copyButton.disabled = true;
   }
 }
@@ -278,7 +280,7 @@ async function loadReader(): Promise<void> {
 async function reparseCurrentItem(value: string): Promise<void> {
   reparseButton.disabled = true;
   aiSummarizeBtn.disabled = true;
-  showMessage("Reparsing item...");
+  showToast("Reparsing item...", "neutral", null);
   try {
     const result = await client.reparseItem(value);
     currentItem = result.knowledgeItem;
@@ -305,9 +307,10 @@ async function reparseCurrentItem(value: string): Promise<void> {
     if (warnings?.orphanedCount) {
       showAnnotationOrphanWarning(warnings);
     }
+    showToast("Item reparsed.", "success");
     await loadCollectionContext();
   } catch (error) {
-    showMessage(error instanceof Error ? error.message : String(error));
+    showToast(error instanceof Error ? error.message : String(error), "danger");
   } finally {
     reparseButton.disabled = false;
   }
@@ -316,15 +319,15 @@ async function reparseCurrentItem(value: string): Promise<void> {
 async function refreshCurrentItem(value: string): Promise<void> {
   reparseButton.disabled = true;
   aiSummarizeBtn.disabled = true;
-  showMessage("Checking GitHub for updates...");
+  showToast("Checking GitHub for updates...", "neutral", null);
   try {
     const result = await client.refreshItem(value);
     if (result.status === "up_to_date") {
-      showMessage(`GitHub Markdown is already up to date${result.commitSha ? ` (${result.commitSha.slice(0, 8)})` : ""}.`);
+      showToast(`GitHub Markdown is already up to date${result.commitSha ? ` (${result.commitSha.slice(0, 8)})` : ""}.`, "neutral");
       return;
     }
     if (result.status === "remote_deleted") {
-      showMessage("The GitHub Markdown file was deleted remotely. The local copy is kept.");
+      showToast("The GitHub Markdown file was deleted remotely. The local copy is kept.", "warning");
       return;
     }
     if (!result.knowledgeItem || !result.document) {
@@ -346,10 +349,10 @@ async function refreshCurrentItem(value: string): Promise<void> {
     copyButton.disabled = !currentMarkdown;
     aiSummarizeBtn.disabled = false;
     await loadAndApplyAnnotations();
-    showMessage(`GitHub Markdown refreshed${result.commitSha ? ` to ${result.commitSha.slice(0, 8)}` : ""}.`);
+    showToast(`GitHub Markdown refreshed${result.commitSha ? ` to ${result.commitSha.slice(0, 8)}` : ""}.`, "success");
     await loadCollectionContext();
   } catch (error) {
-    showMessage(error instanceof Error ? error.message : String(error));
+    showToast(error instanceof Error ? error.message : String(error), "danger");
   } finally {
     reparseButton.disabled = false;
   }
@@ -545,9 +548,31 @@ async function loadAndRenderOutline(docId: string): Promise<void> {
   }
 }
 
-function showMessage(message: string): void {
+function showReaderPlaceholder(message: string): void {
   contentOutput.replaceChildren(messageNode(message));
   outlineOutput.replaceChildren();
+}
+
+function showToast(
+  message: string,
+  tone: "neutral" | "success" | "warning" | "danger" = "neutral",
+  timeoutMs: number | null = tone === "danger" ? 6000 : 3500
+): void {
+  window.clearTimeout(toastTimer);
+  toastOutput.textContent = message;
+  toastOutput.dataset.tone = tone;
+  toastOutput.setAttribute("role", tone === "danger" ? "alert" : "status");
+  toastOutput.setAttribute("aria-live", tone === "danger" ? "assertive" : "polite");
+  toastOutput.hidden = false;
+
+  if (timeoutMs === null) {
+    toastTimer = undefined;
+    return;
+  }
+  toastTimer = window.setTimeout(() => {
+    toastOutput.hidden = true;
+    toastTimer = undefined;
+  }, timeoutMs);
 }
 
 function messageNode(message: string): HTMLElement {
