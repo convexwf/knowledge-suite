@@ -203,6 +203,7 @@ export interface KnowledgeItem {
   updatedAt: string;
   parsedAt?: string;
   collectionIds?: string[];
+  readingSectionId?: string;
 }
 
 export interface KnowledgeItemListResult {
@@ -214,6 +215,11 @@ export interface KnowledgeItemDetailResult {
   rawdoc?: RawDoc;
   document?: KnowledgeDocument;
   collectionIds?: string[];
+}
+
+export interface ReadingProgressUpdateResult {
+  itemId: string;
+  readingSectionId: string | null;
 }
 
 export interface KnowledgeItemDeleteResult {

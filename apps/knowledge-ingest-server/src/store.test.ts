@@ -87,6 +87,53 @@ describe("KnowledgeStore", () => {
     store.close();
   });
 
+  it("persists reading progress without changing item timestamps", async () => {
+    const store = new KnowledgeStore(storeRoot);
+    const saved = fixture("12121212-1212-4121-8121-121212121212", "abababab-abab-4aba-8bab-abababababab", "Progress title");
+    await store.save(saved);
+    const itemId = (await store.status(saved.normalizedUrl)).itemId;
+
+    const before = await store.loadItem(itemId);
+    expect(before?.readingSectionId).toBeUndefined();
+
+    await expect(store.updateReadingProgress(itemId, "section-2")).resolves.toEqual({
+      itemId,
+      readingSectionId: "section-2"
+    });
+    const after = await store.loadItem(itemId);
+    expect(after?.readingSectionId).toBe("section-2");
+    expect(after?.updatedAt).toBe(before?.updatedAt);
+    expect(after?.parsedAt).toBe(before?.parsedAt);
+
+    await store.updateReadingProgress(itemId, null);
+    expect((await store.loadItem(itemId))?.readingSectionId).toBeUndefined();
+    await expect(store.updateReadingProgress("missing-item", "section-2")).resolves.toBeUndefined();
+    store.close();
+  });
+
+  it("adds the reading progress column when migrating schema version 13", async () => {
+    const initial = new KnowledgeStore(storeRoot);
+    await initial.list();
+    initial.close();
+
+    const database = new DatabaseSync(join(storeRoot, "index.sqlite3"));
+    database.exec("ALTER TABLE items DROP COLUMN reading_section_id; PRAGMA user_version = 13;");
+    database.close();
+
+    const migrated = new KnowledgeStore(storeRoot);
+    await migrated.list();
+    migrated.close();
+
+    const migratedDatabase = new DatabaseSync(join(storeRoot, "index.sqlite3"));
+    try {
+      const columns = migratedDatabase.prepare("PRAGMA table_info(items)").all() as Array<{ name: string }>;
+      expect(columns.map((column) => column.name)).toContain("reading_section_id");
+      expect((migratedDatabase.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(14);
+    } finally {
+      migratedDatabase.close();
+    }
+  });
+
   it("remove deletes only derived artifacts and keeps the raw capture for reparse", async () => {
     const store = new KnowledgeStore(storeRoot);
     const savedItem = fixture("33333333-3333-4333-8333-333333333333", "cccccccc-cccc-4ccc-8ccc-cccccccccccc", "Captured Title");
@@ -548,6 +595,7 @@ function expectStoreSchema(root: string): void {
       "created_at",
       "updated_at",
       "parsed_at",
+      "reading_section_id",
       "content_hash",
       "content_bytes",
       "section_count",
@@ -688,7 +736,7 @@ function expectStoreSchema(root: string): void {
     ]));
 
     const userVersion = database.prepare("PRAGMA user_version").get() as { user_version: number };
-    expect(userVersion.user_version).toBe(13);
+    expect(userVersion.user_version).toBe(14);
 
     for (const [table, columns] of Object.entries(columnsByTable)) {
       expect(columns.filter((column) => column.endsWith("_path") && column !== "heading_path"))

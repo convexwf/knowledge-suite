@@ -19,6 +19,7 @@ import {
   RawDoc,
   EpubImportResponse,
   GitHubMarkdownUpdateStatusResponse,
+  KnowledgeItemReadingProgressRequestSchema,
   StoreClearParsedRequestSchema,
   StoreClearRequestSchema,
   urlHash
@@ -297,6 +298,19 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
   app.get("/api/items/:itemId", async (request) => {
     const params = request.params as { itemId: string };
     return store.loadItemDetail(params.itemId);
+  });
+
+  app.put("/api/items/:itemId/reading-progress", async (request, reply) => {
+    const params = request.params as { itemId: string };
+    const body = KnowledgeItemReadingProgressRequestSchema.safeParse(request.body);
+    if (!body.success) {
+      return reply.code(400).send({ error: "bad_request", message: "section_id must be a non-empty string or null." });
+    }
+    const result = await store.updateReadingProgress(params.itemId, body.data.section_id);
+    if (!result) {
+      return reply.code(404).send({ error: "item_not_found", message: "Knowledge item was not found." });
+    }
+    return result;
   });
 
   // ── Sync routes (reader clients) ───────────────────────────────────────

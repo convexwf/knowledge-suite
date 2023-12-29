@@ -27,6 +27,7 @@ import {
   KnowledgeItemDeleteResult,
   KnowledgeItemDetailResult,
   KnowledgeItemListResult,
+  ReadingProgressUpdateResult,
   KnowledgeItemStatusResult,
   KnowledgeSourceType,
   PreviewResult,
@@ -73,6 +74,7 @@ export interface KnowledgeApiClient {
   list(limit?: number): Promise<{ items: ItemListItem[] }>;
   listItems(sourceType?: KnowledgeSourceType, limit?: number): Promise<KnowledgeItemListResult>;
   item(itemId: string): Promise<KnowledgeItemDetailResult>;
+  updateReadingProgress(itemId: string, sectionId: string | null): Promise<ReadingProgressUpdateResult>;
   importEpub(body: {
     file: File;
     sourceUri?: string;
@@ -238,6 +240,14 @@ export function createKnowledgeApiClient(settings: ExtensionSettings): Knowledge
       "GET",
       `/api/items/${encodeURIComponent(itemId)}`,
       undefined,
+      options
+    ),
+    updateReadingProgress: (itemId, sectionId) => request<ReadingProgressUpdateResult>(
+      baseUrl,
+      settings.token,
+      "PUT",
+      `/api/items/${encodeURIComponent(itemId)}/reading-progress`,
+      { section_id: sectionId },
       options
     ),
     importEpub: (body) => {
@@ -555,7 +565,7 @@ export function createKnowledgeApiClient(settings: ExtensionSettings): Knowledge
 async function request<T>(
   baseUrl: string,
   token: string,
-  method: "DELETE" | "GET" | "POST",
+  method: "DELETE" | "GET" | "POST" | "PUT",
   path: string,
   body?: unknown,
   options?: { timeoutMs: number; signal?: AbortSignal }

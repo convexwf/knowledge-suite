@@ -75,6 +75,7 @@ interface ItemRow {
   created_at: string;
   updated_at: string;
   parsed_at: string | null;
+  reading_section_id: string | null;
 }
 
 interface ItemAliasRow {
@@ -251,7 +252,7 @@ interface CollectionItemDetail extends CollectionItem {
   language?: string;
 }
 
-const STORE_SCHEMA_VERSION = 13;
+const STORE_SCHEMA_VERSION = 14;
 
 export class InvalidOutlineError extends Error {
   constructor(message: string) {
@@ -492,6 +493,10 @@ export class KnowledgeStore {
       this.addColumnIfMissing("documents", "outline_path", "TEXT");
     }
 
+    if (currentVersion < 14) {
+      this.addColumnIfMissing("items", "reading_section_id", "TEXT");
+    }
+
     this.database!.exec(`PRAGMA user_version = ${STORE_SCHEMA_VERSION}`);
   }
 
@@ -520,6 +525,7 @@ export class KnowledgeStore {
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         parsed_at TEXT,
+        reading_section_id TEXT,
         content_hash TEXT,
         content_bytes INTEGER,
         section_count INTEGER,
@@ -716,6 +722,22 @@ export class KnowledgeStore {
     await this.ensure();
     const row = this.database!.prepare("SELECT * FROM items WHERE item_id = ?").get(itemId) as unknown as ItemRow | undefined;
     return row ? this.buildKnowledgeItem(row) : undefined;
+  }
+
+  async updateReadingProgress(
+    itemId: string,
+    sectionId: string | null
+  ): Promise<{ itemId: string; readingSectionId: string | null } | undefined> {
+    await this.ensure();
+    const row = this.database!.prepare(
+      "SELECT item_type FROM items WHERE item_id = ?"
+    ).get(itemId) as { item_type: string } | undefined;
+    if (!row || row.item_type !== "document") return undefined;
+
+    this.database!.prepare(
+      "UPDATE items SET reading_section_id = ? WHERE item_id = ?"
+    ).run(sectionId, itemId);
+    return { itemId, readingSectionId: sectionId };
   }
 
   async loadItemDetail(itemId: string): Promise<{
@@ -2812,7 +2834,8 @@ function toKnowledgeItem(
     state: row.state === "empty" ? "captured" : row.state === "stale" || row.state === "archived" ? "parsed" : row.state,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
-    parsedAt: row.parsed_at ?? undefined
+    parsedAt: row.parsed_at ?? undefined,
+    readingSectionId: row.reading_section_id ?? undefined
   };
 }
 

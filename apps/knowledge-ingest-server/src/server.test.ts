@@ -213,6 +213,58 @@ describe("knowledge ingest server", () => {
     expect(save.json().paths.markdownPath).toMatch(/\.md$/);
     await expect(access(join(storeRoot, "index.sqlite3"))).resolves.toBeUndefined();
 
+    const itemId = save.json().status.itemId as string;
+    const itemBeforeProgress = await app.inject({
+      method: "GET",
+      url: `/api/items/${encodeURIComponent(itemId)}`,
+      headers: { authorization: "Bearer test-token" }
+    });
+    expect(itemBeforeProgress.statusCode).toBe(200);
+    expect(itemBeforeProgress.json().item.readingSectionId).toBeUndefined();
+
+    const progress = await app.inject({
+      method: "PUT",
+      url: `/api/items/${encodeURIComponent(itemId)}/reading-progress`,
+      headers: { authorization: "Bearer test-token" },
+      payload: { section_id: "section-2" }
+    });
+    expect(progress.statusCode).toBe(200);
+    expect(progress.json()).toEqual({ itemId, readingSectionId: "section-2" });
+
+    const itemAfterProgress = await app.inject({
+      method: "GET",
+      url: `/api/items/${encodeURIComponent(itemId)}`,
+      headers: { authorization: "Bearer test-token" }
+    });
+    expect(itemAfterProgress.json().item.readingSectionId).toBe("section-2");
+    expect(itemAfterProgress.json().item.updatedAt).toBe(itemBeforeProgress.json().item.updatedAt);
+    expect(itemAfterProgress.json().item.parsedAt).toBe(itemBeforeProgress.json().item.parsedAt);
+
+    const clearProgress = await app.inject({
+      method: "PUT",
+      url: `/api/items/${encodeURIComponent(itemId)}/reading-progress`,
+      headers: { authorization: "Bearer test-token" },
+      payload: { section_id: null }
+    });
+    expect(clearProgress.statusCode).toBe(200);
+    expect(clearProgress.json()).toEqual({ itemId, readingSectionId: null });
+
+    const invalidProgress = await app.inject({
+      method: "PUT",
+      url: `/api/items/${encodeURIComponent(itemId)}/reading-progress`,
+      headers: { authorization: "Bearer test-token" },
+      payload: { section_id: "" }
+    });
+    expect(invalidProgress.statusCode).toBe(400);
+
+    const missingItemProgress = await app.inject({
+      method: "PUT",
+      url: "/api/items/missing-item/reading-progress",
+      headers: { authorization: "Bearer test-token" },
+      payload: { section_id: "section-2" }
+    });
+    expect(missingItemProgress.statusCode).toBe(404);
+
     const status = await app.inject({
       method: "GET",
       url: "/api/ingest/status?url=https%3A%2F%2Fexample.com%2Fa%3Futm_source%3Dx%23top",

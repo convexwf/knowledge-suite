@@ -2,6 +2,7 @@ import { createKnowledgeApiClient } from "./api-client.js";
 import { applyCascadeSelection, normalizeHeadingSelections } from "./heading-cascade.js";
 import { stripSectionAnchors } from "./markdown-utils.js";
 import { renderDocument } from "./reader-renderer.js";
+import { buildSectionElementIndex, sectionIdAtReadingLine } from "./reader-progress.js";
 import { getSettings, setActiveServerProfile } from "./settings.js";
 import { bindThemeModePreference } from "./theme.js";
 import { hasServerProfileChange, renderServerProfileOptions } from "./server-profiles.js";
@@ -76,6 +77,11 @@ let aiCascadeRows: Array<{ checkbox: HTMLInputElement; level: number }> = [];
 let profileSwitchInProgress = false;
 let toastTimer: number | undefined;
 let updateCheckGeneration = 0;
+let sectionElementIndex = new Map<string, HTMLElement>();
+let readingProgressReady = false;
+let readingProgressTimer: number | undefined;
+let lastPersistedReadingSectionId: string | null = null;
+let readingProgressWriteQueue: Promise<void> = Promise.resolve();
 
 renderServerProfileOptions(serverProfileSelect, settings);
 
@@ -102,6 +108,7 @@ topButton.addEventListener("click", () => {
 
 globalThis.addEventListener("scroll", () => {
   topButton.hidden = globalThis.scrollY < 360;
+  scheduleReadingProgressSave();
 }, { passive: true });
 
 outlineCollapseToggle.addEventListener("click", () => {
@@ -229,6 +236,7 @@ async function reloadServerProfile(): Promise<void> {
 }
 
 async function loadReader(): Promise<void> {
+  readingProgressReady = false;
   showReaderPlaceholder("Loading document...");
   reparseButton.disabled = !itemId;
   aiSummarizeBtn.disabled = true;
@@ -237,6 +245,7 @@ async function loadReader(): Promise<void> {
       const detail = await client.item(itemId);
       currentItem = detail.item;
       currentItemId = detail.item.itemId;
+      lastPersistedReadingSectionId = detail.item.readingSectionId ?? null;
       currentRawdoc = detail.rawdoc;
       currentDocument = detail.document;
       reparseButton.disabled = detail.item.sourceType !== "epub" && detail.item.sourceType !== "markdown";
@@ -264,13 +273,7 @@ async function loadReader(): Promise<void> {
     }
 
     renderMetadata(currentItem, currentDocument, currentRawdoc);
-    await renderDocument(currentDocument, contentOutput, {
-      resolveAsset: (assetId) => client.assetBlobUrl(assetId),
-      resolveAssetUrl: (sourceUrl) => client.githubAssetBlobUrl(sourceUrl),
-      registerObjectUrl: (url) => objectUrls.add(url),
-      onDiagnostic: (diagnostic) => console.warn("[Reader] section diagnostic", diagnostic)
-    });
-    currentDocId = currentDocument.doc_id;
+    await renderReaderDocument(currentDocument, currentItem?.readingSectionId);
     await loadAndRenderOutline(currentDocId);
     copyButton.disabled = !currentMarkdown;
 
@@ -278,12 +281,79 @@ async function loadReader(): Promise<void> {
     await loadAndApplyAnnotations();
     await loadCollectionContext();
   } catch (error) {
+    readingProgressReady = false;
     showReaderPlaceholder(error instanceof Error ? error.message : String(error));
     copyButton.disabled = true;
   }
 }
 
+async function renderReaderDocument(documentModel: KnowledgeDocument, restoreSectionId?: string): Promise<void> {
+  readingProgressReady = false;
+  if (readingProgressTimer !== undefined) {
+    globalThis.clearTimeout(readingProgressTimer);
+    readingProgressTimer = undefined;
+  }
+
+  await renderDocument(documentModel, contentOutput, {
+    resolveAsset: (assetId) => client.assetBlobUrl(assetId),
+    resolveAssetUrl: (sourceUrl) => client.githubAssetBlobUrl(sourceUrl),
+    registerObjectUrl: (url) => objectUrls.add(url),
+    onDiagnostic: (diagnostic) => console.warn("[Reader] section diagnostic", diagnostic)
+  });
+  currentDocId = documentModel.doc_id;
+  sectionElementIndex = buildSectionElementIndex(contentOutput);
+
+  if (!restoreSectionId) {
+    readingProgressReady = true;
+    return;
+  }
+
+  const target = sectionElementIndex.get(restoreSectionId);
+  if (!target) {
+    void persistReadingProgress(null);
+    readingProgressReady = true;
+    return;
+  }
+
+  await new Promise<void>((resolve) => globalThis.requestAnimationFrame(() => resolve()));
+  const targetTop = target.getBoundingClientRect().top + globalThis.scrollY - 140;
+  globalThis.scrollTo({ top: Math.max(0, targetTop), behavior: "instant" });
+  if (restoreSectionId !== lastPersistedReadingSectionId) {
+    void persistReadingProgress(restoreSectionId);
+  }
+  readingProgressReady = true;
+}
+
+function scheduleReadingProgressSave(): void {
+  if (!readingProgressReady || !currentItemId) return;
+  if (readingProgressTimer !== undefined) globalThis.clearTimeout(readingProgressTimer);
+  readingProgressTimer = globalThis.setTimeout(() => {
+    readingProgressTimer = undefined;
+    const sectionId = currentVisibleSectionId();
+    if (!sectionId || sectionId === lastPersistedReadingSectionId) return;
+    void persistReadingProgress(sectionId);
+  }, 500);
+}
+
+function persistReadingProgress(sectionId: string | null): Promise<void> {
+  const itemId = currentItemId;
+  readingProgressWriteQueue = readingProgressWriteQueue.then(async () => {
+    if (!itemId || itemId !== currentItemId || sectionId === lastPersistedReadingSectionId) return;
+    try {
+      await client.updateReadingProgress(itemId, sectionId);
+      lastPersistedReadingSectionId = sectionId;
+      if (currentItem?.itemId === itemId) {
+        currentItem.readingSectionId = sectionId ?? undefined;
+      }
+    } catch (error) {
+      console.warn("[Reader] could not save reading progress", error);
+    }
+  });
+  return readingProgressWriteQueue;
+}
+
 async function reparseCurrentItem(value: string): Promise<void> {
+  const sectionToRestore = currentVisibleSectionId() ?? lastPersistedReadingSectionId;
   reparseButton.disabled = true;
   aiSummarizeBtn.disabled = true;
   showToast("Reparsing item...", "neutral", null);
@@ -295,13 +365,8 @@ async function reparseCurrentItem(value: string): Promise<void> {
     currentMarkdown = result.markdown;
     reparseButton.textContent = isGitHubRawdoc(currentRawdoc) ? "Refresh" : "Reparse";
     renderMetadata(currentItem, currentDocument, currentRawdoc);
-    await renderDocument(currentDocument, contentOutput, {
-      resolveAsset: (assetId) => client.assetBlobUrl(assetId),
-      resolveAssetUrl: (sourceUrl) => client.githubAssetBlobUrl(sourceUrl),
-      registerObjectUrl: (url) => objectUrls.add(url),
-      onDiagnostic: (diagnostic) => console.warn("[Reader] section diagnostic", diagnostic)
-    });
-    currentDocId = currentDocument.doc_id;
+    lastPersistedReadingSectionId = currentItem.readingSectionId ?? null;
+    await renderReaderDocument(currentDocument, sectionToRestore ?? undefined);
     await loadAndRenderOutline(currentDocId);
     copyButton.disabled = false;
 
@@ -342,19 +407,15 @@ async function refreshCurrentItem(value: string): Promise<void> {
     if (!result.knowledgeItem || !result.document) {
       throw new Error("GitHub refresh returned no updated document");
     }
+    const sectionToRestore = currentVisibleSectionId() ?? lastPersistedReadingSectionId;
     currentItem = result.knowledgeItem;
     currentRawdoc = result.rawdoc;
     currentDocument = result.document;
     currentMarkdown = result.markdown ?? currentMarkdown;
     setRefreshUpdateAvailable(false);
     renderMetadata(currentItem, currentDocument, currentRawdoc);
-    await renderDocument(currentDocument, contentOutput, {
-      resolveAsset: (assetId) => client.assetBlobUrl(assetId),
-      resolveAssetUrl: (sourceUrl) => client.githubAssetBlobUrl(sourceUrl),
-      registerObjectUrl: (url) => objectUrls.add(url),
-      onDiagnostic: (diagnostic) => console.warn("[Reader] section diagnostic", diagnostic)
-    });
-    currentDocId = currentDocument.doc_id;
+    lastPersistedReadingSectionId = currentItem.readingSectionId ?? null;
+    await renderReaderDocument(currentDocument, sectionToRestore ?? undefined);
     await loadAndRenderOutline(currentDocId);
     copyButton.disabled = !currentMarkdown;
     aiSummarizeBtn.disabled = false;
@@ -1291,26 +1352,12 @@ function formatShortTimestamp(value: string): string {
 }
 
 function currentVisibleSectionId(): string | null {
-  const sections = Array.from(contentOutput.querySelectorAll<HTMLElement>("[data-section-id]"));
-  let bestSection: string | null = null;
-  let bestDistance = Number.POSITIVE_INFINITY;
-
-  for (const section of sections) {
-    const rect = section.getBoundingClientRect();
-    if (rect.bottom <= 0) {
-      continue;
-    }
-    const distance = Math.abs(rect.top - 140);
-    if (distance < bestDistance) {
-      bestDistance = distance;
-      bestSection = section.dataset.sectionId ?? null;
-    }
-    if (rect.top >= 0 && rect.top < 220) {
-      return section.dataset.sectionId ?? bestSection;
-    }
-  }
-
-  return bestSection;
+  return sectionIdAtReadingLine(
+    contentOutput,
+    sectionElementIndex,
+    (x, y) => document.elementFromPoint(x, y),
+    globalThis.innerHeight
+  );
 }
 
 function sourceSummary(item: KnowledgeItem | undefined, document: KnowledgeDocument | undefined): string {

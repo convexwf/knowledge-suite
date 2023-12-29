@@ -60,6 +60,11 @@ export const KnowledgeCaptureReparseRequestSchema = z.object({
 });
 export type KnowledgeCaptureReparseRequest = z.infer<typeof KnowledgeCaptureReparseRequestSchema>;
 
+export const KnowledgeItemReadingProgressRequestSchema = z.object({
+  section_id: z.string().min(1).max(512).nullable()
+});
+export type KnowledgeItemReadingProgressRequest = z.infer<typeof KnowledgeItemReadingProgressRequestSchema>;
+
 export const KnowledgeItemDeleteModeSchema = z.enum(["remove", "purge"]);
 export type KnowledgeItemDeleteMode = z.infer<typeof KnowledgeItemDeleteModeSchema>;
 export const KnowledgeCaptureDeleteModeSchema = z.enum(["remove", "purge"]);
@@ -216,6 +221,11 @@ export interface KnowledgeItemDetailResponse {
   rawdoc?: RawDoc;
   document?: KnowledgeDocument;
   collectionIds?: string[];
+}
+
+export interface KnowledgeItemReadingProgressResponse {
+  itemId: string;
+  readingSectionId: string | null;
 }
 
 export interface DocumentOutlineEntry {

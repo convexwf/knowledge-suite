@@ -32,6 +32,7 @@ export interface KnowledgeItem {
   updatedAt: string;
   parsedAt?: string;
   collectionIds?: string[];
+  readingSectionId?: string;
 }
 
 export type DocumentSectionType =
