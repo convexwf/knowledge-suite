@@ -300,17 +300,39 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
     return store.loadItemDetail(params.itemId);
   });
 
-  app.put("/api/items/:itemId/reading-progress", async (request, reply) => {
+  app.get("/api/items/:itemId/reading-progress", async (request, reply) => {
     const params = request.params as { itemId: string };
-    const body = KnowledgeItemReadingProgressRequestSchema.safeParse(request.body);
-    if (!body.success) {
-      return reply.code(400).send({ error: "bad_request", message: "section_id must be a non-empty string or null." });
-    }
-    const result = await store.updateReadingProgress(params.itemId, body.data.section_id);
+    const result = await store.loadReadingProgress(params.itemId);
     if (!result) {
       return reply.code(404).send({ error: "item_not_found", message: "Knowledge item was not found." });
     }
     return result;
+  });
+
+  app.put("/api/items/:itemId/reading-progress", async (request, reply) => {
+    const params = request.params as { itemId: string };
+    const body = KnowledgeItemReadingProgressRequestSchema.safeParse(request.body);
+    if (!body.success) {
+      return reply.code(400).send({
+        error: "bad_request",
+        message: "section_id must be a non-empty string or null, and expected_revision must be a non-negative integer."
+      });
+    }
+    const result = await store.updateReadingProgress(
+      params.itemId,
+      body.data.section_id,
+      body.data.expected_revision
+    );
+    if (!result) {
+      return reply.code(404).send({ error: "item_not_found", message: "Knowledge item was not found." });
+    }
+    if (result.status === "conflict") {
+      return reply.code(409).send({
+        error: "reading_progress_conflict",
+        currentProgress: result.progress
+      });
+    }
+    return { itemId: result.itemId, progress: result.progress };
   });
 
   // ── Sync routes (reader clients) ───────────────────────────────────────

@@ -1,4 +1,4 @@
-import { createKnowledgeApiClient } from "./api-client.js";
+import { createKnowledgeApiClient, ReadingProgressConflictError } from "./api-client.js";
 import { applyCascadeSelection, normalizeHeadingSelections } from "./heading-cascade.js";
 import { stripSectionAnchors } from "./markdown-utils.js";
 import { renderDocument } from "./reader-renderer.js";
@@ -13,6 +13,7 @@ import {
   DocumentOutlineResult,
   KnowledgeDocument,
   KnowledgeItem,
+  ReadingProgressSnapshot,
   RawDoc,
   SummaryAnnotation
 } from "./types.js";
@@ -81,6 +82,7 @@ let sectionElementIndex = new Map<string, HTMLElement>();
 let readingProgressReady = false;
 let readingProgressTimer: number | undefined;
 let lastPersistedReadingSectionId: string | null = null;
+let readingProgressRevision = 0;
 let readingProgressWriteQueue: Promise<void> = Promise.resolve();
 
 renderServerProfileOptions(serverProfileSelect, settings);
@@ -245,7 +247,9 @@ async function loadReader(): Promise<void> {
       const detail = await client.item(itemId);
       currentItem = detail.item;
       currentItemId = detail.item.itemId;
-      lastPersistedReadingSectionId = detail.item.readingSectionId ?? null;
+      const readingProgress = detail.item.readingProgress ?? null;
+      lastPersistedReadingSectionId = readingProgress?.sectionId ?? null;
+      readingProgressRevision = readingProgress?.revision ?? 0;
       currentRawdoc = detail.rawdoc;
       currentDocument = detail.document;
       reparseButton.disabled = detail.item.sourceType !== "epub" && detail.item.sourceType !== "markdown";
@@ -273,7 +277,7 @@ async function loadReader(): Promise<void> {
     }
 
     renderMetadata(currentItem, currentDocument, currentRawdoc);
-    await renderReaderDocument(currentDocument, currentItem?.readingSectionId);
+    await renderReaderDocument(currentDocument, currentItem?.readingProgress?.sectionId ?? undefined);
     await loadAndRenderOutline(currentDocId);
     copyButton.disabled = !currentMarkdown;
 
@@ -339,17 +343,59 @@ function persistReadingProgress(sectionId: string | null): Promise<void> {
   const itemId = currentItemId;
   readingProgressWriteQueue = readingProgressWriteQueue.then(async () => {
     if (!itemId || itemId !== currentItemId || sectionId === lastPersistedReadingSectionId) return;
-    try {
-      await client.updateReadingProgress(itemId, sectionId);
-      lastPersistedReadingSectionId = sectionId;
-      if (currentItem?.itemId === itemId) {
-        currentItem.readingSectionId = sectionId ?? undefined;
+    let expectedRevision = readingProgressRevision;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        const result = await client.updateReadingProgress(itemId, sectionId, expectedRevision);
+        applyReadingProgressSnapshot(itemId, result.progress);
+        return;
+      } catch (error) {
+        if (!(error instanceof ReadingProgressConflictError)) {
+          console.warn("[Reader] could not save reading progress", error);
+          showToast("Could not save reading progress.", "warning");
+          return;
+        }
+
+        const remote = error.currentProgress;
+        const remoteSectionId = remote?.sectionId ?? null;
+        if (remoteSectionId === sectionId) {
+          applyReadingProgressSnapshot(itemId, remote);
+          return;
+        }
+
+        const localDescription = sectionId ?? "the start of this document";
+        const remoteDescription = remoteSectionId ?? "the start of this document";
+        const keepLocal = globalThis.confirm(
+          `Reading progress changed on another device.\n\nThis device: ${localDescription}\nServer: ${remoteDescription}\n\nKeep this device's position?`
+        );
+        if (!keepLocal) {
+          applyReadingProgressSnapshot(itemId, remote);
+          if (remoteSectionId) {
+            const target = sectionElementIndex.get(remoteSectionId);
+            if (target) {
+              const targetTop = target.getBoundingClientRect().top + globalThis.scrollY - 140;
+              globalThis.scrollTo({ top: Math.max(0, targetTop), behavior: "instant" });
+            } else {
+              globalThis.scrollTo({ top: 0, behavior: "instant" });
+              showToast("The server reading position is not in this document.", "warning");
+            }
+          } else {
+            globalThis.scrollTo({ top: 0, behavior: "instant" });
+          }
+          return;
+        }
+        expectedRevision = remote?.revision ?? 0;
       }
-    } catch (error) {
-      console.warn("[Reader] could not save reading progress", error);
     }
+    showToast("Reading progress changed repeatedly. Scroll again to retry.", "warning");
   });
   return readingProgressWriteQueue;
+}
+
+function applyReadingProgressSnapshot(itemId: string, progress: ReadingProgressSnapshot | null): void {
+  lastPersistedReadingSectionId = progress?.sectionId ?? null;
+  readingProgressRevision = progress?.revision ?? 0;
+  if (currentItem?.itemId === itemId) currentItem.readingProgress = progress;
 }
 
 async function reparseCurrentItem(value: string): Promise<void> {
@@ -365,7 +411,9 @@ async function reparseCurrentItem(value: string): Promise<void> {
     currentMarkdown = result.markdown;
     reparseButton.textContent = isGitHubRawdoc(currentRawdoc) ? "Refresh" : "Reparse";
     renderMetadata(currentItem, currentDocument, currentRawdoc);
-    lastPersistedReadingSectionId = currentItem.readingSectionId ?? null;
+    const readingProgress = currentItem.readingProgress ?? null;
+    lastPersistedReadingSectionId = readingProgress?.sectionId ?? null;
+    readingProgressRevision = readingProgress?.revision ?? 0;
     await renderReaderDocument(currentDocument, sectionToRestore ?? undefined);
     await loadAndRenderOutline(currentDocId);
     copyButton.disabled = false;
@@ -414,7 +462,9 @@ async function refreshCurrentItem(value: string): Promise<void> {
     currentMarkdown = result.markdown ?? currentMarkdown;
     setRefreshUpdateAvailable(false);
     renderMetadata(currentItem, currentDocument, currentRawdoc);
-    lastPersistedReadingSectionId = currentItem.readingSectionId ?? null;
+    const readingProgress = currentItem.readingProgress ?? null;
+    lastPersistedReadingSectionId = readingProgress?.sectionId ?? null;
+    readingProgressRevision = readingProgress?.revision ?? 0;
     await renderReaderDocument(currentDocument, sectionToRestore ?? undefined);
     await loadAndRenderOutline(currentDocId);
     copyButton.disabled = !currentMarkdown;

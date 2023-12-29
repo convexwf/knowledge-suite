@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
-import type { KnowledgeDocument } from "@uknowledge/knowledge-schema";
+import type { DocumentOutlineFile, KnowledgeDocument } from "@uknowledge/knowledge-schema";
 
-export const PACKAGE_SCHEMA_VERSION = 1;
+export const PACKAGE_SCHEMA_VERSION = 2;
 
 export interface PackageEntry {
   path: string;
@@ -79,21 +79,30 @@ export function serializeMarkdownFile(markdown: string): Buffer {
   return Buffer.from(normalized.endsWith("\n") ? normalized : `${normalized}\n`, "utf8");
 }
 
+export function serializeOutlineFile(outline: DocumentOutlineFile): Buffer {
+  return Buffer.from(`${canonicalJson(outline)}\n`, "utf8");
+}
+
 export function sortEntries(entries: PackageEntry[]): PackageEntry[] {
   return [...entries].sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0);
 }
 
 /**
- * Content hash defined by the offline package contract: sort entries by path,
- * hash each file, then hash the `"<path>\0<sha256>\n"` manifest string. The zip
- * container bytes are intentionally excluded so compression choices cannot
- * change the fingerprint.
+ * Core package hash: sort non-outline entries by path, hash each file, then
+ * hash the `"<path>\0<sha256>\n"` manifest string. The final package hash
+ * combines this value with the serialized Outline hash. ZIP compression bytes
+ * are intentionally excluded so container choices cannot change the fingerprint.
  */
 export function packageContentHash(entries: PackageEntry[]): string {
   const manifestText = sortEntries(entries)
     .map((entry) => `${entry.path}\u0000${sha256Buffer(entry.bytes)}\n`)
     .join("");
   return sha256Buffer(Buffer.from(manifestText, "utf8"));
+}
+
+export function readerPackageContentHash(coreHash: string, outlineBytes: Buffer): string {
+  const outlineHash = sha256Buffer(outlineBytes);
+  return sha256Text(`knowledge-package-v2\n${coreHash}\n${outlineHash}\n`);
 }
 
 export function packageContentBytes(entries: PackageEntry[]): number {

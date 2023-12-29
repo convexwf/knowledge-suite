@@ -54,12 +54,19 @@ function readZipEntries(archive: Buffer): ZipEntry[] {
 
 /** Independent implementation of the contract defined in the reader design doc. */
 function expectedContentHash(entries: ZipEntry[]): string {
-  const manifest = [...entries]
-    .filter((entry) => entry.path !== "manifest.json")
+  const payload = entries.filter((entry) => entry.path !== "manifest.json");
+  const coreManifest = payload
+    .filter((entry) => entry.path !== "outline.json")
     .sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0)
     .map((entry) => `${entry.path}\u0000${createHash("sha256").update(entry.bytes).digest("hex")}\n`)
     .join("");
-  return createHash("sha256").update(manifest, "utf8").digest("hex");
+  const coreHash = createHash("sha256").update(coreManifest, "utf8").digest("hex");
+  const outline = payload.find((entry) => entry.path === "outline.json");
+  if (!outline) throw new Error("Package does not contain outline.json");
+  const outlineHash = createHash("sha256").update(outline.bytes).digest("hex");
+  return createHash("sha256")
+    .update(`knowledge-package-v2\n${coreHash}\n${outlineHash}\n`, "utf8")
+    .digest("hex");
 }
 
 describe("sync api", () => {
@@ -116,7 +123,7 @@ describe("sync api", () => {
     });
     expect(first.statusCode).toBe(200);
     const snapshot = first.json();
-    expect(snapshot.schemaVersion).toBe(1);
+    expect(snapshot.schemaVersion).toBe(2);
     expect(typeof snapshot.serverTime).toBe("string");
     expect(snapshot.items).toHaveLength(1);
     expect(snapshot.items[0]).toMatchObject({
@@ -162,14 +169,14 @@ describe("sync api", () => {
 
     const entries = readZipEntries(response.rawPayload);
     const paths = entries.map((entry) => entry.path).sort();
-    expect(paths).toEqual(["document.json", "manifest.json", "markdown.md"]);
+    expect(paths).toEqual(["document.json", "manifest.json", "markdown.md", "outline.json"]);
 
     const manifest = JSON.parse(entries.find((entry) => entry.path === "manifest.json")!.bytes.toString("utf8"));
-    expect(manifest.schemaVersion).toBe(1);
+    expect(manifest.schemaVersion).toBe(2);
     expect(manifest.itemId).toBe(itemId);
     expect(manifest.contentHash).toBe(catalogItem.contentHash);
     expect(manifest.files.map((file: { path: string }) => file.path).sort())
-      .toEqual(["document.json", "markdown.md"]);
+      .toEqual(["document.json", "markdown.md", "outline.json"]);
     expect(manifest.documentBytes).toBeGreaterThan(0);
 
     const document = entries.find((entry) => entry.path === "document.json")!.bytes.toString("utf8");

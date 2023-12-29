@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { KnowledgeItem, KnowledgeDocument, ParserCandidatePreview } from "./document.js";
+import type { KnowledgeItem, KnowledgeDocument, ParserCandidatePreview, ReadingProgressSnapshot } from "./document.js";
 import type { RawDoc } from "./document.js";
 
 // ── Input / Capture schemas ────────────────────────────────────────────────
@@ -61,7 +61,8 @@ export const KnowledgeCaptureReparseRequestSchema = z.object({
 export type KnowledgeCaptureReparseRequest = z.infer<typeof KnowledgeCaptureReparseRequestSchema>;
 
 export const KnowledgeItemReadingProgressRequestSchema = z.object({
-  section_id: z.string().min(1).max(512).nullable()
+  section_id: z.string().min(1).max(512).nullable(),
+  expected_revision: z.number().int().nonnegative()
 });
 export type KnowledgeItemReadingProgressRequest = z.infer<typeof KnowledgeItemReadingProgressRequestSchema>;
 
@@ -225,7 +226,12 @@ export interface KnowledgeItemDetailResponse {
 
 export interface KnowledgeItemReadingProgressResponse {
   itemId: string;
-  readingSectionId: string | null;
+  progress: ReadingProgressSnapshot | null;
+}
+
+export interface KnowledgeItemReadingProgressConflictResponse {
+  error: "reading_progress_conflict";
+  currentProgress: ReadingProgressSnapshot | null;
 }
 
 export interface DocumentOutlineEntry {

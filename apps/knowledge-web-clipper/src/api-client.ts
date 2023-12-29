@@ -27,6 +27,7 @@ import {
   KnowledgeItemDeleteResult,
   KnowledgeItemDetailResult,
   KnowledgeItemListResult,
+  ReadingProgressSnapshot,
   ReadingProgressUpdateResult,
   KnowledgeItemStatusResult,
   KnowledgeSourceType,
@@ -74,7 +75,7 @@ export interface KnowledgeApiClient {
   list(limit?: number): Promise<{ items: ItemListItem[] }>;
   listItems(sourceType?: KnowledgeSourceType, limit?: number): Promise<KnowledgeItemListResult>;
   item(itemId: string): Promise<KnowledgeItemDetailResult>;
-  updateReadingProgress(itemId: string, sectionId: string | null): Promise<ReadingProgressUpdateResult>;
+  updateReadingProgress(itemId: string, sectionId: string | null, expectedRevision: number): Promise<ReadingProgressUpdateResult>;
   importEpub(body: {
     file: File;
     sourceUri?: string;
@@ -242,12 +243,12 @@ export function createKnowledgeApiClient(settings: ExtensionSettings): Knowledge
       undefined,
       options
     ),
-    updateReadingProgress: (itemId, sectionId) => request<ReadingProgressUpdateResult>(
+    updateReadingProgress: (itemId, sectionId, expectedRevision) => request<ReadingProgressUpdateResult>(
       baseUrl,
       settings.token,
       "PUT",
       `/api/items/${encodeURIComponent(itemId)}/reading-progress`,
-      { section_id: sectionId },
+      { section_id: sectionId, expected_revision: expectedRevision },
       options
     ),
     importEpub: (body) => {
@@ -604,10 +605,31 @@ async function request<T>(
   }
 
   if (!response.ok) {
-    throw new Error(`${response.status} ${response.statusText}: ${await response.text()}`);
+    const responseText = await response.text();
+    if (response.status === 409) {
+      try {
+        const body = JSON.parse(responseText) as {
+          error?: string;
+          currentProgress?: ReadingProgressSnapshot | null;
+        };
+        if (body.error === "reading_progress_conflict") {
+          throw new ReadingProgressConflictError(body.currentProgress ?? null);
+        }
+      } catch (error) {
+        if (error instanceof ReadingProgressConflictError) throw error;
+      }
+    }
+    throw new Error(`${response.status} ${response.statusText}: ${responseText}`);
   }
 
   return response.json() as Promise<T>;
+}
+
+export class ReadingProgressConflictError extends Error {
+  constructor(readonly currentProgress: ReadingProgressSnapshot | null) {
+    super("Reading progress changed on the server.");
+    this.name = "ReadingProgressConflictError";
+  }
 }
 
 async function requestText(

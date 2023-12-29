@@ -203,7 +203,14 @@ export interface KnowledgeItem {
   updatedAt: string;
   parsedAt?: string;
   collectionIds?: string[];
-  readingSectionId?: string;
+  readingProgress?: ReadingProgressSnapshot | null;
+}
+
+export interface ReadingProgressSnapshot {
+  schemaVersion: 1;
+  sectionId: string | null;
+  updatedAt: string | null;
+  revision: number;
 }
 
 export interface KnowledgeItemListResult {
@@ -219,7 +226,7 @@ export interface KnowledgeItemDetailResult {
 
 export interface ReadingProgressUpdateResult {
   itemId: string;
-  readingSectionId: string | null;
+  progress: ReadingProgressSnapshot;
 }
 
 export interface KnowledgeItemDeleteResult {

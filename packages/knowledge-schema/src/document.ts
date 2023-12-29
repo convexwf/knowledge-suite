@@ -10,6 +10,13 @@ export interface RawDoc {
   metadata?: Record<string, unknown>;
 }
 
+export interface ReadingProgressSnapshot {
+  schemaVersion: 1;
+  sectionId: string | null;
+  updatedAt: string | null;
+  revision: number;
+}
+
 export interface KnowledgeItem {
   itemId: string;
   sourceType: "url" | "singlefile_html" | "pdf" | "epub" | "markdown";
@@ -32,7 +39,7 @@ export interface KnowledgeItem {
   updatedAt: string;
   parsedAt?: string;
   collectionIds?: string[];
-  readingSectionId?: string;
+  readingProgress?: ReadingProgressSnapshot | null;
 }
 
 export type DocumentSectionType =

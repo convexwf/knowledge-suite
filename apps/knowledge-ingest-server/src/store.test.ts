@@ -94,30 +94,38 @@ describe("KnowledgeStore", () => {
     const itemId = (await store.status(saved.normalizedUrl)).itemId;
 
     const before = await store.loadItem(itemId);
-    expect(before?.readingSectionId).toBeUndefined();
+    expect(before?.readingProgress).toBeNull();
 
-    await expect(store.updateReadingProgress(itemId, "section-2")).resolves.toEqual({
+    await expect(store.updateReadingProgress(itemId, "section-2", 0)).resolves.toMatchObject({
+      status: "updated",
       itemId,
-      readingSectionId: "section-2"
+      progress: {
+        schemaVersion: 1,
+        sectionId: "section-2",
+        revision: 1
+      }
     });
     const after = await store.loadItem(itemId);
-    expect(after?.readingSectionId).toBe("section-2");
+    expect(after?.readingProgress?.sectionId).toBe("section-2");
     expect(after?.updatedAt).toBe(before?.updatedAt);
     expect(after?.parsedAt).toBe(before?.parsedAt);
 
-    await store.updateReadingProgress(itemId, null);
-    expect((await store.loadItem(itemId))?.readingSectionId).toBeUndefined();
-    await expect(store.updateReadingProgress("missing-item", "section-2")).resolves.toBeUndefined();
+    await store.updateReadingProgress(itemId, null, 1);
+    expect((await store.loadItem(itemId))?.readingProgress).toMatchObject({
+      sectionId: null,
+      revision: 2
+    });
+    await expect(store.updateReadingProgress("missing-item", "section-2", 0)).resolves.toBeUndefined();
     store.close();
   });
 
-  it("adds the reading progress column when migrating schema version 13", async () => {
+  it("renames and converts the reading progress column when migrating schema version 13", async () => {
     const initial = new KnowledgeStore(storeRoot);
     await initial.list();
     initial.close();
 
     const database = new DatabaseSync(join(storeRoot, "index.sqlite3"));
-    database.exec("ALTER TABLE items DROP COLUMN reading_section_id; PRAGMA user_version = 13;");
+    database.exec("ALTER TABLE items DROP COLUMN reading_progress_json; PRAGMA user_version = 13;");
     database.close();
 
     const migrated = new KnowledgeStore(storeRoot);
@@ -127,8 +135,9 @@ describe("KnowledgeStore", () => {
     const migratedDatabase = new DatabaseSync(join(storeRoot, "index.sqlite3"));
     try {
       const columns = migratedDatabase.prepare("PRAGMA table_info(items)").all() as Array<{ name: string }>;
-      expect(columns.map((column) => column.name)).toContain("reading_section_id");
-      expect((migratedDatabase.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(14);
+      expect(columns.map((column) => column.name)).toContain("reading_progress_json");
+      expect(columns.map((column) => column.name)).not.toContain("reading_section_id");
+      expect((migratedDatabase.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(15);
     } finally {
       migratedDatabase.close();
     }
@@ -595,7 +604,7 @@ function expectStoreSchema(root: string): void {
       "created_at",
       "updated_at",
       "parsed_at",
-      "reading_section_id",
+      "reading_progress_json",
       "content_hash",
       "content_bytes",
       "section_count",

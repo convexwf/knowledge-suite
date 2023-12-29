@@ -22,6 +22,7 @@ import {
   KnowledgeItemDeleteMode,
   KnowledgeItemDeleteResponse,
   KnowledgeDocument,
+  ReadingProgressSnapshot,
   makeId,
   normalizeUrlForKnowledge,
   RawDoc,
@@ -35,8 +36,10 @@ import { buildChunks } from "./chunks.js";
 import {
   packageContentBytes,
   packageContentHash,
+  readerPackageContentHash,
   serializeDocumentFile,
   serializeMarkdownFile,
+  serializeOutlineFile,
   type PackageEntry
 } from "./package.js";
 import { resolveInsideRoot } from "./path-guard.js";
@@ -75,7 +78,7 @@ interface ItemRow {
   created_at: string;
   updated_at: string;
   parsed_at: string | null;
-  reading_section_id: string | null;
+  reading_progress_json: string | null;
 }
 
 interface ItemAliasRow {
@@ -252,7 +255,7 @@ interface CollectionItemDetail extends CollectionItem {
   language?: string;
 }
 
-const STORE_SCHEMA_VERSION = 14;
+const STORE_SCHEMA_VERSION = 15;
 
 export class InvalidOutlineError extends Error {
   constructor(message: string) {
@@ -273,6 +276,34 @@ function sha256Buffer(buf: Buffer): string {
 
 function safeJsonArray(raw: string): string[] {
   try { return JSON.parse(raw) as string[]; } catch { return []; }
+}
+
+function readingProgressFromJson(raw: string | null | undefined): ReadingProgressSnapshot | null {
+  if (raw == null) return null;
+  let value: unknown;
+  try {
+    value = JSON.parse(raw) as unknown;
+  } catch {
+    throw new Error("Stored reading progress contains invalid JSON.");
+  }
+  if (!isObjectRecord(value) || value.schemaVersion !== 1) {
+    throw new Error("Stored reading progress has an unsupported schema.");
+  }
+  if (value.sectionId !== null && (typeof value.sectionId !== "string" || value.sectionId.length === 0 || value.sectionId.length > 512)) {
+    throw new Error("Stored reading progress has an invalid sectionId.");
+  }
+  if (value.updatedAt !== null && (typeof value.updatedAt !== "string" || !Number.isFinite(Date.parse(value.updatedAt)))) {
+    throw new Error("Stored reading progress has an invalid updatedAt.");
+  }
+  if (typeof value.revision !== "number" || !Number.isInteger(value.revision) || value.revision < 0) {
+    throw new Error("Stored reading progress has an invalid revision.");
+  }
+  return {
+    schemaVersion: 1,
+    sectionId: value.sectionId,
+    updatedAt: value.updatedAt,
+    revision: value.revision
+  };
 }
 
 function pageTitleFor(document: KnowledgeDocument, rawdoc: RawDoc): string {
@@ -497,6 +528,50 @@ export class KnowledgeStore {
       this.addColumnIfMissing("items", "reading_section_id", "TEXT");
     }
 
+    if (currentVersion < 15) {
+      this.database!.exec("BEGIN IMMEDIATE");
+      try {
+        const columns = this.database!.prepare("PRAGMA table_info(items)").all() as Array<{ name: string }>;
+        const hasLegacyColumn = columns.some((entry) => entry.name === "reading_section_id");
+        const hasProgressColumn = columns.some((entry) => entry.name === "reading_progress_json");
+        if (hasLegacyColumn && !hasProgressColumn) {
+          this.database!.exec("ALTER TABLE items RENAME COLUMN reading_section_id TO reading_progress_json");
+        } else if (!hasProgressColumn) {
+          this.addColumnIfMissing("items", "reading_progress_json", "TEXT");
+        }
+
+        const rows = this.database!.prepare(
+          "SELECT item_id, reading_progress_json FROM items WHERE reading_progress_json IS NOT NULL"
+        ).all() as Array<{ item_id: string; reading_progress_json: string }>;
+        const update = this.database!.prepare(
+          "UPDATE items SET reading_progress_json = ? WHERE item_id = ?"
+        );
+        for (const row of rows) {
+          let existing: unknown;
+          try {
+            existing = JSON.parse(row.reading_progress_json) as unknown;
+          } catch {
+            existing = undefined;
+          }
+          if (isObjectRecord(existing) && existing.schemaVersion === 1) continue;
+          const snapshot: ReadingProgressSnapshot = {
+            schemaVersion: 1,
+            sectionId: row.reading_progress_json,
+            updatedAt: null,
+            revision: 0
+          };
+          update.run(JSON.stringify(snapshot), row.item_id);
+        }
+
+        this.database!.exec(`PRAGMA user_version = ${STORE_SCHEMA_VERSION}`);
+        this.database!.exec("COMMIT");
+      } catch (error) {
+        this.database!.exec("ROLLBACK");
+        throw error;
+      }
+      return;
+    }
+
     this.database!.exec(`PRAGMA user_version = ${STORE_SCHEMA_VERSION}`);
   }
 
@@ -525,7 +600,7 @@ export class KnowledgeStore {
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         parsed_at TEXT,
-        reading_section_id TEXT,
+        reading_progress_json TEXT,
         content_hash TEXT,
         content_bytes INTEGER,
         section_count INTEGER,
@@ -724,20 +799,60 @@ export class KnowledgeStore {
     return row ? this.buildKnowledgeItem(row) : undefined;
   }
 
-  async updateReadingProgress(
-    itemId: string,
-    sectionId: string | null
-  ): Promise<{ itemId: string; readingSectionId: string | null } | undefined> {
+  async loadReadingProgress(itemId: string): Promise<{
+    itemId: string;
+    progress: ReadingProgressSnapshot | null;
+  } | undefined> {
     await this.ensure();
     const row = this.database!.prepare(
-      "SELECT item_type FROM items WHERE item_id = ?"
-    ).get(itemId) as { item_type: string } | undefined;
+      "SELECT item_type, reading_progress_json FROM items WHERE item_id = ?"
+    ).get(itemId) as { item_type: string; reading_progress_json: string | null } | undefined;
     if (!row || row.item_type !== "document") return undefined;
+    return { itemId, progress: readingProgressFromJson(row.reading_progress_json) };
+  }
 
-    this.database!.prepare(
-      "UPDATE items SET reading_section_id = ? WHERE item_id = ?"
-    ).run(sectionId, itemId);
-    return { itemId, readingSectionId: sectionId };
+  async updateReadingProgress(
+    itemId: string,
+    sectionId: string | null,
+    expectedRevision: number
+  ): Promise<
+    | { status: "updated"; itemId: string; progress: ReadingProgressSnapshot }
+    | { status: "conflict"; itemId: string; progress: ReadingProgressSnapshot | null }
+    | undefined
+  > {
+    await this.ensure();
+    this.database!.exec("BEGIN IMMEDIATE");
+    try {
+      const row = this.database!.prepare(
+        "SELECT item_type, reading_progress_json FROM items WHERE item_id = ?"
+      ).get(itemId) as { item_type: string; reading_progress_json: string | null } | undefined;
+      if (!row || row.item_type !== "document") {
+        this.database!.exec("ROLLBACK");
+        return undefined;
+      }
+
+      const current = readingProgressFromJson(row.reading_progress_json);
+      const currentRevision = current?.revision ?? 0;
+      if (currentRevision !== expectedRevision) {
+        this.database!.exec("COMMIT");
+        return { status: "conflict", itemId, progress: current };
+      }
+
+      const progress: ReadingProgressSnapshot = {
+        schemaVersion: 1,
+        sectionId,
+        updatedAt: new Date().toISOString(),
+        revision: currentRevision + 1
+      };
+      this.database!.prepare(
+        "UPDATE items SET reading_progress_json = ? WHERE item_id = ?"
+      ).run(JSON.stringify(progress), itemId);
+      this.database!.exec("COMMIT");
+      return { status: "updated", itemId, progress };
+    } catch (error) {
+      this.database!.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   async loadItemDetail(itemId: string): Promise<{
@@ -1858,15 +1973,11 @@ export class KnowledgeStore {
     return this.readJson<KnowledgeDocument>(`documents/${docId}.json`).catch(() => undefined);
   }
 
-  async loadOutline(docId: string): Promise<DocumentOutlineResponse | undefined> {
-    await this.ensure();
+  private async loadOutlineFile(docId: string): Promise<DocumentOutlineFile | undefined> {
     const row = this.database!.prepare(
       "SELECT outline_path FROM documents WHERE doc_id = ?"
     ).get(docId) as { outline_path: string | null } | undefined;
     if (!row) return undefined;
-
-    const document = await this.loadDocument(docId);
-    if (!document) return undefined;
 
     const relativePath = row.outline_path || outlinePathFor(docId);
     let contents: string;
@@ -1874,6 +1985,8 @@ export class KnowledgeStore {
       contents = await this.readText(relativePath);
     } catch (error) {
       if (!isMissingFile(error)) throw error;
+      const document = await this.loadDocument(docId);
+      if (!document) return undefined;
       await this.writeJsonIfMissing(relativePath, initialOutlineFor(document));
       contents = await this.readText(relativePath);
     }
@@ -1888,7 +2001,15 @@ export class KnowledgeStore {
     } catch {
       throw new InvalidOutlineError("Outline file contains invalid JSON.");
     }
-    const outline = validateOutlineFile(parsed, docId);
+    return validateOutlineFile(parsed, docId);
+  }
+
+  async loadOutline(docId: string): Promise<DocumentOutlineResponse | undefined> {
+    await this.ensure();
+    const document = await this.loadDocument(docId);
+    if (!document) return undefined;
+    const outline = await this.loadOutlineFile(docId);
+    if (!outline) return undefined;
     const sectionIds = new Set(document.sections.map((section) => section.section_id).filter(Boolean));
     const diagnostics: DocumentOutlineResponse["diagnostics"] = [];
     const entries = outline.entries.map((entry, entryIndex) => {
@@ -1955,10 +2076,10 @@ export class KnowledgeStore {
 
   // ── offline package (reader contract) ──────────────────────────────────
 
-  async buildPackageEntries(document: KnowledgeDocument, markdown: string): Promise<{
+  private async buildPackageCoreEntries(document: KnowledgeDocument, markdown: string): Promise<{
     entries: PackageEntry[];
-    contentHash: string;
-    contentBytes: number;
+    coreHash: string;
+    coreContentBytes: number;
     assetCount: number;
     warnings: string[];
   }> {
@@ -1990,21 +2111,49 @@ export class KnowledgeStore {
 
     return {
       entries,
-      contentHash: packageContentHash(entries),
-      contentBytes: packageContentBytes(entries),
+      coreHash: packageContentHash(entries),
+      coreContentBytes: packageContentBytes(entries),
       assetCount: entries.filter((entry) => entry.path.startsWith("assets/")).length,
       warnings
     };
   }
 
-  private storePackageFingerprint(itemId: string, built: {
+  async buildPackageEntries(document: KnowledgeDocument, markdown: string): Promise<{
+    entries: PackageEntry[];
+    coreHash: string;
+    coreContentBytes: number;
     contentHash: string;
     contentBytes: number;
+    assetCount: number;
+    warnings: string[];
+  }> {
+    const core = await this.buildPackageCoreEntries(document, markdown);
+    const outline = await this.loadOutlineFile(document.doc_id);
+    if (!outline) throw new InvalidOutlineError("Outline file is not available for this document.");
+    const outlineBytes = serializeOutlineFile(outline);
+    const entries: PackageEntry[] = [
+      ...core.entries,
+      { path: "outline.json", bytes: outlineBytes }
+    ];
+    return {
+      entries,
+      coreHash: core.coreHash,
+      coreContentBytes: core.coreContentBytes,
+      contentHash: readerPackageContentHash(core.coreHash, outlineBytes),
+      contentBytes: packageContentBytes(entries),
+      assetCount: core.assetCount,
+      warnings: core.warnings
+    };
+  }
+
+  private storePackageFingerprint(itemId: string, built: {
+    coreHash: string;
+    coreContentBytes: number;
     assetCount: number;
   }, sectionCount: number): void {
     this.database!.prepare(
       "UPDATE items SET content_hash = ?, content_bytes = ?, section_count = ?, asset_count = ? WHERE item_id = ?"
-    ).run(built.contentHash, built.contentBytes, sectionCount, built.assetCount, itemId);
+    ).run(built.coreHash, built.coreContentBytes, sectionCount, built.assetCount, itemId);
   }
 
   async loadPackage(itemId: string): Promise<{
@@ -2060,30 +2209,51 @@ export class KnowledgeStore {
 
     const items: KnowledgeCatalogItem[] = [];
     for (const row of rows) {
-      if (row.content_hash && row.content_bytes !== null) {
-        items.push({
-          itemId: row.item_id,
-          docId: row.active_doc_id,
-          title: row.title ?? row.item_id,
-          sourceType: row.source_type,
-          state: row.state,
-          updatedAt: row.updated_at,
-          parsedAt: row.parsed_at,
-          contentHash: row.content_hash,
-          contentBytes: row.content_bytes,
-          sectionCount: row.section_count,
-          assetCount: row.asset_count,
-          sourceUrl: row.source_url
-        });
-        continue;
+      let coreHash = row.content_hash;
+      let coreContentBytes = row.content_bytes;
+      let sectionCount = row.section_count;
+      let assetCount = row.asset_count;
+      const documentId = row.active_doc_id;
+
+      if (!coreHash || coreContentBytes === null || sectionCount === null || assetCount === null) {
+        const document = documentId ? await this.loadDocument(documentId).catch(() => undefined) : undefined;
+        if (!document || !documentId) {
+          items.push({
+            itemId: row.item_id,
+            docId: documentId,
+            title: row.title ?? row.item_id,
+            sourceType: row.source_type,
+            state: row.state,
+            updatedAt: row.updated_at,
+            parsedAt: row.parsed_at,
+            contentHash: null,
+            contentBytes: null,
+            sectionCount,
+            assetCount,
+            sourceUrl: row.source_url
+          });
+          continue;
+        }
+
+        const markdown = await this.loadMarkdown(documentId).catch(() => "");
+        const built = await this.buildPackageCoreEntries(document, markdown);
+        coreHash = built.coreHash;
+        coreContentBytes = built.coreContentBytes;
+        sectionCount = document.sections.length;
+        assetCount = built.assetCount;
+        this.storePackageFingerprint(row.item_id, built, document.sections.length);
       }
 
-      // Lazy backfill for items written before the fingerprint columns existed.
-      const document = row.active_doc_id ? await this.loadDocument(row.active_doc_id).catch(() => undefined) : undefined;
-      if (!document || !row.active_doc_id) {
+      let outlineBytes: Buffer;
+      try {
+        const outline = documentId ? await this.loadOutlineFile(documentId) : undefined;
+        if (!outline) throw new InvalidOutlineError("Outline file is not available for this document.");
+        outlineBytes = serializeOutlineFile(outline);
+      } catch (error) {
+        if (!(error instanceof InvalidOutlineError)) throw error;
         items.push({
           itemId: row.item_id,
-          docId: row.active_doc_id,
+          docId: documentId,
           title: row.title ?? row.item_id,
           sourceType: row.source_type,
           state: row.state,
@@ -2091,28 +2261,25 @@ export class KnowledgeStore {
           parsedAt: row.parsed_at,
           contentHash: null,
           contentBytes: null,
-          sectionCount: null,
-          assetCount: null,
+          sectionCount,
+          assetCount,
           sourceUrl: row.source_url
         });
         continue;
       }
 
-      const markdown = await this.loadMarkdown(row.active_doc_id).catch(() => "");
-      const built = await this.buildPackageEntries(document, markdown);
-      this.storePackageFingerprint(row.item_id, built, document.sections.length);
       items.push({
         itemId: row.item_id,
-        docId: row.active_doc_id,
-        title: row.title ?? document.meta.title,
+        docId: documentId,
+        title: row.title ?? row.item_id,
         sourceType: row.source_type,
         state: row.state,
         updatedAt: row.updated_at,
         parsedAt: row.parsed_at,
-        contentHash: built.contentHash,
-        contentBytes: built.contentBytes,
-        sectionCount: document.sections.length,
-        assetCount: built.assetCount,
+        contentHash: readerPackageContentHash(coreHash, outlineBytes),
+        contentBytes: coreContentBytes + outlineBytes.byteLength,
+        sectionCount,
+        assetCount,
         sourceUrl: row.source_url
       });
     }
@@ -2835,7 +3002,7 @@ function toKnowledgeItem(
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     parsedAt: row.parsed_at ?? undefined,
-    readingSectionId: row.reading_section_id ?? undefined
+    readingProgress: readingProgressFromJson(row.reading_progress_json)
   };
 }
 

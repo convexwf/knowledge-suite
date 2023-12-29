@@ -220,23 +220,30 @@ describe("knowledge ingest server", () => {
       headers: { authorization: "Bearer test-token" }
     });
     expect(itemBeforeProgress.statusCode).toBe(200);
-    expect(itemBeforeProgress.json().item.readingSectionId).toBeUndefined();
+    expect(itemBeforeProgress.json().item.readingProgress).toBeNull();
 
     const progress = await app.inject({
       method: "PUT",
       url: `/api/items/${encodeURIComponent(itemId)}/reading-progress`,
       headers: { authorization: "Bearer test-token" },
-      payload: { section_id: "section-2" }
+      payload: { section_id: "section-2", expected_revision: 0 }
     });
     expect(progress.statusCode).toBe(200);
-    expect(progress.json()).toEqual({ itemId, readingSectionId: "section-2" });
+    expect(progress.json()).toMatchObject({
+      itemId,
+      progress: {
+        schemaVersion: 1,
+        sectionId: "section-2",
+        revision: 1
+      }
+    });
 
     const itemAfterProgress = await app.inject({
       method: "GET",
       url: `/api/items/${encodeURIComponent(itemId)}`,
       headers: { authorization: "Bearer test-token" }
     });
-    expect(itemAfterProgress.json().item.readingSectionId).toBe("section-2");
+    expect(itemAfterProgress.json().item.readingProgress.sectionId).toBe("section-2");
     expect(itemAfterProgress.json().item.updatedAt).toBe(itemBeforeProgress.json().item.updatedAt);
     expect(itemAfterProgress.json().item.parsedAt).toBe(itemBeforeProgress.json().item.parsedAt);
 
@@ -244,16 +251,23 @@ describe("knowledge ingest server", () => {
       method: "PUT",
       url: `/api/items/${encodeURIComponent(itemId)}/reading-progress`,
       headers: { authorization: "Bearer test-token" },
-      payload: { section_id: null }
+      payload: { section_id: null, expected_revision: 1 }
     });
     expect(clearProgress.statusCode).toBe(200);
-    expect(clearProgress.json()).toEqual({ itemId, readingSectionId: null });
+    expect(clearProgress.json()).toMatchObject({
+      itemId,
+      progress: {
+        schemaVersion: 1,
+        sectionId: null,
+        revision: 2
+      }
+    });
 
     const invalidProgress = await app.inject({
       method: "PUT",
       url: `/api/items/${encodeURIComponent(itemId)}/reading-progress`,
       headers: { authorization: "Bearer test-token" },
-      payload: { section_id: "" }
+      payload: { section_id: "", expected_revision: 2 }
     });
     expect(invalidProgress.statusCode).toBe(400);
 
@@ -261,7 +275,7 @@ describe("knowledge ingest server", () => {
       method: "PUT",
       url: "/api/items/missing-item/reading-progress",
       headers: { authorization: "Bearer test-token" },
-      payload: { section_id: "section-2" }
+      payload: { section_id: "section-2", expected_revision: 0 }
     });
     expect(missingItemProgress.statusCode).toBe(404);
 
