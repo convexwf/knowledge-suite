@@ -745,7 +745,7 @@ function expectStoreSchema(root: string): void {
     ]));
 
     const userVersion = database.prepare("PRAGMA user_version").get() as { user_version: number };
-    expect(userVersion.user_version).toBe(14);
+    expect(userVersion.user_version).toBe(15);
 
     for (const [table, columns] of Object.entries(columnsByTable)) {
       expect(columns.filter((column) => column.endsWith("_path") && column !== "heading_path"))

@@ -1406,7 +1406,9 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
 
       await Promise.all(Array.from({ length: Math.min(concurrency, pendingItems.length) }, () => worker()));
       const completed = await store.loadBatchJob(jobId);
-      if (completed.state !== "succeeded") {
+      if (completed.failed > 0) {
+        await store.updateBatchJobState(jobId, "failed");
+      } else if (completed.state !== "cancelled" && completed.state !== "succeeded") {
         await store.updateBatchJobState(jobId, "succeeded");
       }
     } catch (error) {

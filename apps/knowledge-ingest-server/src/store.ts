@@ -1102,6 +1102,11 @@ export class KnowledgeStore {
       this.writeJsonIfMissing(outlinePathFor(docId), initialOutlineFor(params.document)),
       this.writeText(paths.markdownPath, params.markdown)
     ]);
+    const packageEntries = await this.buildPackageEntries(
+      params.document,
+      params.markdown,
+      outlinePathFor(docId)
+    );
 
     this.database!.exec("BEGIN");
     try {
@@ -1190,7 +1195,7 @@ export class KnowledgeStore {
 
       this.storePackageFingerprint(
         itemId,
-        await this.buildPackageEntries(params.document, params.markdown),
+        packageEntries,
         params.document.sections.length
       );
 
@@ -1282,6 +1287,11 @@ export class KnowledgeStore {
         ? [this.writeBuffer(`rawdocs/${captureId}.${contentExtension(params.sourceType)}`, Buffer.isBuffer(params.content) ? params.content : Buffer.from(params.content))]
         : [])
     ]);
+    const packageEntries = await this.buildPackageEntries(
+      params.document,
+      params.markdown,
+      outlinePathFor(docId)
+    );
 
     this.database!.exec("BEGIN");
     try {
@@ -1344,7 +1354,7 @@ export class KnowledgeStore {
 
       this.storePackageFingerprint(
         params.itemId,
-        await this.buildPackageEntries(params.document, params.markdown),
+        packageEntries,
         params.document.sections.length
       );
 
@@ -1438,6 +1448,11 @@ export class KnowledgeStore {
       this.writeJsonIfMissing(outlinePathFor(docId), initialOutlineFor(params.document)),
       this.writeText(paths.markdownPath, params.markdown)
     ]);
+    const packageEntries = await this.buildPackageEntries(
+      params.document,
+      params.markdown,
+      outlinePathFor(docId)
+    );
 
     this.database!.exec("BEGIN");
     try {
@@ -1487,7 +1502,7 @@ export class KnowledgeStore {
 
       this.storePackageFingerprint(
         params.itemId,
-        await this.buildPackageEntries(params.document, params.markdown),
+        packageEntries,
         params.document.sections.length
       );
 
@@ -1973,13 +1988,16 @@ export class KnowledgeStore {
     return this.readJson<KnowledgeDocument>(`documents/${docId}.json`).catch(() => undefined);
   }
 
-  private async loadOutlineFile(docId: string): Promise<DocumentOutlineFile | undefined> {
+  private async loadOutlineFile(
+    docId: string,
+    fallbackPath?: string
+  ): Promise<DocumentOutlineFile | undefined> {
     const row = this.database!.prepare(
       "SELECT outline_path FROM documents WHERE doc_id = ?"
     ).get(docId) as { outline_path: string | null } | undefined;
-    if (!row) return undefined;
+    if (!row && !fallbackPath) return undefined;
 
-    const relativePath = row.outline_path || outlinePathFor(docId);
+    const relativePath = row?.outline_path || fallbackPath || outlinePathFor(docId);
     let contents: string;
     try {
       contents = await this.readText(relativePath);
@@ -1990,7 +2008,7 @@ export class KnowledgeStore {
       await this.writeJsonIfMissing(relativePath, initialOutlineFor(document));
       contents = await this.readText(relativePath);
     }
-    if (!row.outline_path) {
+    if (row && !row.outline_path) {
       this.database!.prepare("UPDATE documents SET outline_path = ? WHERE doc_id = ?")
         .run(relativePath, docId);
     }
@@ -2118,7 +2136,11 @@ export class KnowledgeStore {
     };
   }
 
-  async buildPackageEntries(document: KnowledgeDocument, markdown: string): Promise<{
+  async buildPackageEntries(
+    document: KnowledgeDocument,
+    markdown: string,
+    fallbackOutlinePath?: string
+  ): Promise<{
     entries: PackageEntry[];
     coreHash: string;
     coreContentBytes: number;
@@ -2128,7 +2150,7 @@ export class KnowledgeStore {
     warnings: string[];
   }> {
     const core = await this.buildPackageCoreEntries(document, markdown);
-    const outline = await this.loadOutlineFile(document.doc_id);
+    const outline = await this.loadOutlineFile(document.doc_id, fallbackOutlinePath);
     if (!outline) throw new InvalidOutlineError("Outline file is not available for this document.");
     const outlineBytes = serializeOutlineFile(outline);
     const entries: PackageEntry[] = [

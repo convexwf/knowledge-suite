@@ -2049,6 +2049,57 @@ describe("knowledge ingest server", () => {
     await app.close();
   });
 
+  it("marks a batch job failed when an item cannot be fetched", async () => {
+    globalThis.fetch = async () => new Response("not html", {
+      status: 200,
+      headers: {
+        "content-type": "text/plain"
+      }
+    });
+
+    const app = await buildServer({
+      host: "127.0.0.1",
+      port: 0,
+      token: "test-token",
+      storeRoot,
+      fetchTimeoutMs: 1000,
+      maxHtmlBytes: 1024 * 1024
+    });
+
+    const createJob = await app.inject({
+      method: "POST",
+      url: "/api/batch/jobs",
+      headers: { authorization: "Bearer test-token" },
+      payload: {
+        sourcePageUrl: "https://docs.example.com/oss/overview",
+        collection: {
+          title: "Example Docs",
+          rootUrl: "https://docs.example.com/oss/overview",
+          strategy: "create"
+        },
+        items: [{
+          url: "https://docs.example.com/oss/overview",
+          source: "sidebar",
+          order: 0
+        }],
+        options: {
+          maxConcurrency: 1
+        }
+      }
+    });
+
+    expect(createJob.statusCode).toBe(200);
+    const job = await waitForBatchJob(app, createJob.json().jobId);
+    expect(job).toMatchObject({
+      state: "failed",
+      saved: 0,
+      failed: 1,
+      items: [{ state: "failed" }]
+    });
+
+    await app.close();
+  });
+
   it("rejects non-HTML server_fetch responses", async () => {
     globalThis.fetch = async () => new Response("{}", {
       status: 200,
@@ -2086,7 +2137,7 @@ async function waitForBatchJob(app: FastifyInstance, jobId: string): Promise<{
   state: string;
   saved: number;
   failed: number;
-  items: Array<{ docId?: string }>;
+  items: Array<{ docId?: string; state?: string }>;
 }> {
   for (let attempt = 0; attempt < 20; attempt += 1) {
     const response = await app.inject({
