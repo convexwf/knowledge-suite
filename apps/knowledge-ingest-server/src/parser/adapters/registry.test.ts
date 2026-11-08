@@ -16,7 +16,8 @@ describe("site adapter registry", () => {
       "medium",
       "meituan_tech",
       "reddit",
-      "smashing_magazine"
+      "smashing_magazine",
+      "xiaoheihe"
     ]);
     expect(siteAdapters.every((adapter) => adapter.type === "config")).toBe(true);
   });
@@ -50,7 +51,8 @@ describe("site adapter registry", () => {
     ["allthings_distributed", "https://www.allthingsdistributed.com/2026/02/example.html"],
     ["brendan_gregg_blog", "https://www.brendangregg.com/blog/2026-02-07/example.html"],
     ["juejin", "https://juejin.cn/post/7350000000000000000"],
-    ["reddit", "https://www.reddit.com/r/AI_Agents/comments/1lpj771/example/"]
+    ["reddit", "https://www.reddit.com/r/AI_Agents/comments/1lpj771/example/"],
+    ["xiaoheihe", "https://www.xiaoheihe.cn/app/bbs/link/196383163"]
   ])("matches migrated adapter %s", (adapterId, url) => {
     const matches = matchSiteAdapters({
       inputMode: "browser_html",

@@ -498,9 +498,12 @@ function buildAdapterCandidates(input: ResolvedInput, title: string, match: Matc
       if (rootTextLength < (match.adapter.content.requireTextLength ?? 0) && !root.querySelector("img,table")) {
         continue;
       }
+      const baseSections = extractSections(root, title);
       const sections = match.adapter.id === "reddit"
-        ? appendRedditCommentSections(extractSections(root, title), document, baseUrl)
-        : extractSections(root, title);
+        ? appendRedditCommentSections(baseSections, document, baseUrl)
+        : match.adapter.id === "xiaoheihe"
+          ? appendXiaoheiheCommentSections(baseSections, document)
+          : baseSections;
       candidates.push(makeCandidate({
         id: `adapter:${match.adapter.id}:${selector}:${index}`,
         method: "site_adapter",
@@ -585,6 +588,70 @@ function extractRedditCommentSections(document: Document, baseUrl: string): Know
   return sections;
 }
 
+function appendXiaoheiheCommentSections(
+  sections: KnowledgeDocument["sections"],
+  document: Document
+): KnowledgeDocument["sections"] {
+  const items = [...document.querySelectorAll(".link-comment__list .link-comment__comment-item")];
+  const commentSections: KnowledgeDocument["sections"] = [];
+
+  for (const item of items) {
+    const body = item.querySelector(".comment-item__content");
+    const bodyMarkdown = body ? inlineToMarkdown(body) : "";
+    if (!bodyMarkdown) {
+      continue;
+    }
+
+    const likes = normalizeText(item.querySelector(".like-box__cnt")?.textContent ?? "");
+    const meta = [
+      wrapBold(normalizeText(item.querySelector(".info-box__username")?.textContent ?? "")),
+      normalizeText(item.querySelector(".info-box__level")?.textContent ?? "") || undefined,
+      normalizeText(item.querySelector(".info-box__create-time")?.textContent ?? "") || undefined,
+      normalizeText(item.querySelector(".info-box__ip")?.textContent ?? "").replace(/^·/, "") || undefined,
+      likes ? `${likes} 赞` : undefined
+    ].filter(Boolean).join(" · ");
+
+    const lines = [meta, "", bodyMarkdown];
+    const replies = [...item.querySelectorAll(".comment-children-item")].flatMap((reply) => {
+      const replyBodyNode = reply.querySelector(".children-item__comment-content");
+      const replyBody = replyBodyNode ? inlineToMarkdown(replyBodyNode) : "";
+      if (!replyBody) {
+        return [];
+      }
+      const replyMeta = [
+        wrapBold(normalizeText(reply.querySelector(".children-item__comment-creator")?.textContent ?? "")),
+        normalizeText(reply.querySelector(".children-item__create-time")?.textContent ?? "") || undefined,
+        normalizeText(reply.querySelector(".children-item__ip")?.textContent ?? "").replace(/^·/, "") || undefined
+      ].filter(Boolean).join(" · ");
+      return [`> ${replyMeta}`, `> ${replyBody}`];
+    });
+    if (replies.length > 0) {
+      lines.push("", ...replies);
+    }
+
+    commentSections.push({
+      type: "blockquote",
+      content: lines.join("\n")
+    });
+  }
+
+  if (commentSections.length === 0) {
+    return sections;
+  }
+  return [
+    ...sections,
+    {
+      type: "heading",
+      level: 2,
+      content: "评论"
+    },
+    ...commentSections
+  ];
+}
+
+function wrapBold(value: string): string | undefined {
+  return value ? `**${value}**` : undefined;
+}
 function redditCommentBody(comment: Element, thingId: string): Element | undefined {
   if (thingId) {
     const byId = comment.querySelector(`#${cssEscape(thingId)}-comment-rtjson-content`);
@@ -1289,7 +1356,7 @@ function extractSections(root: Element, title: string): KnowledgeDocument["secti
 
   for (const node of nodes) {
     const tagName = node.tagName.toLowerCase();
-    if (isInsideMediaContainer(node) || isInsideListItem(node) || isInsideMediaTag(node)) {
+    if (isInsideMediaContainer(node, root) || isInsideListItem(node) || isInsideMediaTag(node)) {
       continue;
     }
     const text = normalizeText(node.textContent ?? "");
@@ -1349,6 +1416,13 @@ function extractSections(root: Element, title: string): KnowledgeDocument["secti
     }
 
     if (tagName === "div") {
+      const hasBlockChild = Boolean(node.querySelector("p,h1,h2,h3,h4,h5,h6,ul,ol,pre,blockquote,table,figure,div"));
+      if (text && !hasBlockChild && !isMediaContainer(node)) {
+        sections.push({
+          type: "paragraph",
+          content: inlineToMarkdown(node)
+        });
+      }
       continue;
     }
 
@@ -1372,12 +1446,13 @@ function isInsideListItem(node: Element): boolean {
   return false;
 }
 
-function isInsideMediaContainer(node: Element): boolean {
+function isInsideMediaContainer(node: Element, root: Element): boolean {
   const parent = node.parentElement;
   if (!parent) {
     return false;
   }
-  return Boolean(closestMediaContainer(parent));
+  const container = closestMediaContainer(parent);
+  return Boolean(container && container !== root);
 }
 
 function isInsideMediaTag(node: Element): boolean {

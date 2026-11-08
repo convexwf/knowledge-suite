@@ -18,6 +18,9 @@ import {
   GitHubMarkdownRequest,
   GitHubMarkdownScanResult,
   KnowledgeItem,
+  KnowledgeItemListResult,
+  KnowledgeSearchResponse,
+  KnowledgeSearchResultItem,
   KnowledgeSourceType
 } from "./types.js";
 import {
@@ -71,6 +74,12 @@ const refreshButton = mustGet<HTMLButtonElement>("refresh-items");
 const settingsButton = mustGet<HTMLButtonElement>("open-settings");
 const serverProfileSelect = mustGet<HTMLSelectElement>("server-profile");
 const sourceFilterBar = mustGet<HTMLElement>("source-filter");
+const ownerFilterBar = mustGet<HTMLElement>("owner-filter");
+const tagFilterBar = mustGet<HTMLElement>("tag-filter");
+const searchForm = mustGet<HTMLFormElement>("search-form");
+const searchInput = mustGet<HTMLInputElement>("search-input");
+const clearSearchButton = mustGet<HTMLButtonElement>("clear-search");
+const searchStatus = mustGet<HTMLElement>("search-status");
 const selectAll = mustGet<HTMLInputElement>("select-all");
 const selectCount = mustGet<HTMLElement>("select-count");
 const batchBar = mustGet<HTMLElement>("batch-bar");
@@ -96,6 +105,10 @@ let githubScan: GitHubMarkdownScanResult | undefined;
 let markdownFolderHandle: MarkdownDirectoryHandle | undefined;
 let markdownResourceFolderHandle: MarkdownDirectoryHandle | undefined;
 let activeSourceFilter: SourceFilter = normalizeSourceFilter(query.get("source") ?? (query.get("collectionId") ? "collection" : "all"));
+let activeOwnerFilter: OwnerFilter = normalizeOwnerFilter(query.get("owner"));
+let activeTagFilter = (query.get("tag") ?? "").trim();
+let activeSearchQuery = (query.get("q") ?? "").trim();
+let availableTags: Array<{ tag: string; count: number }> = [];
 const focusCollectionId = query.get("collectionId") || "";
 const collectionDetailCache = new Map<string, Promise<CollectionDetail>>();
 let refreshGeneration = 0;
@@ -119,6 +132,19 @@ settingsButton.addEventListener("click", () => {
 
 refreshButton.addEventListener("click", () => {
   void refreshItems();
+});
+
+searchInput.value = activeSearchQuery;
+clearSearchButton.hidden = !activeSearchQuery;
+
+searchForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  applySearch(searchInput.value);
+});
+
+clearSearchButton.addEventListener("click", () => {
+  searchInput.value = "";
+  applySearch("");
 });
 
 importForm.addEventListener("submit", (event) => {
@@ -605,13 +631,28 @@ async function refreshItems(): Promise<void> {
     const sourceType = activeSourceFilter !== "all" && activeSourceFilter !== "collection"
       ? activeSourceFilter as KnowledgeSourceType
       : undefined;
-    const [result, collectionsResult] = await Promise.all([
-      requestClient.listItems(sourceType, requestLimit),
-      requestClient.listCollections()
+    const ownerParam = activeOwnerFilter === "all" ? undefined : activeOwnerFilter;
+    const listRequest = activeSearchQuery
+      ? requestClient.search(activeSearchQuery, { limit: requestLimit, owner: ownerParam })
+      : requestClient.listItems(sourceType, requestLimit, {
+        owner: ownerParam,
+        tag: activeTagFilter || undefined
+      });
+    const [result, collectionsResult, tagsResult] = await Promise.all([
+      listRequest,
+      requestClient.listCollections(),
+      requestClient.listTags(ownerParam).catch(() => ({ tags: [] }))
     ]);
     if (generation !== refreshGeneration) return;
     currentCollections = collectionsResult.collections;
-    currentItems = await hydrateCollectionIds(result.items, requestClient);
+    availableTags = tagsResult.tags;
+    renderFilterBar();
+    if (activeSearchQuery) {
+      renderSearchResults(result as KnowledgeSearchResponse);
+      return;
+    }
+    searchStatus.hidden = true;
+    currentItems = await hydrateCollectionIds((result as KnowledgeItemListResult).items, requestClient);
     if (generation !== refreshGeneration) return;
     renderItems(currentItems);
   } catch (error) {
@@ -622,6 +663,73 @@ async function refreshItems(): Promise<void> {
       refreshButton.disabled = false;
     }
   }
+}
+
+function applySearch(value: string): void {
+  activeSearchQuery = value.trim();
+  clearSearchButton.hidden = !activeSearchQuery;
+  const url = new URL(globalThis.location.href);
+  if (activeSearchQuery) {
+    url.searchParams.set("q", activeSearchQuery);
+  } else {
+    url.searchParams.delete("q");
+  }
+  globalThis.history.replaceState(null, "", url);
+  void refreshItems();
+}
+
+function renderSearchResults(response: KnowledgeSearchResponse): void {
+  searchStatus.hidden = false;
+  if (response.retriever === "disabled") {
+    searchStatus.textContent = "Search is disabled on this server (KNOWLEDGE_SEARCH=off).";
+    itemList.replaceChildren(emptyNode("Search is disabled."));
+    return;
+  }
+  const mode = response.retriever === "hybrid" ? "Hybrid" : "FTS";
+  const count = response.results.length;
+  searchStatus.textContent = `${count} result${count === 1 ? "" : "s"} for "${response.query}" · ${mode}`;
+  if (count === 0) {
+    itemList.replaceChildren(emptyNode("No matching chunks."));
+    return;
+  }
+  itemList.replaceChildren(...response.results.map(searchResultRow));
+}
+
+function searchResultRow(result: KnowledgeSearchResultItem): HTMLElement {
+  const row = document.createElement("article");
+  row.className = "item-row search-result";
+  const avatar = document.createElement("div");
+  avatar.className = "item-avatar";
+  avatar.textContent = "S";
+  const body = document.createElement("div");
+  body.className = "item-body";
+  const kicker = document.createElement("div");
+  kicker.className = "item-kicker-row";
+  kicker.append(badge("Chunk", "doc"));
+  if (result.parserMethod) {
+    kicker.append(badge(result.parserMethod, "source"));
+  }
+  if (result.headingPath) {
+    const heading = result.headingPath.split(" > ").filter(Boolean).pop() ?? result.headingPath;
+    kicker.append(badge(heading, "owner"));
+  }
+  const title = marqueeTitle("h3", "item-title", result.displayTitle || result.title);
+  const snippet = document.createElement("p");
+  snippet.className = "item-snippet";
+  snippet.textContent = result.snippet;
+  const meta = document.createElement("div");
+  meta.className = "item-summary-line";
+  meta.textContent = [result.normalizedUrl || result.sourceUrl, `score ${result.score.toFixed(4)}`].filter(Boolean).join(" · ");
+  body.append(kicker, title, snippet, meta);
+  const actions = document.createElement("div");
+  actions.className = "item-actions";
+  const readButton = button("Read", "primary-button", () => {
+    if (result.itemId) openReader(result.itemId);
+  });
+  readButton.disabled = !result.itemId;
+  actions.append(readButton);
+  row.append(avatar, body, actions);
+  return row;
 }
 
 async function switchServerProfile(profileId: string): Promise<void> {
@@ -738,6 +846,92 @@ function renderFilterBar(): void {
   }
 
   sourceFilterBar.replaceChildren(label, rail);
+  renderOwnerFilterBar();
+  renderTagFilterBar();
+}
+
+type OwnerFilter = "master" | "xiaojing" | "all";
+
+function normalizeOwnerFilter(value: string | null | undefined): OwnerFilter {
+  return value === "xiaojing" || value === "all" ? value : "master";
+}
+
+function renderOwnerFilterBar(): void {
+  const label = document.createElement("span");
+  label.className = "filter-chip-label";
+  label.textContent = "Owner";
+  const rail = document.createElement("div");
+  rail.className = "filter-chip-rail";
+  const options: Array<{ value: OwnerFilter; label: string }> = [
+    { value: "master", label: "Mine" },
+    { value: "xiaojing", label: "Hers" },
+    { value: "all", label: "All" }
+  ];
+  for (const option of options) {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "filter-chip";
+    chip.dataset.active = String(option.value === activeOwnerFilter);
+    chip.setAttribute("aria-pressed", String(option.value === activeOwnerFilter));
+    chip.textContent = option.label;
+    chip.addEventListener("click", () => {
+      activeOwnerFilter = option.value;
+      const url = new URL(globalThis.location.href);
+      if (activeOwnerFilter === "master") {
+        url.searchParams.delete("owner");
+      } else {
+        url.searchParams.set("owner", activeOwnerFilter);
+      }
+      globalThis.history.replaceState(null, "", url);
+      renderFilterBar();
+      void refreshItems();
+    });
+    rail.append(chip);
+  }
+  ownerFilterBar.replaceChildren(label, rail);
+}
+
+function renderTagFilterBar(): void {
+  const label = document.createElement("span");
+  label.className = "filter-chip-label";
+  label.textContent = "Tag";
+  const rail = document.createElement("div");
+  rail.className = "filter-chip-rail";
+  const makeChip = (value: string, text: string) => {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "filter-chip";
+    chip.dataset.active = String(value === activeTagFilter);
+    chip.setAttribute("aria-pressed", String(value === activeTagFilter));
+    chip.textContent = text;
+    chip.addEventListener("click", () => {
+      activeTagFilter = value;
+      const url = new URL(globalThis.location.href);
+      if (activeTagFilter) {
+        url.searchParams.set("tag", activeTagFilter);
+      } else {
+        url.searchParams.delete("tag");
+      }
+      globalThis.history.replaceState(null, "", url);
+      renderFilterBar();
+      void refreshItems();
+    });
+    rail.append(chip);
+  };
+  makeChip("", "All tags");
+  if (activeTagFilter && !availableTags.some((entry) => entry.tag === activeTagFilter)) {
+    makeChip(activeTagFilter, activeTagFilter);
+  }
+  for (const entry of availableTags.slice(0, 24)) {
+    makeChip(entry.tag, `${entry.tag} (${entry.count})`);
+  }
+  if (availableTags.length === 0) {
+    const empty = document.createElement("span");
+    empty.className = "filter-chip-label";
+    empty.textContent = "No tags yet";
+    rail.append(empty);
+  }
+  tagFilterBar.replaceChildren(label, rail);
 }
 
 function collectionRow(collection: ReaderListCollection): HTMLElement {
@@ -871,7 +1065,10 @@ function itemRow(item: KnowledgeItem, options?: { nested?: boolean; indexLabel?:
   kickerRow.append(
     badge(sourceBadgeLabel(item.sourceType), "source"),
     badge(item.state === "parsed" ? "Reader Ready" : "Captured", item.state),
-    item.activeDocId ? badge("Document", "doc") : badge("Raw Only", "raw")
+    item.activeDocId ? badge("Document", "doc") : badge("Raw Only", "raw"),
+    ...(item.owner
+      ? [badge(item.owner === "master" ? "Mine" : item.owner === "xiaojing" ? "Hers" : item.owner, "owner")]
+      : [])
   );
   const title = marqueeTitle("h3", "item-title", displayTitle(item));
   const creator = document.createElement("div");

@@ -91,6 +91,7 @@ export interface SavedKnowledgeItemListResponse {
 
 export interface SearchResultItem {
   chunkId: string;
+  itemId?: string;
   docId: string;
   rawdocId: string;
   sectionIds: string[];
@@ -122,7 +123,7 @@ export interface SearchTrace {
 
 export interface SearchResponse {
   query: string;
-  retriever: "sqlite_fts";
+  retriever: "sqlite_fts" | "hybrid" | "disabled";
   results: SearchResultItem[];
 }
 
@@ -154,7 +155,7 @@ export interface ContextCitation {
 
 export interface ContextPackResponse {
   query: string;
-  retriever: "sqlite_fts";
+  retriever: "sqlite_fts" | "hybrid" | "disabled";
   packer: "section_chunk_v1";
   budget: {
     maxChars: number;

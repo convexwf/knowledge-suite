@@ -48,11 +48,79 @@ You can preview the parsed Markdown before saving. If the parser produces
 multiple candidates, switch between them in the preview dropdown and save the
 best one.
 
+### Extension Capture (no per-run prompt)
+
+Chrome asks for confirmation on every new DevTools client, so the CDP path needs
+one click per run. The `knowledge-capture-relay` extension removes that prompt:
+it keeps a single WebSocket to the local server and captures allow-listed pages
+on request.
+
+```bash
+# One-time setup:
+#   chrome://extensions -> enable Developer mode ->
+#   Load unpacked -> apps/knowledge-capture-relay
+# Allow-list is currently https://www.xiaoheihe.cn/*
+
+npm run capture -- https://www.xiaoheihe.cn/app/bbs/link/196383163 --save
+npm run capture -- <url> --quiet
+```
+
+The extension opens a background tab, waits for the DOM to settle, and returns
+the rendered snapshot. The server then parses it with the same adapters used by
+the web clipper, so nothing leaves the machine. Add `--quiet` to reduce the
+output to a single line.
+
+Full walkthrough, token cost, latency and security notes:
+[docs/capture-pipeline.zh-CN.md](docs/capture-pipeline.zh-CN.md).
+
 ### Saved Clips
 
 Switch to the **Saved** tab to browse all previously saved clips. Each clip
 shows title, URL, state (Parsed / Raw only), and timestamps. Use the
 **More** menu to copy Markdown, delete, or purge a clip.
+
+### Search Mode
+
+`KNOWLEDGE_SEARCH` controls the derived retrieval index:
+
+- `fts` (default): build chunks and a SQLite FTS5 index. Chinese queries of
+  three or more characters use the trigram index; one- and two-character
+  queries fall back to a `LIKE` scan.
+- `off`: storage-only deployments (for example a cloud mirror). No chunks or
+  FTS rows are written and `/api/search`, `/api/context` return
+  `retriever: "disabled"` with empty results.
+- `hybrid`: FTS plus vector recall, fused with reciprocal rank fusion
+  (`k=60`). Requires `KNOWLEDGE_EMBEDDINGS=ollama`. If Ollama is offline the
+  query degrades to FTS instead of failing; vector-only rows must reach
+  cosine similarity `0.2`.
+
+Embedding settings (used by `hybrid` and by the reindex commands):
+
+- `KNOWLEDGE_EMBEDDINGS` — `none` (default) or `ollama`. The bundled
+  `docker-compose.yml` defaults to `ollama` for local use.
+- `KNOWLEDGE_EMBEDDING_MODEL` — `bge-m3` (1024 dimensions, L2-normalized).
+- Chunk text is embedded as `title + heading path + text`.
+- Vectors are stored per model in `chunk_embeddings`; switching models keeps
+  old vectors instead of deleting them.
+- The server calls Ollama directly at `POST /api/embed`. Ingest never blocks
+  on Ollama: a failed embedding leaves the chunk pending for the next
+  reindex.
+
+If you switch from `off` to `fts` or `hybrid`, rebuild the derived index:
+
+```bash
+npm run search:reindex
+```
+
+The same maintenance is available over HTTP:
+
+```bash
+curl -X POST -H "Authorization: Bearer dev-token" http://127.0.0.1:18765/api/search/reindex
+curl -X POST -H "Authorization: Bearer dev-token" "http://127.0.0.1:18765/api/embeddings/reindex?force=true"
+```
+
+Items carry an `owner` (`master` or `xiaojing`). `/api/items` accepts `owner`
+and `tag` filters, and `/api/tags` lists available tags for the filter UI.
 
 ### Reader
 
@@ -114,6 +182,13 @@ Open the extension options page (`chrome://extensions` → **Details** →
 | `KNOWLEDGE_HOST` | `127.0.0.1` | Server bind address |
 | `KNOWLEDGE_PORT` | `18765` | Server port |
 | `KNOWLEDGE_TOKEN` | `dev-token` | Bearer token for API auth |
+| `KNOWLEDGE_SEARCH` | `fts` | Retrieval mode: `off`, `fts`, or `hybrid` |
+| `KNOWLEDGE_EMBEDDINGS` | `none` | Embedding provider: `none` or `ollama` (hybrid requires `ollama`) |
+| `KNOWLEDGE_EMBEDDING_BASE_URL` | `http://127.0.0.1:11434` | Ollama base URL |
+| `KNOWLEDGE_EMBEDDING_MODEL` | `bge-m3` | Embedding model name |
+| `KNOWLEDGE_EMBEDDING_DIM` | `1024` | Expected vector dimension |
+| `KNOWLEDGE_EMBEDDING_BATCH_SIZE` | `16` | Texts per Ollama embed request |
+| `KNOWLEDGE_EMBEDDING_TIMEOUT_MS` | `60000` | Ollama embed timeout |
 | `KNOWLEDGE_AI_ENABLED` | `false` | Enable AI summary endpoints |
 | `KNOWLEDGE_AI_OLLAMA_MODEL` | `qwen2.5:7b` | Ollama model name |
 | `KNOWLEDGE_FETCH_TIMEOUT_MS` | `15000` | Server fetch timeout |

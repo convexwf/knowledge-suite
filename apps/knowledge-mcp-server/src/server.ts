@@ -43,6 +43,10 @@ export function createServer(): Server {
               type: "string",
               description: "Filter by parser method (e.g. defuddle, selection)",
             },
+            owner: {
+              type: "string",
+              description: "Filter by owner (master or xiaojing)",
+            },
             trace: {
               type: "boolean",
               description: "Include ranking trace in results",
@@ -87,6 +91,10 @@ export function createServer(): Server {
               type: "string",
               description: "Filter by parser method",
             },
+            owner: {
+              type: "string",
+              description: "Filter by owner (master or xiaojing)",
+            },
             trace: {
               type: "boolean",
               description: "Include ranking trace in citations",
@@ -110,6 +118,7 @@ export function createServer(): Server {
             docId?: string;
             url?: string;
             parserMethod?: string;
+            owner?: string;
             trace?: boolean;
           },
         );
@@ -126,6 +135,7 @@ export function createServer(): Server {
             docId?: string;
             url?: string;
             parserMethod?: string;
+            owner?: string;
             trace?: boolean;
           },
         );

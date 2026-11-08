@@ -1,0 +1,61 @@
+[
+  {
+    "id": "adapter:xiaoheihe:.hb-bbs-post .post__content:0",
+    "method": "site_adapter",
+    "adapterId": "xiaoheihe",
+    "selector": ".hb-bbs-post .post__content",
+    "selected": true,
+    "serverSelected": true,
+    "score": 245.9,
+    "metrics": {
+      "textLength": 563,
+      "sectionCount": 10,
+      "headingCount": 1,
+      "linkCount": 0,
+      "imageCount": 1,
+      "tableCount": 0,
+      "codeCount": 0,
+      "linkDensity": 0
+    },
+    "warnings": [],
+    "reason": "Matched xiaoheihe (url:host:www.xiaoheihe.cn, url:path:^/app/bbs/link/); content selector .hb-bbs-post .post__content"
+  },
+  {
+    "id": "defuddle",
+    "method": "defuddle",
+    "selected": false,
+    "serverSelected": false,
+    "score": 103.3,
+    "metrics": {
+      "textLength": 405,
+      "sectionCount": 7,
+      "headingCount": 0,
+      "linkCount": 0,
+      "imageCount": 1,
+      "tableCount": 0,
+      "codeCount": 0,
+      "linkDensity": 0
+    },
+    "warnings": [],
+    "reason": "Defuddle universal article extraction"
+  },
+  {
+    "id": "dom_fallback",
+    "method": "dom_fallback",
+    "selected": false,
+    "serverSelected": false,
+    "score": 73.4,
+    "metrics": {
+      "textLength": 508,
+      "sectionCount": 12,
+      "headingCount": 0,
+      "linkCount": 0,
+      "imageCount": 1,
+      "tableCount": 0,
+      "codeCount": 0,
+      "linkDensity": 0
+    },
+    "warnings": [],
+    "reason": "Generic DOM readable-root fallback"
+  }
+]

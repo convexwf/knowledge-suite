@@ -27,6 +27,7 @@ import {
   KnowledgeItemDeleteResult,
   KnowledgeItemDetailResult,
   KnowledgeItemListResult,
+  KnowledgeSearchResponse,
   ReadingProgressSnapshot,
   ReadingProgressUpdateResult,
   KnowledgeItemStatusResult,
@@ -73,7 +74,13 @@ export interface KnowledgeApiClient {
   clearParsedResults(): Promise<StoreClearParsedResult>;
   status(url: string): Promise<KnowledgeItemStatusResult>;
   list(limit?: number): Promise<{ items: ItemListItem[] }>;
-  listItems(sourceType?: KnowledgeSourceType, limit?: number): Promise<KnowledgeItemListResult>;
+  listItems(
+    sourceType?: KnowledgeSourceType,
+    limit?: number,
+    filters?: { owner?: string; tag?: string }
+  ): Promise<KnowledgeItemListResult>;
+  listTags(owner?: string): Promise<{ tags: Array<{ tag: string; count: number }> }>;
+  search(query: string, filters?: { limit?: number; owner?: string }): Promise<KnowledgeSearchResponse>;
   item(itemId: string): Promise<KnowledgeItemDetailResult>;
   updateReadingProgress(itemId: string, sectionId: string | null, expectedRevision: number): Promise<ReadingProgressUpdateResult>;
   importEpub(body: {
@@ -220,10 +227,16 @@ export function createKnowledgeApiClient(settings: ExtensionSettings): Knowledge
         }))
       }));
     },
-    listItems: (sourceType, limit = settings.savedListLimit) => {
+    listItems: (sourceType, limit = settings.savedListLimit, filters = {}) => {
       const params = new URLSearchParams();
       if (sourceType) {
         params.set("sourceType", sourceType);
+      }
+      if (filters.owner) {
+        params.set("owner", filters.owner);
+      }
+      if (filters.tag) {
+        params.set("tag", filters.tag);
       }
       params.set("limit", String(limit));
       return request<KnowledgeItemListResult>(
@@ -231,6 +244,31 @@ export function createKnowledgeApiClient(settings: ExtensionSettings): Knowledge
         settings.token,
         "GET",
         `/api/items?${params.toString()}`,
+        undefined,
+        options
+      );
+    },
+    listTags: (owner) => {
+      const params = new URLSearchParams();
+      if (owner) params.set("owner", owner);
+      return request<{ tags: Array<{ tag: string; count: number }> }>(
+        baseUrl,
+        settings.token,
+        "GET",
+        `/api/tags?${params.toString()}`,
+        undefined,
+        options
+      );
+    },
+    search: (query, filters = {}) => {
+      const params = new URLSearchParams({ q: query });
+      if (filters.limit != null) params.set("limit", String(filters.limit));
+      if (filters.owner) params.set("owner", filters.owner);
+      return request<KnowledgeSearchResponse>(
+        baseUrl,
+        settings.token,
+        "GET",
+        `/api/search?${params.toString()}`,
         undefined,
         options
       );

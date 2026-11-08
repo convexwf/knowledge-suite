@@ -1,5 +1,17 @@
 import { resolve } from "node:path";
 
+export type SearchMode = "off" | "fts" | "hybrid";
+export type EmbeddingProvider = "none" | "ollama";
+
+export interface EmbeddingConfig {
+  provider: EmbeddingProvider;
+  baseUrl: string;
+  model: string;
+  dim: number;
+  batchSize: number;
+  timeoutMs: number;
+}
+
 export interface ServerConfig {
   host: string;
   port: number;
@@ -14,6 +26,8 @@ export interface ServerConfig {
   maxGithubMarkdownBytes?: number;
   maxGithubAssetReferences?: number;
   maxGithubAssetBytes?: number;
+  search?: SearchMode;
+  embeddings?: EmbeddingConfig;
 }
 
 export function loadConfig(): ServerConfig {
@@ -30,6 +44,30 @@ export function loadConfig(): ServerConfig {
     maxGithubFiles: Number(process.env.KNOWLEDGE_MAX_GITHUB_FILES ?? 100),
     maxGithubMarkdownBytes: Number(process.env.KNOWLEDGE_MAX_GITHUB_MARKDOWN_BYTES ?? 5 * 1024 * 1024),
     maxGithubAssetReferences: Number(process.env.KNOWLEDGE_MAX_GITHUB_ASSET_REFERENCES ?? 500),
-    maxGithubAssetBytes: Number(process.env.KNOWLEDGE_MAX_GITHUB_ASSET_BYTES ?? 20 * 1024 * 1024)
+    maxGithubAssetBytes: Number(process.env.KNOWLEDGE_MAX_GITHUB_ASSET_BYTES ?? 20 * 1024 * 1024),
+    search: parseSearchMode(process.env.KNOWLEDGE_SEARCH),
+    embeddings: parseEmbeddingConfig()
   };
+}
+
+function parseSearchMode(value: string | undefined): SearchMode {
+  const normalized = (value ?? "fts").trim().toLowerCase();
+  return normalized === "off" || normalized === "hybrid" ? normalized : "fts";
+}
+
+function parseEmbeddingConfig(): EmbeddingConfig {
+  const provider = (process.env.KNOWLEDGE_EMBEDDINGS ?? "none").trim().toLowerCase();
+  return {
+    provider: provider === "ollama" ? "ollama" : "none",
+    baseUrl: process.env.KNOWLEDGE_EMBEDDING_BASE_URL ?? "http://127.0.0.1:11434",
+    model: process.env.KNOWLEDGE_EMBEDDING_MODEL ?? "bge-m3",
+    dim: positiveInt(process.env.KNOWLEDGE_EMBEDDING_DIM, 1024),
+    batchSize: positiveInt(process.env.KNOWLEDGE_EMBEDDING_BATCH_SIZE, 16),
+    timeoutMs: positiveInt(process.env.KNOWLEDGE_EMBEDDING_TIMEOUT_MS, 60000)
+  };
+}
+
+function positiveInt(value: string | undefined, fallback: number): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.trunc(parsed) : fallback;
 }

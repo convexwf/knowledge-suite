@@ -19,6 +19,8 @@
     "fixtures:parser:update": "npm run fixtures:parser:update -w @uknowledge/knowledge-ingest-server",
     "markdown:rewrite": "npm run markdown:rewrite -w @uknowledge/knowledge-ingest-server --",
     "e2e:extension": "node scripts/e2e-extension.mjs",
+    "capture": "node scripts/capture-ext.mjs",
+    "search:reindex": "npm run build -w @uknowledge/knowledge-schema && npm run build -w @uknowledge/knowledge-ingest-server && node scripts/reindex-search.mjs",
     "dev:server": "npm run dev -w @uknowledge/knowledge-ingest-server",
     "build:extension": "npm run build -w @uknowledge/knowledge-web-clipper"
   },

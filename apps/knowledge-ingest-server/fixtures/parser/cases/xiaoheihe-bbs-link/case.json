@@ -1,0 +1,32 @@
+{
+  "id": "xiaoheihe-bbs-link",
+  "title": "Xiaoheihe BBS Link Post",
+  "priority": "p0",
+  "status": "active",
+  "source": {
+    "pageUrl": "https://www.xiaoheihe.cn/app/bbs/link/196383163",
+    "canonicalUrl": "https://www.xiaoheihe.cn/app/bbs/link/196383163",
+    "capturedAt": "2026-11-08T00:00:00.000Z",
+    "captureMode": "browser_html",
+    "notes": "Site header h1 is the product name, so the article title must come from the adapter metadata instead of the first h1. Comments are appended as nested blockquotes."
+  },
+  "expectations": {
+    "parserProfile": "xiaoheihe",
+    "requiredCandidates": [
+      { "method": "site_adapter", "adapterId": "xiaoheihe" },
+      { "method": "defuddle" },
+      { "method": "dom_fallback" }
+    ],
+    "minTextLength": 300,
+    "titleIncludes": ["奥日"],
+    "authorsInclude": ["无心队长Captain"],
+    "markdownIncludes": [
+      "## 评论",
+      "**用户246813579**",
+      "这高分我是不信没情怀分的",
+      "本来就不能抛弃情怀打分",
+      "**无一和菠萝头**"
+    ],
+    "markdownExcludes": ["立即下载小黑盒APP", "玩家高能聚集地"]
+  }
+}

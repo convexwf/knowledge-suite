@@ -8,6 +8,9 @@ language: "en"
 
 # A Fixture Paper for Retrieval
 
+Ada Lovelace
+Grace Hopper
+
 ## Abstract
 
 This paper explains why retrieval augmented generation systems need evaluation fixtures, stable citations, and repeatable parser baselines before model quality can be trusted.

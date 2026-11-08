@@ -33,6 +33,8 @@ import {
   urlHash
 } from "@uknowledge/knowledge-schema";
 import { buildChunks } from "./chunks.js";
+import { cosineSimilarity, type KnowledgeEmbedder } from "./embeddings/index.js";
+import type { SearchMode } from "./config.js";
 import {
   packageContentBytes,
   packageContentHash,
@@ -71,6 +73,7 @@ interface ItemRow {
   creators_json: string;
   language: string | null;
   tags_json: string;
+  owner: string | null;
   state: "empty" | "captured" | "parsed" | "stale" | "archived";
   member_visibility_mode: "hide_members" | "show_members" | null;
   active_capture_id: string | null;
@@ -244,6 +247,25 @@ interface SearchOptions {
   url?: string;
   parserMethod?: string;
   trace?: boolean;
+  owner?: string;
+}
+
+export interface StoreOptions {
+  search?: SearchMode;
+  embedder?: KnowledgeEmbedder;
+}
+
+interface ChunkForEmbedding {
+  chunkId: string;
+  contentHash: string;
+  text: string;
+}
+
+interface ChunkEmbeddingInput {
+  chunkId: string;
+  part: number;
+  contentHash: string;
+  text: string;
 }
 
 interface ContextOptions extends SearchOptions {
@@ -255,7 +277,7 @@ interface CollectionItemDetail extends CollectionItem {
   language?: string;
 }
 
-const STORE_SCHEMA_VERSION = 15;
+const STORE_SCHEMA_VERSION = 17;
 
 export class InvalidOutlineError extends Error {
   constructor(message: string) {
@@ -449,7 +471,30 @@ function pathsForActiveCapture(captureId: string) {
 export class KnowledgeStore {
   private database?: DatabaseSync;
 
-  constructor(private readonly root: string) {}
+  constructor(
+    private readonly root: string,
+    private readonly options: StoreOptions = {}
+  ) {}
+
+  private get searchMode(): SearchMode {
+    return this.options.search ?? "fts";
+  }
+
+  private get searchEnabled(): boolean {
+    return this.searchMode !== "off";
+  }
+
+  private get hybridEnabled(): boolean {
+    return this.searchMode === "hybrid" && this.options.embedder != null;
+  }
+
+  get retriever(): "sqlite_fts" | "hybrid" {
+    return this.hybridEnabled ? "hybrid" : "sqlite_fts";
+  }
+
+  private get embedder(): KnowledgeEmbedder | undefined {
+    return this.hybridEnabled ? this.options.embedder : undefined;
+  }
 
   // ── lifecycle ──────────────────────────────────────────────────────────
 
@@ -463,6 +508,7 @@ export class KnowledgeStore {
     ]);
     this.ensureDatabase();
     this.migrateSchemaIfNeeded();
+    this.ensureFtsTokenizer();
     this.ensureIndexes();
   }
 
@@ -488,6 +534,21 @@ export class KnowledgeStore {
       CREATE INDEX IF NOT EXISTS idx_collection_memberships_member ON collection_memberships(member_item_id);
       CREATE INDEX IF NOT EXISTS idx_batch_items_job ON batch_items(job_id);
       CREATE INDEX IF NOT EXISTS idx_batch_items_state ON batch_items(state);
+      CREATE TABLE IF NOT EXISTS chunk_embeddings (
+        chunk_id TEXT NOT NULL,
+        model TEXT NOT NULL,
+        part INTEGER NOT NULL DEFAULT 0,
+        dim INTEGER NOT NULL,
+        normalized INTEGER NOT NULL DEFAULT 1,
+        chunk_hash TEXT NOT NULL,
+        vector BLOB NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (chunk_id, model, part)
+      );
+      CREATE INDEX IF NOT EXISTS idx_chunk_embeddings_model ON chunk_embeddings(model);
+      CREATE INDEX IF NOT EXISTS idx_chunks_doc ON chunks(doc_id);
+      CREATE INDEX IF NOT EXISTS idx_chunks_item ON chunks(item_id);
     `);
   }
 
@@ -563,6 +624,7 @@ export class KnowledgeStore {
           update.run(JSON.stringify(snapshot), row.item_id);
         }
 
+        this.addColumnIfMissing("items", "owner", "TEXT NOT NULL DEFAULT 'master'");
         this.database!.exec(`PRAGMA user_version = ${STORE_SCHEMA_VERSION}`);
         this.database!.exec("COMMIT");
       } catch (error) {
@@ -572,7 +634,30 @@ export class KnowledgeStore {
       return;
     }
 
+    if (currentVersion < 16) {
+      this.addColumnIfMissing("items", "owner", "TEXT NOT NULL DEFAULT 'master'");
+    }
+
     this.database!.exec(`PRAGMA user_version = ${STORE_SCHEMA_VERSION}`);
+  }
+
+  private ensureFtsTokenizer(): void {
+    const row = this.database!.prepare(
+      "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'chunks_fts'"
+    ).get() as { sql?: string } | undefined;
+    if (!row?.sql || /trigram/i.test(row.sql)) return;
+    this.database!.exec("DROP TABLE IF EXISTS chunks_fts");
+    this.database!.exec(`
+      CREATE VIRTUAL TABLE chunks_fts USING fts5(
+        title,
+        heading_path,
+        text,
+        content='chunks',
+        content_rowid='rowid',
+        tokenize='trigram'
+      )
+    `);
+    this.database!.exec("INSERT INTO chunks_fts(chunks_fts) VALUES('rebuild')");
   }
 
   private addColumnIfMissing(table: string, column: string, type: string): void {
@@ -593,6 +678,7 @@ export class KnowledgeStore {
         creators_json TEXT NOT NULL DEFAULT '[]',
         language TEXT,
         tags_json TEXT NOT NULL DEFAULT '[]',
+        owner TEXT NOT NULL DEFAULT 'master',
         state TEXT NOT NULL DEFAULT 'empty',
         member_visibility_mode TEXT CHECK(member_visibility_mode IN ('hide_members', 'show_members')),
         active_capture_id TEXT,
@@ -750,7 +836,21 @@ export class KnowledgeStore {
         heading_path,
         text,
         content='chunks',
-        content_rowid='rowid'
+        content_rowid='rowid',
+        tokenize='trigram'
+      );
+
+      CREATE TABLE IF NOT EXISTS chunk_embeddings (
+        chunk_id TEXT NOT NULL,
+        model TEXT NOT NULL,
+        part INTEGER NOT NULL DEFAULT 0,
+        dim INTEGER NOT NULL,
+        normalized INTEGER NOT NULL DEFAULT 1,
+        chunk_hash TEXT NOT NULL,
+        vector BLOB NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (chunk_id, model, part)
       );
 
       CREATE TABLE IF NOT EXISTS annotations (
@@ -775,7 +875,8 @@ export class KnowledgeStore {
 
   async listItems(
     sourceType?: string,
-  limit = 50
+    limit = 50,
+    filters: { owner?: string; tag?: string } = {}
   ): Promise<{ items: (KnowledgeItem & { normalizedUrl?: string })[] }> {
     await this.ensure();
     const boundedLimit = Math.min(Math.max(Math.trunc(limit) || 50, 1), 500);
@@ -785,12 +886,35 @@ export class KnowledgeStore {
       query += " AND i.source_type = ?";
       params.push(sourceType);
     }
+    if (filters.owner) {
+      query += " AND i.owner = ?";
+      params.push(filters.owner);
+    }
+    if (filters.tag) {
+      query += " AND EXISTS (SELECT 1 FROM json_each(i.tags_json) AS jt WHERE jt.value = ?)";
+      params.push(filters.tag);
+    }
     query += " ORDER BY COALESCE(i.parsed_at, i.updated_at) DESC LIMIT ?";
     params.push(String(boundedLimit));
     const rows = this.database!.prepare(query).all(...params) as unknown as ItemRow[];
     return {
       items: rows.map((row) => this.buildKnowledgeItem(row))
     };
+  }
+
+  async listTags(owner?: string): Promise<Array<{ tag: string; count: number }>> {
+    await this.ensure();
+    const sql = owner
+      ? `SELECT jt.value AS tag, COUNT(*) AS count
+         FROM items i, json_each(i.tags_json) AS jt
+         WHERE i.item_type = 'document' AND i.owner = ?
+         GROUP BY jt.value ORDER BY count DESC, tag ASC`
+      : `SELECT jt.value AS tag, COUNT(*) AS count
+         FROM items i, json_each(i.tags_json) AS jt
+         WHERE i.item_type = 'document'
+         GROUP BY jt.value ORDER BY count DESC, tag ASC`;
+    const rows = (owner ? this.database!.prepare(sql).all(owner) : this.database!.prepare(sql).all()) as Array<{ tag: string; count: number }>;
+    return rows.filter((row) => typeof row.tag === "string" && row.tag.length > 0);
   }
 
   async loadItem(itemId: string): Promise<KnowledgeItem | undefined> {
@@ -910,6 +1034,7 @@ export class KnowledgeStore {
     this.database!.exec("BEGIN");
     try {
       this.database!.prepare("DELETE FROM annotations WHERE doc_id = ?").run(row.active_doc_id);
+      this.database!.prepare("DELETE FROM chunk_embeddings WHERE chunk_id IN (SELECT chunk_id FROM chunks WHERE doc_id = ?)").run(row.active_doc_id);
       this.database!.prepare("DELETE FROM chunks WHERE doc_id = ?").run(row.active_doc_id);
       this.database!.prepare("DELETE FROM documents WHERE doc_id = ?").run(row.active_doc_id);
       this.database!.prepare(
@@ -947,6 +1072,7 @@ export class KnowledgeStore {
       this.database!.prepare("DELETE FROM collection_memberships WHERE member_item_id = ? OR collection_item_id = ?").run(row.item_id, row.item_id);
       if (row.active_doc_id) {
         this.database!.prepare("DELETE FROM annotations WHERE doc_id = ?").run(row.active_doc_id);
+        this.database!.prepare("DELETE FROM chunk_embeddings WHERE chunk_id IN (SELECT chunk_id FROM chunks WHERE doc_id = ?)").run(row.active_doc_id);
         this.database!.prepare("DELETE FROM chunks WHERE doc_id = ?").run(row.active_doc_id);
         this.database!.prepare("DELETE FROM documents WHERE doc_id = ?").run(row.active_doc_id);
       }
@@ -1071,12 +1197,14 @@ export class KnowledgeStore {
     rawdoc: RawDoc;
     document: KnowledgeDocument;
     markdown: string;
+    owner?: string;
   }): Promise<ReturnType<typeof pathsFor>> {
     await this.ensure();
     const normalized = normalizeUrlForKnowledge(params.normalizedUrl);
     const hash = urlHash(normalized);
     const itemId = `url:sha256:${hash}`;
     const previous = this.findItemByAlias("normalized_url", normalized);
+    const owner = params.owner ?? previous?.owner ?? "master";
     const captureId = params.rawdoc.rawdoc_id; // keep rawdoc_id for file storage
     const docId = params.document.doc_id;
     const paths = pathsFor(docId, captureId);
@@ -1094,6 +1222,7 @@ export class KnowledgeStore {
       ? previous.active_doc_id : undefined;
     const replacedCaptureId = previous?.active_capture_id && previous.active_capture_id !== captureId
       ? previous.active_capture_id : undefined;
+    let chunksToEmbed: ChunkForEmbedding[] = [];
 
     await Promise.all([
       this.writeText(paths.rawHtmlPath, params.html),
@@ -1113,8 +1242,8 @@ export class KnowledgeStore {
       // items
       const nowIso = now;
       this.database!.prepare(`
-        INSERT INTO items (item_id, item_type, source_type, identity_key, title, creators_json, language, tags_json, state, active_capture_id, active_doc_id, created_at, updated_at, parsed_at)
-        VALUES (?, 'document', ?, ?, ?, ?, ?, ?, 'parsed', ?, ?, ?, ?, ?)
+        INSERT INTO items (item_id, item_type, source_type, identity_key, title, creators_json, language, tags_json, owner, state, active_capture_id, active_doc_id, created_at, updated_at, parsed_at)
+        VALUES (?, 'document', ?, ?, ?, ?, ?, ?, ?, 'parsed', ?, ?, ?, ?, ?)
         ON CONFLICT(item_id) DO UPDATE SET
           source_type = excluded.source_type,
           identity_key = excluded.identity_key,
@@ -1122,6 +1251,7 @@ export class KnowledgeStore {
           creators_json = excluded.creators_json,
           language = excluded.language,
           tags_json = excluded.tags_json,
+          owner = excluded.owner,
           state = 'parsed',
           active_capture_id = excluded.active_capture_id,
           active_doc_id = excluded.active_doc_id,
@@ -1130,6 +1260,7 @@ export class KnowledgeStore {
       `).run(
         itemId, params.rawdoc.source_type, hash, pageTitle, authorsJson,
         params.document.meta.language ?? null, JSON.stringify(params.document.meta.tags ?? []),
+        owner,
         captureId, docId,
         previous?.created_at ?? nowIso, nowIso, nowIso
       );
@@ -1200,10 +1331,13 @@ export class KnowledgeStore {
       );
 
       // chunks
-      this.replaceChunks(params.document, params.rawdoc, itemId, captureId, parserInfo, nowIso);
+      if (this.searchEnabled) {
+        chunksToEmbed = this.replaceChunks(params.document, params.rawdoc, itemId, captureId, parserInfo, nowIso);
+      }
 
       // Cleanup replaced versions
       if (replacedDocId && replacedDocId !== docId) {
+        this.database!.prepare("DELETE FROM chunk_embeddings WHERE chunk_id IN (SELECT chunk_id FROM chunks WHERE doc_id = ?)").run(replacedDocId);
         this.database!.prepare("DELETE FROM chunks WHERE doc_id = ?").run(replacedDocId);
         this.database!.prepare("DELETE FROM documents WHERE doc_id = ?").run(replacedDocId);
       }
@@ -1216,6 +1350,8 @@ export class KnowledgeStore {
       this.database!.exec("ROLLBACK");
       throw error;
     }
+
+    await this.embedAndStore(chunksToEmbed);
 
     if (replacedDocId && replacedDocId !== docId) {
       await this.deleteDerivedArtifacts(replacedDocId);
@@ -1270,6 +1406,7 @@ export class KnowledgeStore {
       ? previous.active_doc_id : undefined;
     const replacedCaptureId = previous?.active_capture_id && previous.active_capture_id !== captureId
       ? previous.active_capture_id : undefined;
+    let chunksToEmbed: ChunkForEmbedding[] = [];
 
     const rawdoc = params.rawdoc ?? {
       rawdoc_id: captureId,
@@ -1350,7 +1487,7 @@ export class KnowledgeStore {
         parserInfo.version, parserInfo.method, parserInfo.profile, contentHash, outlinePathFor(docId), now, now
       );
 
-      this.replaceChunks(params.document, { rawdoc_id: captureId, source_type: params.sourceType } as RawDoc, params.itemId, captureId, parserInfo, now);
+      chunksToEmbed = this.replaceChunks(params.document, { rawdoc_id: captureId, source_type: params.sourceType } as RawDoc, params.itemId, captureId, parserInfo, now);
 
       this.storePackageFingerprint(
         params.itemId,
@@ -1360,6 +1497,7 @@ export class KnowledgeStore {
 
       // Cleanup replaced versions
       if (replacedDocId) {
+        this.database!.prepare("DELETE FROM chunk_embeddings WHERE chunk_id IN (SELECT chunk_id FROM chunks WHERE doc_id = ?)").run(replacedDocId);
         this.database!.prepare("DELETE FROM chunks WHERE doc_id = ?").run(replacedDocId);
         this.database!.prepare("DELETE FROM documents WHERE doc_id = ?").run(replacedDocId);
       }
@@ -1381,6 +1519,8 @@ export class KnowledgeStore {
       this.database!.exec("ROLLBACK");
       throw error;
     }
+
+    await this.embedAndStore(chunksToEmbed);
 
     // Create file_path alias for file imports so they're findable
     this.upsertAlias(params.itemId, "file_path", params.sourceUri, true);
@@ -1440,6 +1580,7 @@ export class KnowledgeStore {
     const previous = this.database!.prepare("SELECT * FROM items WHERE item_id = ?").get(params.itemId) as unknown as ItemRow | undefined;
     const replacedDocId = previous?.active_doc_id && previous.active_doc_id !== docId
       ? previous.active_doc_id : undefined;
+    let chunksToEmbed: ChunkForEmbedding[] = [];
 
     // Write updated derived files only — raw content is already on disk unchanged.
     await Promise.all([
@@ -1498,7 +1639,7 @@ export class KnowledgeStore {
         parserInfo.version, parserInfo.method, parserInfo.profile, contentHash, outlinePathFor(docId), now, now
       );
 
-      this.replaceChunks(params.document, { rawdoc_id: captureId, source_type: params.sourceType } as RawDoc, params.itemId, captureId, parserInfo, now);
+      chunksToEmbed = this.replaceChunks(params.document, { rawdoc_id: captureId, source_type: params.sourceType } as RawDoc, params.itemId, captureId, parserInfo, now);
 
       this.storePackageFingerprint(
         params.itemId,
@@ -1508,6 +1649,7 @@ export class KnowledgeStore {
 
       // Cleanup replaced doc version
       if (replacedDocId) {
+        this.database!.prepare("DELETE FROM chunk_embeddings WHERE chunk_id IN (SELECT chunk_id FROM chunks WHERE doc_id = ?)").run(replacedDocId);
         this.database!.prepare("DELETE FROM chunks WHERE doc_id = ?").run(replacedDocId);
         this.database!.prepare("DELETE FROM documents WHERE doc_id = ?").run(replacedDocId);
       }
@@ -1526,6 +1668,8 @@ export class KnowledgeStore {
       this.database!.exec("ROLLBACK");
       throw error;
     }
+
+    await this.embedAndStore(chunksToEmbed);
 
     // Derive rawContentPath from existing file — raw content is never rewritten on reparse.
     const rawContentExt = contentExtension(params.sourceType);
@@ -2464,11 +2608,13 @@ export class KnowledgeStore {
     await this.ensure();
     const trimmed = query.trim();
     if (!trimmed) return [];
-    const searchResults = this.searchChunks(trimmed, options);
+    if (!this.searchEnabled) return [];
+    const searchResults = await this.searchChunks(trimmed, options);
     const results = await Promise.all(searchResults.map(async (c) => {
       const normalizedUrl = this.resolveSearchNormalizedUrl(c.item_id, c.source_url ?? null);
       return {
         chunkId: c.chunk_id,
+        itemId: c.item_id,
         docId: c.doc_id,
         rawdocId: c.capture_id,
         sectionIds: safeJsonArray(c.section_ids_json ?? "[]"),
@@ -2494,17 +2640,27 @@ export class KnowledgeStore {
     await this.ensure();
     const trimmed = query.trim();
     const maxChars = options.maxChars ?? 6000;
-    if (!trimmed) {
+    if (!this.searchEnabled) {
       return {
-        query: "",
-        retriever: "sqlite_fts",
+        query: trimmed,
+        retriever: "disabled",
         packer: "section_chunk_v1",
         budget: { maxChars, usedChars: 0 },
         contextText: "",
         citations: []
       };
     }
-    const searchResults = this.searchChunks(trimmed, { ...options, limit: options.limit ?? 10 }) as unknown as SearchChunkRow[];
+    if (!trimmed) {
+      return {
+        query: "",
+        retriever: this.retriever,
+        packer: "section_chunk_v1",
+        budget: { maxChars, usedChars: 0 },
+        contextText: "",
+        citations: []
+      };
+    }
+    const searchResults = await this.searchChunks(trimmed, { ...options, limit: options.limit ?? 10 });
     let usedChars = 0;
     const citations: ContextCitation[] = [];
     for (const c of searchResults) {
@@ -2553,7 +2709,7 @@ export class KnowledgeStore {
     )).join("\n\n");
     return {
       query: trimmed,
-      retriever: "sqlite_fts",
+      retriever: this.retriever,
       packer: "section_chunk_v1",
       budget: {
         maxChars,
@@ -2564,17 +2720,145 @@ export class KnowledgeStore {
     };
   }
 
-  private searchChunks(query: string, options: SearchOptions): SearchChunkRow[] {
-    const { ftsQuery, params } = buildFtsQuery(query);
+  private async searchChunks(query: string, options: SearchOptions): Promise<SearchChunkRow[]> {
+    const limit = Math.min(options.limit || 20, 50);
+    if (!this.hybridEnabled) {
+      return this.searchChunksFts(query, options, limit);
+    }
+    const poolSize = Math.min(Math.max(limit * 4, 40), 200);
+    const ftsRows = this.searchChunksFts(query, options, poolSize);
+    let vectorRows: SearchChunkRow[] = [];
+    try {
+      vectorRows = await this.searchChunksVector(query, options, poolSize);
+    } catch (error) {
+      console.warn(`[knowledge-store] hybrid vector search failed, using FTS only: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    return fuseRankedChunks(ftsRows, vectorRows, limit);
+  }
+
+  private searchChunksFts(query: string, options: SearchOptions, limit: number): SearchChunkRow[] {
+    const terms = splitSearchTerms(query);
+    if (terms.length === 0) return [];
+    const ownerFilter = options.owner
+      ? " AND c.item_id IN (SELECT item_id FROM items WHERE owner = ?)"
+      : "";
+    const useLike = terms.some((term) => Array.from(term).length < 3);
+
+    if (useLike) {
+      let sql = "SELECT c.*, 0 AS rank FROM chunks c WHERE 1 = 1";
+      const allParams: unknown[] = [];
+      for (const term of terms) {
+        const pattern = `%${term.replace(/[\\%_]/g, (match) => `\\${match}`)}%`;
+        sql += " AND (c.text LIKE ? ESCAPE '\\' OR c.title LIKE ? ESCAPE '\\' OR COALESCE(c.heading_path, '') LIKE ? ESCAPE '\\')";
+        allParams.push(pattern, pattern, pattern);
+      }
+      if (options.docId) {
+        sql += " AND c.doc_id = ?";
+        allParams.push(options.docId);
+      }
+      sql += ownerFilter;
+      if (options.owner) allParams.push(options.owner);
+      sql += " ORDER BY c.rowid DESC LIMIT ?";
+      allParams.push(limit);
+      return this.database!.prepare(sql).all(...allParams as string[]) as unknown as SearchChunkRow[];
+    }
+
+    const { ftsQuery } = buildFtsQuery(query);
     let sql = "SELECT c.*, rank FROM chunks c JOIN chunks_fts fts ON c.rowid = fts.rowid WHERE chunks_fts MATCH ?";
     const allParams: unknown[] = [ftsQuery];
     if (options.docId) {
       sql += " AND c.doc_id = ?";
       allParams.push(options.docId);
     }
+    sql += ownerFilter;
+    if (options.owner) allParams.push(options.owner);
     sql += " ORDER BY rank LIMIT ?";
-    allParams.push(Math.min(options.limit || 20, 50));
+    allParams.push(limit);
     return this.database!.prepare(sql).all(...allParams as string[]) as unknown as SearchChunkRow[];
+  }
+
+  private async searchChunksVector(query: string, options: SearchOptions, limit: number): Promise<SearchChunkRow[]> {
+    const embedder = this.embedder;
+    if (!embedder) return [];
+    const [queryVector] = await embedder.embed([query]);
+    if (!queryVector) return [];
+    const filters: string[] = [];
+    const params: unknown[] = [embedder.model];
+    if (options.docId) {
+      filters.push("c.doc_id = ?");
+      params.push(options.docId);
+    }
+    if (options.parserMethod) {
+      filters.push("c.parser_method = ?");
+      params.push(options.parserMethod);
+    }
+    if (options.owner) {
+      filters.push("c.item_id IN (SELECT item_id FROM items WHERE owner = ?)");
+      params.push(options.owner);
+    }
+    const sql = `
+      SELECT c.*, e.vector, e.part
+      FROM chunk_embeddings e
+      JOIN chunks c ON c.chunk_id = e.chunk_id
+      WHERE e.model = ?${filters.length > 0 ? ` AND ${filters.join(" AND ")}` : ""}
+    `;
+    const rows = this.database!.prepare(sql).all(...params as string[]) as unknown as Array<SearchChunkRow & { vector: Uint8Array; part: number }>;
+    const bestByChunk = new Map<string, { row: SearchChunkRow & { vector: Uint8Array; part: number }; score: number }>();
+    for (const row of rows) {
+      const score = cosineSimilarity(queryVector, decodeVector(row.vector));
+      const existing = bestByChunk.get(row.chunk_id);
+      if (!existing || score > existing.score) {
+        bestByChunk.set(row.chunk_id, { row, score });
+      }
+    }
+    return [...bestByChunk.values()]
+      .filter((entry) => entry.score >= MIN_VECTOR_SIMILARITY)
+      .sort((left, right) => right.score - left.score)
+      .slice(0, limit)
+      .map(({ row, score }) => {
+        const { vector: _vector, part: _part, ...rest } = row;
+        return { ...rest, score };
+      });
+  }
+
+  async reindexSearch(): Promise<{ documents: number; chunks: number; embeddings: number }> {
+    await this.ensure();
+    if (!this.searchEnabled) {
+      throw new Error("search is disabled (KNOWLEDGE_SEARCH=off)");
+    }
+    const rows = this.database!.prepare(
+      "SELECT doc_id, item_id, capture_id, parser_version, parser_method, parser_profile FROM documents"
+    ).all() as Array<{
+      doc_id: string;
+      item_id: string;
+      capture_id: string;
+      parser_version: string | null;
+      parser_method: string | null;
+      parser_profile: string | null;
+    }>;
+    const loaded: Array<{ row: typeof rows[number]; document: KnowledgeDocument }> = [];
+    for (const row of rows) {
+      const document = await this.loadDocument(row.doc_id);
+      if (document) loaded.push({ row, document });
+    }
+    const now = new Date().toISOString();
+    this.database!.exec("BEGIN");
+    try {
+      for (const { row, document } of loaded) {
+        this.replaceChunks(document, undefined, row.item_id, row.capture_id, {
+          version: row.parser_version ?? "reindex",
+          method: row.parser_method ?? "unknown",
+          profile: row.parser_profile
+        }, now);
+      }
+      this.database!.exec("COMMIT");
+    } catch (error) {
+      this.database!.exec("ROLLBACK");
+      throw error;
+    }
+    const counted = this.database!.prepare("SELECT COUNT(*) AS count FROM chunks").get() as { count: number };
+    const indexed = await this.indexPendingEmbeddings();
+    return { documents: loaded.length, chunks: counted.count, embeddings: indexed.embedded };
   }
 
   private buildTrace(query: string, chunk: SearchChunkRow) {
@@ -2600,18 +2884,152 @@ export class KnowledgeStore {
     };
   }
 
+  // ── embeddings ─────────────────────────────────────────────────────────
+
+  private async embedAndStore(chunks: ChunkForEmbedding[]): Promise<number> {
+    const embedder = this.embedder;
+    if (!embedder || chunks.length === 0) return 0;
+    const inputs = buildChunkEmbeddingInputs(chunks);
+    if (inputs.length === 0) return chunks.length;
+    try {
+      const vectors = await embedder.embed(inputs.map((input) => input.text));
+      if (vectors.length !== inputs.length) {
+        throw new Error(`embedding returned ${vectors.length} vectors for ${inputs.length} parts`);
+      }
+      this.saveChunkEmbeddings(inputs, vectors, embedder.model);
+      return chunks.length;
+    } catch (error) {
+      console.warn(`[knowledge-store] embedding skipped: ${error instanceof Error ? error.message : String(error)}`);
+      return 0;
+    }
+  }
+
+  private saveChunkEmbeddings(inputs: ChunkEmbeddingInput[], vectors: Float32Array[], model: string): void {
+    if (inputs.length !== vectors.length) {
+      throw new Error(`cannot save ${vectors.length} embeddings for ${inputs.length} parts`);
+    }
+    const now = new Date().toISOString();
+    const clear = this.database!.prepare("DELETE FROM chunk_embeddings WHERE chunk_id = ? AND model = ?");
+    const insert = this.database!.prepare(`
+      INSERT INTO chunk_embeddings (chunk_id, model, part, dim, normalized, chunk_hash, vector, created_at, updated_at)
+      VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?)
+      ON CONFLICT(chunk_id, model, part) DO UPDATE SET
+        dim = excluded.dim,
+        normalized = excluded.normalized,
+        chunk_hash = excluded.chunk_hash,
+        vector = excluded.vector,
+        updated_at = excluded.updated_at
+    `);
+    const chunkIds = [...new Set(inputs.map((input) => input.chunkId))];
+    this.database!.exec("BEGIN");
+    try {
+      for (const chunkId of chunkIds) {
+        clear.run(chunkId, model);
+      }
+      for (let index = 0; index < inputs.length; index += 1) {
+        const vector = vectors[index];
+        insert.run(
+          inputs[index].chunkId,
+          model,
+          inputs[index].part,
+          vector.length,
+          inputs[index].contentHash,
+          encodeVector(vector),
+          now,
+          now
+        );
+      }
+      this.database!.exec("COMMIT");
+    } catch (error) {
+      this.database!.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  async indexPendingEmbeddings(options: { force?: boolean } = {}): Promise<{ embedded: number; pending: number }> {
+    await this.ensure();
+    const embedder = this.embedder;
+    if (!embedder) return { embedded: 0, pending: 0 };
+    if (options.force) {
+      this.database!.prepare("DELETE FROM chunk_embeddings WHERE model = ?").run(embedder.model);
+    }
+    const rows = this.database!.prepare(`
+      SELECT c.chunk_id, c.text, c.content_hash
+      FROM chunks c
+      WHERE NOT EXISTS (
+        SELECT 1 FROM chunk_embeddings e
+        WHERE e.chunk_id = c.chunk_id AND e.model = ? AND e.chunk_hash = c.content_hash
+      )
+      ORDER BY c.rowid
+    `).all(embedder.model) as Array<{
+      chunk_id: string;
+      text: string;
+      content_hash: string;
+    }>;
+    const batchSize = 16;
+    let embedded = 0;
+    for (let offset = 0; offset < rows.length; offset += batchSize) {
+      const batch = rows.slice(offset, offset + batchSize);
+      const inputs = buildChunkEmbeddingInputs(batch.map((row) => ({
+        chunkId: row.chunk_id,
+        contentHash: row.content_hash,
+        text: row.text
+      })));
+      const vectors = await embedder.embed(inputs.map((input) => input.text));
+      this.saveChunkEmbeddings(inputs, vectors, embedder.model);
+      embedded += batch.length;
+    }
+    const pending = this.database!.prepare(`
+      SELECT COUNT(*) AS count
+      FROM chunks c
+      WHERE NOT EXISTS (
+        SELECT 1 FROM chunk_embeddings e
+        WHERE e.chunk_id = c.chunk_id AND e.model = ? AND e.chunk_hash = c.content_hash
+      )
+    `).get(embedder.model) as { count: number };
+    return { embedded, pending: pending.count };
+  }
+
+  async embeddingStats(): Promise<{ model?: string; chunks: number; vectors: number; pending: number }> {
+    await this.ensure();
+    const chunks = this.database!.prepare("SELECT COUNT(*) AS count FROM chunks").get() as { count: number };
+    const embedder = this.embedder;
+    if (!embedder) {
+      return { chunks: chunks.count, vectors: 0, pending: chunks.count };
+    }
+    const vectors = this.database!.prepare(
+      "SELECT COUNT(*) AS count FROM chunk_embeddings WHERE model = ?"
+    ).get(embedder.model) as { count: number };
+    const pending = this.database!.prepare(`
+      SELECT COUNT(*) AS count
+      FROM chunks c
+      WHERE NOT EXISTS (
+        SELECT 1 FROM chunk_embeddings e
+        WHERE e.chunk_id = c.chunk_id AND e.model = ? AND e.chunk_hash = c.content_hash
+      )
+    `).get(embedder.model) as { count: number };
+    return {
+      model: embedder.model,
+      chunks: chunks.count,
+      vectors: vectors.count,
+      pending: pending.count
+    };
+  }
+
   // ── chunks ─────────────────────────────────────────────────────────────
 
   private replaceChunks(
     document: KnowledgeDocument,
-    rawdoc: RawDoc,
+    rawdoc: RawDoc | undefined,
     itemId: string,
     captureId: string,
     parserInfo: { version: string; method: string; profile: string | null },
     now: string
-  ): void {
+  ): ChunkForEmbedding[] {
+    this.database!.prepare("DELETE FROM chunk_embeddings WHERE chunk_id IN (SELECT chunk_id FROM chunks WHERE doc_id = ?)").run(document.doc_id);
     this.database!.prepare("DELETE FROM chunks WHERE doc_id = ?").run(document.doc_id);
     const chunks = buildChunks(document);
+    const pendingEmbeddings: ChunkForEmbedding[] = [];
     const insertChunk = this.database!.prepare(`
       INSERT INTO chunks (chunk_id, doc_id, item_id, capture_id, chunk_index, title, page_title, source_url, heading_path, section_ids_json, text, token_estimate, char_count, parser_version, parser_method, parser_profile, content_hash, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -2626,8 +3044,14 @@ export class KnowledgeStore {
         parserInfo.version, parserInfo.method, parserInfo.profile ?? null,
         c.contentHash, now, now
       );
+      pendingEmbeddings.push({
+        chunkId: c.chunkId,
+        contentHash: c.contentHash,
+        text: c.text
+      });
     }
     this.database!.prepare("INSERT INTO chunks_fts(rowid, title, heading_path, text) SELECT rowid, title, heading_path, text FROM chunks WHERE doc_id = ?").run(document.doc_id);
+    return pendingEmbeddings;
   }
 
   // ── annotations ────────────────────────────────────────────────────────
@@ -2852,6 +3276,7 @@ export class KnowledgeStore {
         DELETE FROM collection_memberships;
         DELETE FROM batch_items;
         DELETE FROM batch_jobs;
+        DELETE FROM chunk_embeddings;
         DELETE FROM chunks;
         DELETE FROM documents;
         DELETE FROM rawdocs;
@@ -2881,6 +3306,7 @@ export class KnowledgeStore {
     try {
       this.database!.exec(`
         DELETE FROM annotations;
+        DELETE FROM chunk_embeddings;
         DELETE FROM chunks;
         DELETE FROM documents;
         UPDATE items SET active_doc_id = NULL, state = 'captured', parsed_at = NULL, updated_at = datetime('now');
@@ -3020,6 +3446,7 @@ function toKnowledgeItem(
     creators: safeJsonArray(row.creators_json),
     language: row.language ?? undefined,
     tags: safeJsonArray(row.tags_json),
+    owner: row.owner ?? undefined,
     state: row.state === "empty" ? "captured" : row.state === "stale" || row.state === "archived" ? "parsed" : row.state,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -3105,6 +3532,104 @@ function buildFtsQuery(input: string): { ftsQuery: string; params: unknown[] } {
   const tokens = trimmed.split(/\s+/).filter(Boolean).map((t) => `"${t}"`);
   if (tokens.length === 0) return { ftsQuery: '""', params: [] };
   return { ftsQuery: tokens.join(" OR "), params: [] };
+}
+
+function splitSearchTerms(input: string): string[] {
+  return input
+    .trim()
+    .split(/\s+/)
+    .map((term) => term.replace(/^"+|"+$/g, ""))
+    .filter((term) => term.length > 0);
+}
+
+const EMBEDDING_PART_CHARS = 420;
+
+function buildChunkEmbeddingInputs(chunks: ChunkForEmbedding[]): ChunkEmbeddingInput[] {
+  return chunks.flatMap((chunk) => buildEmbeddingParts(chunk.text).map((text, part) => ({
+    chunkId: chunk.chunkId,
+    part,
+    contentHash: chunk.contentHash,
+    text
+  })));
+}
+
+function buildEmbeddingParts(text: string): string[] {
+  const lines = text.split("\n");
+  const header: string[] = [];
+  let cursor = 0;
+  while (cursor < lines.length && /^(Title|Source|Section):/.test(lines[cursor])) {
+    header.push(lines[cursor]);
+    cursor += 1;
+  }
+  const prefix = header.join("\n");
+  const body = lines.slice(cursor).join("\n").trim();
+  if (!body) return prefix ? [prefix] : [];
+  if (body.length <= EMBEDDING_PART_CHARS) {
+    return [[prefix, body].filter(Boolean).join("\n")];
+  }
+  const segments = body.split(/(?<=[。！？!?；;\n])/);
+  const parts: string[] = [];
+  let current = "";
+  for (const segment of segments) {
+    if (segment.length > EMBEDDING_PART_CHARS) {
+      if (current) {
+        parts.push(current);
+        current = "";
+      }
+      for (let index = 0; index < segment.length; index += EMBEDDING_PART_CHARS) {
+        parts.push(segment.slice(index, index + EMBEDDING_PART_CHARS));
+      }
+      continue;
+    }
+    if (current && current.length + segment.length > EMBEDDING_PART_CHARS) {
+      parts.push(current);
+      current = "";
+    }
+    current += segment;
+  }
+  if (current) parts.push(current);
+  return parts
+    .map((part) => [prefix, part].filter(Boolean).join("\n"))
+    .filter((part) => part.trim().length > 0);
+}
+
+const RRF_K = 60;
+const MIN_VECTOR_SIMILARITY = 0.2;
+
+function fuseRankedChunks(
+  ftsRows: SearchChunkRow[],
+  vectorRows: SearchChunkRow[],
+  limit: number
+): SearchChunkRow[] {
+  const entries = new Map<string, { row: SearchChunkRow; ftsRank?: number; vectorRank?: number }>();
+  ftsRows.forEach((row, index) => {
+    entries.set(row.chunk_id, { row, ftsRank: index });
+  });
+  vectorRows.forEach((row, index) => {
+    const existing = entries.get(row.chunk_id);
+    if (existing) {
+      existing.vectorRank = index;
+    } else {
+      entries.set(row.chunk_id, { row, vectorRank: index });
+    }
+  });
+  return [...entries.values()]
+    .map(({ row, ftsRank, vectorRank }) => ({
+      ...row,
+      score: (ftsRank != null ? 1 / (RRF_K + ftsRank + 1) : 0)
+        + (vectorRank != null ? 1 / (RRF_K + vectorRank + 1) : 0)
+    }))
+    .sort((left, right) => (right.score ?? 0) - (left.score ?? 0))
+    .slice(0, limit);
+}
+
+function encodeVector(vector: Float32Array): Uint8Array {
+  return new Uint8Array(vector.buffer, vector.byteOffset, vector.byteLength);
+}
+
+function decodeVector(blob: Uint8Array): Float32Array {
+  const copy = Uint8Array.from(blob);
+  return new Float32Array(copy.buffer, 0, Math.floor(copy.byteLength / 4));
 }
 
 function extractQueryTerms(input: string): string[] {

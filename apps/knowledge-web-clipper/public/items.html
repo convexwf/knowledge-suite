@@ -58,8 +58,16 @@
               <p class="panel-description">Collections and standalone documents share one reading list with lightweight filters.</p>
             </div>
           </div>
+          <form id="search-form" class="search-bar" role="search">
+            <input id="search-input" type="search" placeholder="Search saved knowledge..." autocomplete="off" aria-label="Search saved knowledge" />
+            <button type="submit">Search</button>
+            <button id="clear-search" type="button" hidden>Clear</button>
+          </form>
+          <div id="search-status" class="search-status" role="status" hidden></div>
           <div class="filter-toolbar">
             <div id="source-filter" class="filter-chip-group" aria-label="Source filter"></div>
+            <div id="owner-filter" class="filter-chip-group" aria-label="Owner filter"></div>
+            <div id="tag-filter" class="filter-chip-group" aria-label="Tag filter"></div>
           </div>
           <div id="batch-bar" class="batch-bar" hidden>
             <label class="batch-select-all">

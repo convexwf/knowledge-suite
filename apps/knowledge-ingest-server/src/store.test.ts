@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { KnowledgeDocument, RawDoc } from "@uknowledge/knowledge-schema";
+import { normalizeVector, type KnowledgeEmbedder } from "./embeddings/index.js";
 import { KnowledgeStore } from "./store.js";
 
 describe("KnowledgeStore", () => {
@@ -137,7 +138,7 @@ describe("KnowledgeStore", () => {
       const columns = migratedDatabase.prepare("PRAGMA table_info(items)").all() as Array<{ name: string }>;
       expect(columns.map((column) => column.name)).toContain("reading_progress_json");
       expect(columns.map((column) => column.name)).not.toContain("reading_section_id");
-      expect((migratedDatabase.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(15);
+      expect((migratedDatabase.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(17);
     } finally {
       migratedDatabase.close();
     }
@@ -552,6 +553,185 @@ describe("KnowledgeStore", () => {
     store.close();
   });
 
+  it("tracks item owner and filters by owner and tag", async () => {
+    const store = new KnowledgeStore(storeRoot);
+    const mine = fixture("40000000-0000-4000-8000-000000000001", "40000000-0000-4000-8000-00000000000a", "Mine", "Mine", "https://example.com/mine", {
+      tags: ["shared", "master-only"]
+    });
+    const hers = fixture("40000000-0000-4000-8000-000000000002", "40000000-0000-4000-8000-00000000000b", "Hers", "Hers", "https://example.com/hers", {
+      tags: ["shared", "agent-only"]
+    });
+
+    await store.save(mine);
+    await store.save({ ...hers, owner: "xiaojing" });
+
+    const all = await store.listItems();
+    expect(all.items.map((item) => item.owner)).toEqual(expect.arrayContaining(["master", "xiaojing"]));
+
+    expect((await store.listItems(undefined, 50, { owner: "master" })).items.map((item) => item.title)).toEqual(["Mine"]);
+    expect((await store.listItems(undefined, 50, { owner: "xiaojing" })).items.map((item) => item.title)).toEqual(["Hers"]);
+    expect((await store.listItems(undefined, 50, { tag: "shared" })).items).toHaveLength(2);
+    expect((await store.listItems(undefined, 50, { owner: "xiaojing", tag: "shared" })).items).toHaveLength(1);
+
+    expect(await store.listTags("xiaojing")).toEqual([
+      { tag: "agent-only", count: 1 },
+      { tag: "shared", count: 1 }
+    ]);
+
+    // Re-saving without an owner keeps the existing owner.
+    await store.save(hers);
+    expect((await store.listItems(undefined, 50, { owner: "xiaojing" })).items).toHaveLength(1);
+    store.close();
+  });
+
+  it("falls back to LIKE for short terms and uses trigram FTS for longer terms", async () => {
+    const store = new KnowledgeStore(storeRoot);
+    const saved = fixture("41000000-0000-4000-8000-000000000001", "41000000-0000-4000-8000-00000000000a", "Chinese", "Chinese", "https://example.com/chinese", {
+      sections: [
+        { section_id: "heading-1", type: "heading", level: 1, content: "影之刃零" },
+        { section_id: "para-1", type: "paragraph", content: "影之刃零是一款动作游戏，支持中文检索。" }
+      ]
+    });
+    await store.save(saved);
+
+    expect(await store.search("影之", { limit: 5 })).toHaveLength(1);
+    expect(await store.search("影之刃", { limit: 5 })).toHaveLength(1);
+    expect(await store.search("不存在", { limit: 5 })).toHaveLength(0);
+    store.close();
+  });
+
+  it("skips indexing when search is off but still stores items", async () => {
+    const store = new KnowledgeStore(storeRoot, { search: "off" });
+    const saved = fixture("42000000-0000-4000-8000-000000000001", "42000000-0000-4000-8000-00000000000a", "Offline");
+    await store.save(saved);
+
+    expect(tableCount(storeRoot, "items")).toBe(1);
+    expect(tableCount(storeRoot, "chunks")).toBe(0);
+    expect(await store.search("retrieval")).toEqual([]);
+    expect(await store.retrieveContext("retrieval")).toMatchObject({
+      retriever: "disabled",
+      contextText: "",
+      citations: []
+    });
+    store.close();
+  });
+
+  it("reindexes chunks that were written while search was disabled", async () => {
+    const saved = fixture("43000000-0000-4000-8000-000000000001", "43000000-0000-4000-8000-00000000000a", "Reindex");
+    const offline = new KnowledgeStore(storeRoot, { search: "off" });
+    await offline.save(saved);
+    offline.close();
+    expect(tableCount(storeRoot, "chunks")).toBe(0);
+
+    const online = new KnowledgeStore(storeRoot, { search: "fts" });
+    const report = await online.reindexSearch();
+    expect(report.documents).toBe(1);
+    expect(report.chunks).toBeGreaterThan(0);
+    expect(await online.search("retrieval systems", { limit: 5 })).toHaveLength(1);
+    online.close();
+  });
+
+  it("runs hybrid retrieval with RRF and vector-only recall", async () => {
+    const store = new KnowledgeStore(storeRoot, { search: "hybrid", embedder: new FakeEmbedder() });
+    const game = fixture("50000000-0000-4000-8000-000000000001", "50000000-0000-4000-8000-00000000000a", "Game", "Game", "https://example.com/game", {
+      sections: [
+        { section_id: "para-1", type: "paragraph", content: "影之刃零是一款动作游戏，支持中文检索。" }
+      ]
+    });
+    const concept = fixture("50000000-0000-4000-8000-000000000002", "50000000-0000-4000-8000-00000000000b", "Concept", "Concept", "https://example.com/concept", {
+      sections: [
+        { section_id: "para-1", type: "paragraph", content: "这是概念说明。" }
+      ]
+    });
+    await store.save(game);
+    await store.save(concept);
+
+    expect(store.retriever).toBe("hybrid");
+    expect(tableCount(storeRoot, "chunk_embeddings")).toBeGreaterThan(0);
+
+    // "game" is absent from the Chinese text, so only the vector side can recall it.
+    const vectorOnly = await store.search("game", { limit: 5 });
+    expect(vectorOnly).toHaveLength(1);
+    expect(vectorOnly[0].normalizedUrl).toBe("https://example.com/game");
+
+    const both = await store.search("概念", { limit: 5 });
+    expect(both[0].normalizedUrl).toBe("https://example.com/concept");
+
+    const pack = await store.retrieveContext("game", { limit: 2, maxChars: 1000 });
+    expect(pack.retriever).toBe("hybrid");
+    expect(pack.citations.length).toBeGreaterThan(0);
+    store.close();
+  });
+
+  it("backfills embeddings when switching from fts to hybrid", async () => {
+    const saved = fixture("51000000-0000-4000-8000-000000000001", "51000000-0000-4000-8000-00000000000a", "Game", "Game", "https://example.com/game", {
+      sections: [
+        { section_id: "para-1", type: "paragraph", content: "影之刃零是一款动作游戏。" }
+      ]
+    });
+    const plain = new KnowledgeStore(storeRoot, { search: "fts" });
+    await plain.save(saved);
+    plain.close();
+    expect(tableCount(storeRoot, "chunk_embeddings")).toBe(0);
+
+    const hybrid = new KnowledgeStore(storeRoot, { search: "hybrid", embedder: new FakeEmbedder() });
+    const report = await hybrid.reindexSearch();
+    expect(report.embeddings).toBeGreaterThan(0);
+    expect(tableCount(storeRoot, "chunk_embeddings")).toBeGreaterThan(0);
+    expect(await hybrid.search("game", { limit: 5 })).toHaveLength(1);
+    hybrid.close();
+  });
+
+  it("deletes embedding rows when documents are replaced, removed, or cleared", async () => {
+    const store = new KnowledgeStore(storeRoot, { search: "hybrid", embedder: new FakeEmbedder() });
+    const first = fixture(
+      "52000000-0000-4000-8000-000000000001",
+      "52000000-0000-4000-8000-00000000000a",
+      "Game"
+    );
+    await store.save(first);
+    expect(tableCount(storeRoot, "chunk_embeddings")).toBeGreaterThan(0);
+    expect(orphanEmbeddingCount(storeRoot)).toBe(0);
+
+    const replacement = fixture(
+      "52000000-0000-4000-8000-000000000002",
+      "52000000-0000-4000-8000-00000000000b",
+      "Game updated"
+    );
+    await store.save(replacement);
+    expect(tableCount(storeRoot, "documents")).toBe(1);
+    expect(orphanEmbeddingCount(storeRoot)).toBe(0);
+
+    await store.deleteByUrl(first.normalizedUrl, "remove");
+    expect(tableCount(storeRoot, "chunks")).toBe(0);
+    expect(tableCount(storeRoot, "chunk_embeddings")).toBe(0);
+
+    const reparsed = fixture(
+      "52000000-0000-4000-8000-000000000003",
+      "52000000-0000-4000-8000-00000000000c",
+      "Game reparsed"
+    );
+    await store.save(reparsed);
+    expect(tableCount(storeRoot, "chunk_embeddings")).toBeGreaterThan(0);
+
+    await store.clearParsedResults();
+    expect(tableCount(storeRoot, "chunks")).toBe(0);
+    expect(tableCount(storeRoot, "chunk_embeddings")).toBe(0);
+
+    const final = fixture(
+      "52000000-0000-4000-8000-000000000004",
+      "52000000-0000-4000-8000-00000000000d",
+      "Game final"
+    );
+    await store.save(final);
+    expect(tableCount(storeRoot, "chunk_embeddings")).toBeGreaterThan(0);
+
+    await store.clearAll();
+    expect(tableCount(storeRoot, "chunks")).toBe(0);
+    expect(tableCount(storeRoot, "chunk_embeddings")).toBe(0);
+    store.close();
+  });
+
 });
 
 function expectStoreSchema(root: string): void {
@@ -567,6 +747,7 @@ function expectStoreSchema(root: string): void {
       "annotations",
       "batch_items",
       "batch_jobs",
+      "chunk_embeddings",
       "chunks",
       "chunks_fts",
       "collection_memberships",
@@ -597,6 +778,7 @@ function expectStoreSchema(root: string): void {
       "creators_json",
       "language",
       "tags_json",
+      "owner",
       "state",
       "member_visibility_mode",
       "active_capture_id",
@@ -745,7 +927,7 @@ function expectStoreSchema(root: string): void {
     ]));
 
     const userVersion = database.prepare("PRAGMA user_version").get() as { user_version: number };
-    expect(userVersion.user_version).toBe(15);
+    expect(userVersion.user_version).toBe(17);
 
     for (const [table, columns] of Object.entries(columnsByTable)) {
       expect(columns.filter((column) => column.endsWith("_path") && column !== "heading_path"))
@@ -765,7 +947,28 @@ function tableCount(root: string, table: string): number {
   }
 }
 
-function fixture(docId: string, rawdocId: string, title: string, pageTitle = title, normalizedUrl = "https://example.com/article"): {
+function orphanEmbeddingCount(root: string): number {
+  const database = new DatabaseSync(join(root, "index.sqlite3"));
+  try {
+    const row = database.prepare(`
+      SELECT COUNT(*) AS count
+      FROM chunk_embeddings e
+      WHERE NOT EXISTS (SELECT 1 FROM chunks c WHERE c.chunk_id = e.chunk_id)
+    `).get() as { count: number };
+    return row.count;
+  } finally {
+    database.close();
+  }
+}
+
+function fixture(
+  docId: string,
+  rawdocId: string,
+  title: string,
+  pageTitle = title,
+  normalizedUrl = "https://example.com/article",
+  options: { tags?: string[]; sections?: KnowledgeDocument["sections"] } = {}
+): {
   normalizedUrl: string;
   html: string;
   rawdoc: RawDoc;
@@ -801,6 +1004,7 @@ function fixture(docId: string, rawdocId: string, title: string, pageTitle = tit
       meta: {
         title,
         page_title: pageTitle,
+        tags: options.tags ?? [],
         source: {
           type: "html",
           url: normalizedUrl,
@@ -810,7 +1014,7 @@ function fixture(docId: string, rawdocId: string, title: string, pageTitle = tit
         ingested_at: "2026-05-12T00:00:00.000Z",
         parser_version: "knowledge-ingest-server/0.1:defuddle"
       },
-      sections: [
+      sections: options.sections ?? [
         { section_id: "heading-1", type: "heading", level: 1, content: "Intro" },
         {
           section_id: "para-1",
@@ -826,4 +1030,20 @@ function fixture(docId: string, rawdocId: string, title: string, pageTitle = tit
     },
     markdown: `# ${title}\n\n${title} explains how retrieval systems use chunking and citations to return grounded answers.\n`
   };
+}
+
+class FakeEmbedder implements KnowledgeEmbedder {
+  readonly provider = "fake";
+  readonly model = "fake-embed-v1";
+  readonly dim = 4;
+
+  async embed(texts: string[]): Promise<Float32Array[]> {
+    return texts.map((text) => {
+      const values = [0, 0, 0, 0.01];
+      if (/retrieval|检索/i.test(text)) values[0] = 1;
+      if (/concept|概念/i.test(text)) values[1] = 1;
+      if (/game|游戏/i.test(text)) values[2] = 1;
+      return normalizeVector(values);
+    });
+  }
 }

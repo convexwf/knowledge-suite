@@ -12,6 +12,7 @@ export interface SearchParams {
   url?: string;
   parserMethod?: string;
   trace?: boolean;
+  owner?: string;
 }
 
 export interface ContextParams {
@@ -22,6 +23,7 @@ export interface ContextParams {
   url?: string;
   parserMethod?: string;
   trace?: boolean;
+  owner?: string;
 }
 
 interface IngestSearchResponse {
@@ -50,6 +52,7 @@ export async function searchKnowledge(
   if (params.parserMethod)
     url.searchParams.set("parserMethod", params.parserMethod);
   if (params.trace) url.searchParams.set("trace", "true");
+  if (params.owner) url.searchParams.set("owner", params.owner);
 
   const res = await fetch(url, {
     headers: { Authorization: `Bearer ${TOKEN}` },
@@ -77,6 +80,7 @@ export async function getKnowledgeContext(
   if (params.parserMethod)
     url.searchParams.set("parserMethod", params.parserMethod);
   if (params.trace) url.searchParams.set("trace", "true");
+  if (params.owner) url.searchParams.set("owner", params.owner);
 
   const res = await fetch(url, {
     headers: { Authorization: `Bearer ${TOKEN}` },

@@ -198,6 +198,7 @@ export interface KnowledgeItem {
   creators: string[];
   language?: string;
   tags: string[];
+  owner?: string;
   state: "captured" | "parsed";
   createdAt: string;
   updatedAt: string;
@@ -215,6 +216,32 @@ export interface ReadingProgressSnapshot {
 
 export interface KnowledgeItemListResult {
   items: KnowledgeItem[];
+}
+
+export interface KnowledgeSearchResultItem {
+  chunkId: string;
+  itemId?: string;
+  docId: string;
+  rawdocId: string;
+  sectionIds: string[];
+  title: string;
+  pageTitle?: string;
+  contentTitle?: string;
+  displayTitle?: string;
+  sourceUrl?: string;
+  normalizedUrl?: string;
+  headingPath?: string;
+  snippet: string;
+  score: number;
+  parserVersion?: string;
+  parserMethod?: string;
+  parserProfile?: string;
+}
+
+export interface KnowledgeSearchResponse {
+  query: string;
+  retriever: "sqlite_fts" | "hybrid" | "disabled";
+  results: KnowledgeSearchResultItem[];
 }
 
 export interface KnowledgeItemDetailResult {

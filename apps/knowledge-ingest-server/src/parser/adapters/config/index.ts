@@ -10,6 +10,7 @@ import { mediumAdapter } from "./medium.js";
 import { meituanTechAdapter } from "./meituan-tech.js";
 import { redditAdapter } from "./reddit.js";
 import { smashingMagazineAdapter } from "./smashing-magazine.js";
+import { xiaoheiheAdapter } from "./xiaoheihe.js";
 import type { SiteAdapter } from "../types.js";
 
 export const configAdapters: SiteAdapter[] = [
@@ -24,5 +25,6 @@ export const configAdapters: SiteAdapter[] = [
   mediumAdapter,
   meituanTechAdapter,
   redditAdapter,
-  smashingMagazineAdapter
+  smashingMagazineAdapter,
+  xiaoheiheAdapter
 ];

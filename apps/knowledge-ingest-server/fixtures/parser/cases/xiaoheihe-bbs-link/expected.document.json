@@ -1,0 +1,80 @@
+{
+  "doc_id": "fixture-doc-xiaoheihe-bbs-link",
+  "meta": {
+    "title": "《奥日》总监批《时之笛》重制版：画面好不等于好玩！不配10分！",
+    "page_title": "《奥日》总监批《时之笛》重制版：画面好不等于好玩！不配10分！",
+    "source": {
+      "type": "html",
+      "url": "https://www.xiaoheihe.cn/app/bbs/link/196383163",
+      "rawdoc_id": "fixture-rawdoc-xiaoheihe-bbs-link"
+    },
+    "authors": [
+      "无心队长Captain"
+    ],
+    "published_at": null,
+    "ingested_at": "2026-11-08T00:00:00.000Z",
+    "language": "zh-CN",
+    "tags": [],
+    "parser_version": "knowledge-ingest-server/0.2:site_adapter"
+  },
+  "sections": [
+    {
+      "type": "paragraph",
+      "content": "《奥日与黑暗森林》总监托马斯·马勒对任天堂新推出的《时之笛》重制版提出严厉批评。认为它相比《塞尔达传说》其他作品，显得更空洞、更混乱。",
+      "section_id": "xiaoheihe-bbs-link-section-1"
+    },
+    {
+      "type": "figure",
+      "content": "",
+      "assets": [
+        {
+          "asset_id": "xiaoheihe-bbs-link-asset-1",
+          "source_url": "https://imgheybox.max-c.com/web/bbs/2026/11/08/bf1f8e80d243808ea763fa9f224f92a8/thumb.png",
+          "caption": null
+        }
+      ],
+      "section_id": "xiaoheihe-bbs-link-section-2"
+    },
+    {
+      "type": "paragraph",
+      "content": "他认为此次的《时之笛》说到底本质上还是一次画面升级，但游戏这东西一向如此，画面好不等于就好玩。",
+      "section_id": "xiaoheihe-bbs-link-section-3"
+    },
+    {
+      "type": "paragraph",
+      "content": "并批评了任天堂的设计师没有真正施展他们的创意，任何一个合格的设计师，只要真正理解塞尔达公式为何有效，并持续追问每一个当下的游玩体验是否真的有趣，就能从这款作品中挖掘出更多乐趣。",
+      "section_id": "xiaoheihe-bbs-link-section-4"
+    },
+    {
+      "type": "paragraph",
+      "content": "他表示放到今天来看，《时之笛》充其量是一款 7.5 到 8 分的佳作，其设计受限于当年的技术条件，确实没能达到前作的高度。如今这些技术限制早已不复存在，为什么拿到的还是那些同样受限的旧设计。",
+      "section_id": "xiaoheihe-bbs-link-section-5"
+    },
+    {
+      "type": "paragraph",
+      "content": "最后，马勒还炮轰了游戏媒体，称他们表现得像一群画面疯狂者，《时之笛》重制版画面再好，也不等于玩法质量高。",
+      "section_id": "xiaoheihe-bbs-link-section-6"
+    },
+    {
+      "type": "paragraph",
+      "content": "马勒认为，给《时之笛》的设计打 10 分满分这件事，恰恰说明很多游戏记者根本不懂什么才是好的游戏设计。",
+      "section_id": "xiaoheihe-bbs-link-section-7"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "评论",
+      "section_id": "xiaoheihe-bbs-link-section-8"
+    },
+    {
+      "type": "blockquote",
+      "content": "**用户246813579** · Lv.21 · 2小时前 · 福建 · 351 赞\n\n这高分我是不信没情怀分的\n\n> **常态** · 2小时前 · 广西\n> 本来就不能抛弃情怀打分，打分不可能绝对主观",
+      "section_id": "xiaoheihe-bbs-link-section-9"
+    },
+    {
+      "type": "blockquote",
+      "content": "**无一和菠萝头** · Lv.20 · 2小时前 · 辽宁\n\n恶意不息正式版都没搞好，还有脸出来炮轰别人",
+      "section_id": "xiaoheihe-bbs-link-section-10"
+    }
+  ]
+}

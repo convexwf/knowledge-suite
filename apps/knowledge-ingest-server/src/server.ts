@@ -1,5 +1,7 @@
 import cors from "@fastify/cors";
+import websocket from "@fastify/websocket";
 import fastify from "fastify";
+import { z } from "zod";
 import {
   AIAnnotationGenerateRequestSchema,
   AnnotationSchema,
@@ -10,8 +12,10 @@ import {
   GitHubMarkdownRefreshResponse,
   GitHubMarkdownScanResponse,
   KnowledgeCapturePreviewRequestSchema,
+  KnowledgeCapturePreviewRequest,
   KnowledgeCaptureReparseRequestSchema,
   KnowledgeCaptureSaveRequestSchema,
+  KnowledgeCaptureSaveRequest,
   KnowledgeDocument,
   KnowledgeItem,
   MarkdownImportResponse,
@@ -25,6 +29,8 @@ import {
   urlHash
 } from "@uknowledge/knowledge-schema";
 import { createAIProvider } from "./ai-annotation/provider.js";
+import { CaptureAgentHub } from "./capture-agent.js";
+import { createEmbedder } from "./embeddings/index.js";
 import { taskManager } from "./ai-annotation/task.js";
 import { loadConfig, ServerConfig } from "./config.js";
 import { parseEpub, type CalibreMetadata, type PandocRunner, type TocEntry } from "./epub.js";
@@ -87,7 +93,24 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
     logger: true,
     bodyLimit: Math.max(config.maxHtmlBytes, maxImportBytes)
   });
-  const store = new KnowledgeStore(config.storeRoot);
+  app.register(websocket);
+  const captureHub = new CaptureAgentHub();
+  const embedder = createEmbedder(config.embeddings);
+  const requestedSearch = config.search ?? "fts";
+  const effectiveSearch = requestedSearch === "hybrid" && !embedder ? "fts" : requestedSearch;
+  const store = new KnowledgeStore(config.storeRoot, { search: effectiveSearch, embedder });
+  if (requestedSearch === "hybrid" && !embedder) {
+    app.log.warn("KNOWLEDGE_SEARCH=hybrid requires KNOWLEDGE_EMBEDDINGS=ollama; falling back to fts");
+  }
+  if (effectiveSearch === "hybrid") {
+    void store.indexPendingEmbeddings()
+      .then((result) => {
+        if (result.embedded > 0) {
+          app.log.info({ ...result, model: embedder?.model }, "embeddings indexed on startup");
+        }
+      })
+      .catch((error) => app.log.warn({ err: error }, "startup embedding index failed"));
+  }
   const activeBatchRuns = new Set<Promise<void>>();
   const githubFetchCache = new Map<string, {
     expiresAt: number;
@@ -178,7 +201,8 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
   });
 
   app.addHook("preHandler", async (request, reply) => {
-    if (request.url === "/api/health") {
+    const path = request.url.split("?")[0];
+    if (path === "/api/health" || path === "/agent") {
       return;
     }
 
@@ -201,7 +225,11 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
       fetchTimeoutMs: config.fetchTimeoutMs,
       maxHtmlBytes: config.maxHtmlBytes,
       maxImportBytes
-    }
+    },
+    search: effectiveSearch,
+    embeddings: embedder
+      ? { provider: embedder.provider, model: embedder.model, dim: embedder.dim }
+      : { provider: "none" }
   }));
 
   // ── Ingest routes ──────────────────────────────────────────────────────
@@ -247,16 +275,14 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
     return store.deleteByUrl(query.url, query.mode === "purge" ? "purge" : "remove");
   });
 
-  app.post("/api/ingest/preview", { bodyLimit: config.maxHtmlBytes }, async (request) => {
-    const input = KnowledgeCapturePreviewRequestSchema.parse(request.body);
+  async function runPreview(input: KnowledgeCapturePreviewRequest) {
     const resolved = await resolveKnowledgeCaptureInput(input, effectiveConfig);
     const parsed = await parsePage(resolved);
     const status = itemStatus(await store.status(resolved.normalizedUrl), resolved.normalizedUrl);
     return { ...previewPayload(parsed), status };
-  });
+  }
 
-  app.post("/api/ingest/save", { bodyLimit: config.maxHtmlBytes }, async (request) => {
-    const input = KnowledgeCaptureSaveRequestSchema.parse(request.body);
+  async function runSave(input: KnowledgeCaptureSaveRequest) {
     const resolved = await resolveKnowledgeCaptureInput(input, effectiveConfig);
     const parsed = await parsePage(resolved, { selectedCandidateId: input.candidateId });
     const markdown = documentToMarkdown(parsed.document);
@@ -265,10 +291,103 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
       html: resolved.html,
       rawdoc: parsed.rawdoc,
       document: parsed.document,
-      markdown
+      markdown,
+      owner: input.owner
     });
     const status = itemStatus(await store.status(resolved.normalizedUrl), resolved.normalizedUrl);
     return { ...previewPayload(parsed), status, saved: true, paths };
+  }
+
+  app.post("/api/ingest/preview", { bodyLimit: config.maxHtmlBytes }, async (request) => {
+    return runPreview(KnowledgeCapturePreviewRequestSchema.parse(request.body));
+  });
+
+  app.post("/api/ingest/save", { bodyLimit: config.maxHtmlBytes }, async (request) => {
+    return runSave(KnowledgeCaptureSaveRequestSchema.parse(request.body));
+  });
+
+  const CaptureRequestSchema = z.object({
+    url: z.string().url(),
+    mode: z.enum(["document", "links"]).optional(),
+    waitMs: z.number().int().min(500).max(60000).optional(),
+    save: z.boolean().optional(),
+    candidateId: z.string().optional(),
+    overwrite: z.boolean().optional(),
+    owner: z.string().min(1).max(64).optional(),
+    keepOpen: z.boolean().optional(),
+    scope: z.object({
+      sameOrigin: z.boolean().optional(),
+      pathPrefix: z.string().optional(),
+      maxItems: z.number().int().positive().max(200).optional()
+    }).optional()
+  });
+
+  app.get("/api/capture/status", async () => ({
+    agentConnected: captureHub.connected
+  }));
+
+  app.post("/api/capture", async (request, reply) => {
+    const body = CaptureRequestSchema.parse(request.body);
+    if (!captureHub.connected) {
+      return reply.code(503).send({
+        error: "agent_unavailable",
+        message: "capture agent is not connected; load the Knowledge Capture Relay extension and keep Chrome running"
+      });
+    }
+
+    const startedAt = Date.now();
+    if (body.mode === "links") {
+      const found = await captureHub.discover(body.url, { waitMs: body.waitMs });
+      if (found.blocked || !found.links) {
+        return reply.code(422).send({
+          error: "capture_blocked",
+          blockReasons: found.blockReasons ?? ["no-links"],
+          textSample: found.textSample
+        });
+      }
+      const discovered = await discoverItems(found.links.pageUrl || body.url, found.links.candidates, body.scope);
+      return {
+        ...discovered,
+        title: found.links.title,
+        capture: { agent: "extension", waitedMs: Date.now() - startedAt }
+      };
+    }
+
+    const captured = await captureHub.capture(body.url, { waitMs: body.waitMs });
+    if (captured.blocked || !captured.snapshot) {
+      return reply.code(422).send({
+        error: "capture_blocked",
+        blockReasons: captured.blockReasons ?? ["no-snapshot"],
+        textSample: captured.textSample
+      });
+    }
+
+    const snapshot = captured.snapshot;
+    const input = { inputMode: "browser_html" as const, snapshot };
+    const result = body.save
+      ? await runSave({ ...input, candidateId: body.candidateId, overwrite: body.overwrite, owner: body.owner })
+      : await runPreview(input);
+
+    return {
+      ...result,
+      capture: {
+        agent: "extension",
+        waitedMs: Date.now() - startedAt,
+        domLength: snapshot.diagnostics?.htmlLength ?? snapshot.html.length,
+        textLength: snapshot.diagnostics?.textLength ?? snapshot.text?.length ?? 0
+      }
+    };
+  });
+
+  app.register(async (scope) => {
+    scope.get("/agent", { websocket: true }, (socket, request) => {
+      const requestedToken = new URL(request.url, "http://127.0.0.1").searchParams.get("token");
+      if (requestedToken !== config.token) {
+        socket.close(1008, "unauthorized");
+        return;
+      }
+      captureHub.attach(socket);
+    });
   });
 
   app.post("/api/ingest/reparse", async (request) => {
@@ -291,8 +410,16 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
   });
 
   app.get("/api/items", async (request) => {
-    const query = request.query as { sourceType?: string; limit?: string };
-    return store.listItems(query.sourceType, query.limit ? Number(query.limit) : undefined);
+    const query = request.query as { sourceType?: string; limit?: string; owner?: string; tag?: string };
+    return store.listItems(query.sourceType, query.limit ? Number(query.limit) : undefined, {
+      owner: query.owner,
+      tag: query.tag
+    });
+  });
+
+  app.get("/api/tags", async (request) => {
+    const query = request.query as { owner?: string };
+    return { tags: await store.listTags(query.owner) };
   });
 
   app.get("/api/items/:itemId", async (request) => {
@@ -738,20 +865,30 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
       url?: string;
       parserMethod?: string;
       trace?: string;
+      owner?: string;
     };
     if (!query.q?.trim()) {
       throw new Error("q is required");
     }
 
+    if (effectiveSearch === "off") {
+      return {
+        query: query.q,
+        retriever: "disabled" as const,
+        results: []
+      };
+    }
+
     return {
       query: query.q,
-      retriever: "sqlite_fts" as const,
+      retriever: store.retriever,
       results: await store.search(query.q, {
         limit: query.limit ? Number(query.limit) : undefined,
         docId: query.docId,
         url: query.url,
         parserMethod: query.parserMethod,
-        trace: query.trace === "true" || query.trace === "1"
+        trace: query.trace === "true" || query.trace === "1",
+        owner: query.owner
       })
     };
   });
@@ -765,6 +902,7 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
       url?: string;
       parserMethod?: string;
       trace?: string;
+      owner?: string;
     };
     if (!query.q?.trim()) {
       throw new Error("q is required");
@@ -776,11 +914,21 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
       docId: query.docId,
       url: query.url,
       parserMethod: query.parserMethod,
-      trace: query.trace === "true" || query.trace === "1"
+      trace: query.trace === "true" || query.trace === "1",
+      owner: query.owner
     });
   });
 
   app.get("/api/store/scan", async () => store.scanMaintenance());
+
+  app.post("/api/search/reindex", async () => store.reindexSearch());
+
+  app.post("/api/embeddings/reindex", async (request) => {
+    const query = request.query as { force?: string };
+    return store.indexPendingEmbeddings({ force: query.force === "true" || query.force === "1" });
+  });
+
+  app.get("/api/embeddings/stats", async () => store.embeddingStats());
 
   app.post("/api/store/clear", async (request) => {
     const parsed = StoreClearRequestSchema.safeParse(request.body);
@@ -1244,16 +1392,19 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
     return store.deleteItem(params.itemId, query.mode === "purge" ? "purge" : "remove");
   });
 
-  app.post("/api/batch/discover", async (request) => {
-    const input = BatchDiscoverRequestSchema.parse(request.body);
-    const scope = input.scope ?? { sameOrigin: true, maxItems: 50 };
-    const pageUrl = new URL(input.pageUrl);
+  async function discoverItems(
+    pageUrlInput: string,
+    candidates: Array<{ url: string; text?: string; titleHint?: string; source?: string; order?: number; depth?: number }>,
+    scopeInput?: { sameOrigin?: boolean; pathPrefix?: string; maxItems?: number }
+  ) {
+    const scope = { sameOrigin: true, maxItems: 50, ...scopeInput };
+    const pageUrl = new URL(pageUrlInput);
     const pathPrefix = scope.pathPrefix ?? defaultPathPrefix(pageUrl.pathname);
     const seen = new Set<string>();
     const items = [];
 
-    for (let index = 0; index < input.candidates.length; index += 1) {
-      const candidate = input.candidates[index];
+    for (let index = 0; index < candidates.length; index += 1) {
+      const candidate = candidates[index];
       const url = new URL(candidate.url);
       if (scope.sameOrigin && url.origin !== pageUrl.origin) {
         continue;
@@ -1285,14 +1436,19 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
     }
 
     return {
-      pageUrl: input.pageUrl,
+      pageUrl: pageUrlInput,
       items,
       stats: {
-        inputCount: input.candidates.length,
+        inputCount: candidates.length,
         dedupedCount: seen.size,
         selectedCount: items.filter((item) => item.selectedByDefault).length
       }
     };
+  }
+
+  app.post("/api/batch/discover", async (request) => {
+    const input = BatchDiscoverRequestSchema.parse(request.body);
+    return discoverItems(input.pageUrl, input.candidates, input.scope);
   });
 
   app.post("/api/batch/jobs", async (request) => {

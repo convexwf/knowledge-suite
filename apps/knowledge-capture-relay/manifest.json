@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "Knowledge Capture Relay",
+  "description": "Captures allow-listed pages on request from the local knowledge-ingest-server.",
+  "version": "0.1.0",
+  "permissions": ["alarms", "scripting", "storage", "tabs"],
+  "host_permissions": [
+    "https://www.xiaoheihe.cn/*",
+    "https://xiaoheihe.cn/*",
+    "http://127.0.0.1/*"
+  ],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "content_scripts": [
+    {
+      "matches": ["https://www.xiaoheihe.cn/*", "https://xiaoheihe.cn/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": { "default_title": "Knowledge Capture Relay" }
+}

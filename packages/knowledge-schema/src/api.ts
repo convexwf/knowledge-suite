@@ -46,7 +46,8 @@ export type KnowledgeCapturePreviewRequest = z.infer<typeof KnowledgeCapturePrev
 
 const KnowledgeCaptureSaveOptionsSchema = z.object({
   candidateId: z.string().optional(),
-  overwrite: z.boolean().optional()
+  overwrite: z.boolean().optional(),
+  owner: z.string().min(1).max(64).optional()
 });
 
 export const KnowledgeCaptureSaveRequestSchema = z.discriminatedUnion("inputMode", [
