@@ -623,7 +623,15 @@ function appendXiaoheiheCommentSections(
         normalizeText(reply.querySelector(".children-item__create-time")?.textContent ?? "") || undefined,
         normalizeText(reply.querySelector(".children-item__ip")?.textContent ?? "").replace(/^·/, "") || undefined
       ].filter(Boolean).join(" · ");
-      return [`> ${replyMeta}`, `> ${replyBody}`];
+      const bodyLines = replyBody.split(/\r?\n/);
+      while (bodyLines.length > 0 && !bodyLines[0].trim()) {
+        bodyLines.shift();
+      }
+      while (bodyLines.length > 0 && !bodyLines[bodyLines.length - 1].trim()) {
+        bodyLines.pop();
+      }
+      const quotedBody = bodyLines.map((line) => (line.trim() ? `> ${line}` : ">"));
+      return [`> ${replyMeta}`, ...quotedBody, ">"];
     });
     if (replies.length > 0) {
       lines.push("", ...replies);

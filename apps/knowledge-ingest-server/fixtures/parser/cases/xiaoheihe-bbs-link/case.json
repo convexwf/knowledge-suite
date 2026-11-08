@@ -13,20 +13,36 @@
   "expectations": {
     "parserProfile": "xiaoheihe",
     "requiredCandidates": [
-      { "method": "site_adapter", "adapterId": "xiaoheihe" },
-      { "method": "defuddle" },
-      { "method": "dom_fallback" }
+      {
+        "method": "site_adapter",
+        "adapterId": "xiaoheihe"
+      },
+      {
+        "method": "defuddle"
+      },
+      {
+        "method": "dom_fallback"
+      }
     ],
     "minTextLength": 300,
-    "titleIncludes": ["奥日"],
-    "authorsInclude": ["无心队长Captain"],
+    "titleIncludes": [
+      "奥日"
+    ],
+    "authorsInclude": [
+      "无心队长Captain"
+    ],
     "markdownIncludes": [
       "## 评论",
       "**用户246813579**",
       "这高分我是不信没情怀分的",
       "本来就不能抛弃情怀打分",
-      "**无一和菠萝头**"
+      "**无一和菠萝头**",
+      "> >\n> > **阿浩**",
+      "> > 第一行\n> > 第二行"
     ],
-    "markdownExcludes": ["立即下载小黑盒APP", "玩家高能聚集地"]
+    "markdownExcludes": [
+      "立即下载小黑盒APP",
+      "玩家高能聚集地"
+    ]
   }
 }
