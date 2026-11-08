@@ -155,6 +155,13 @@ queries.
 Highlight, tag, and annotate sections within saved documents. View all
 annotations per document in the annotations panel.
 
+### Cloud Mirror Sync
+
+The server can pull a one-way mirror from another Knowledge Suite instance
+once a day. The remote instance is the read-only source; the local store
+rebuilds its own chunks, FTS rows, and embeddings. See
+[docs/knowledge-sync.zh-CN.md](docs/knowledge-sync.zh-CN.md).
+
 ### Batch Import
 
 Import existing content in bulk:
@@ -189,6 +196,10 @@ Open the extension options page (`chrome://extensions` → **Details** →
 | `KNOWLEDGE_EMBEDDING_DIM` | `1024` | Expected vector dimension |
 | `KNOWLEDGE_EMBEDDING_BATCH_SIZE` | `16` | Texts per Ollama embed request |
 | `KNOWLEDGE_EMBEDDING_TIMEOUT_MS` | `60000` | Ollama embed timeout |
+| `KNOWLEDGE_SYNC_SOURCE_URL` | unset | Remote Knowledge Suite base URL; enables one-way pull when set with a token |
+| `KNOWLEDGE_SYNC_SOURCE_TOKEN` | unset | Bearer token for the remote source; leave unset on the cloud source |
+| `KNOWLEDGE_SYNC_AT` | `19:00` | Daily local time for the scheduled pull |
+| `TZ` | `Asia/Shanghai` | Container timezone used to interpret `KNOWLEDGE_SYNC_AT` |
 | `KNOWLEDGE_AI_ENABLED` | `false` | Enable AI summary endpoints |
 | `KNOWLEDGE_AI_OLLAMA_MODEL` | `qwen2.5:7b` | Ollama model name |
 | `KNOWLEDGE_FETCH_TIMEOUT_MS` | `15000` | Server fetch timeout |

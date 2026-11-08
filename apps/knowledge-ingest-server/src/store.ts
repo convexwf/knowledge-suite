@@ -63,6 +63,17 @@ export interface KnowledgeCatalogItem {
   sourceUrl: string | null;
 }
 
+export interface SyncedCollectionMember {
+  membershipId: string;
+  memberItemId: string;
+  orderIndex: number;
+  depth: number;
+  parentMembershipId: string | null;
+  inclusionMode: string;
+  inclusionReason: string | null;
+  sourceRuleId: string | null;
+}
+
 interface ItemRow {
   item_id: string;
   item_type: "document" | "collection";
@@ -1382,6 +1393,10 @@ export class KnowledgeStore {
     content?: string | Buffer;
     contentExt?: string;
     epubMetadata?: EpubMetadataInput;
+    owner?: string;
+    createdAt?: string;
+    updatedAt?: string;
+    parsedAt?: string | null;
   }): Promise<{
     knowledgeItem: KnowledgeItem;
     rawdoc: RawDoc;
@@ -1401,6 +1416,10 @@ export class KnowledgeStore {
     const language = params.language ?? params.document.meta.language ?? null;
     const tags = params.tags ?? params.document.meta.tags ?? [];
     const authorsJson = JSON.stringify(creators);
+    const storedContentExt = sanitizeExtension(params.contentExt ?? contentExtension(params.sourceType));
+    const contentBytes = params.content == null
+      ? undefined
+      : Buffer.isBuffer(params.content) ? params.content : Buffer.from(params.content);
     const previous = this.database!.prepare("SELECT * FROM items WHERE item_id = ?").get(params.itemId) as unknown as ItemRow | undefined;
     const replacedDocId = previous?.active_doc_id && previous.active_doc_id !== docId
       ? previous.active_doc_id : undefined;
@@ -1420,8 +1439,8 @@ export class KnowledgeStore {
       this.writeJsonIfMissing(outlinePathFor(docId), initialOutlineFor(params.document)),
       this.writeText(paths.markdownPath, params.markdown),
       // Save raw content for reparse (file-based import)
-      ...(params.content != null
-        ? [this.writeBuffer(`rawdocs/${captureId}.${contentExtension(params.sourceType)}`, Buffer.isBuffer(params.content) ? params.content : Buffer.from(params.content))]
+      ...(contentBytes
+        ? [this.writeBuffer(`rawdocs/${captureId}.${storedContentExt}`, contentBytes)]
         : [])
     ]);
     const packageEntries = await this.buildPackageEntries(
@@ -1433,14 +1452,15 @@ export class KnowledgeStore {
     this.database!.exec("BEGIN");
     try {
       this.database!.prepare(`
-        INSERT INTO items (item_id, item_type, source_type, identity_key, title, creators_json, language, tags_json, state, active_capture_id, active_doc_id, created_at, updated_at, parsed_at)
-        VALUES (?, 'document', ?, ?, ?, ?, ?, ?, 'parsed', ?, ?, ?, ?, ?)
+        INSERT INTO items (item_id, item_type, source_type, identity_key, title, creators_json, language, tags_json, owner, state, active_capture_id, active_doc_id, created_at, updated_at, parsed_at)
+        VALUES (?, 'document', ?, ?, ?, ?, ?, ?, ?, 'parsed', ?, ?, ?, ?, ?)
         ON CONFLICT(item_id) DO UPDATE SET
           source_type = excluded.source_type,
           title = excluded.title,
           creators_json = excluded.creators_json,
           language = excluded.language,
           tags_json = excluded.tags_json,
+          owner = excluded.owner,
           state = 'parsed',
           active_capture_id = excluded.active_capture_id,
           active_doc_id = excluded.active_doc_id,
@@ -1448,20 +1468,30 @@ export class KnowledgeStore {
           parsed_at = excluded.parsed_at
       `).run(
         params.itemId, params.sourceType, params.identityHash ?? null, params.pageTitle ?? params.document.meta.title,
-        authorsJson, language, JSON.stringify(tags),
-        captureId, docId, previous?.created_at ?? now, now, now
+        authorsJson, language, JSON.stringify(tags), params.owner ?? previous?.owner ?? "master",
+        captureId, docId, params.createdAt ?? previous?.created_at ?? now,
+        params.updatedAt ?? now, params.parsedAt === undefined ? now : params.parsedAt
       );
 
       this.database!.prepare(`
         INSERT INTO rawdocs (capture_id, item_id, source_uri, source_type, input_mode, content_type, content_length, content_hash, content_ext, page_title, captured_at, created_at)
-        VALUES (?, ?, ?, ?, 'file_import', NULL, NULL, NULL, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, 'file_import', ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(capture_id) DO UPDATE SET
           item_id = excluded.item_id,
           source_uri = excluded.source_uri,
-          source_type = excluded.source_type
+          source_type = excluded.source_type,
+          content_type = excluded.content_type,
+          content_length = excluded.content_length,
+          content_hash = excluded.content_hash,
+          content_ext = excluded.content_ext,
+          page_title = excluded.page_title,
+          captured_at = excluded.captured_at
       `).run(
         captureId, params.itemId, params.sourceUri, params.sourceType,
-        contentExtension(params.sourceType),
+        params.rawdoc?.content_type ?? null,
+        contentBytes?.byteLength ?? params.rawdoc?.content_length ?? null,
+        contentBytes ? sha256Buffer(contentBytes) : null,
+        storedContentExt,
         params.pageTitle ?? null, now, now
       );
 
@@ -1530,7 +1560,7 @@ export class KnowledgeStore {
     );
     const returnedRawdoc: RawDoc = rawdoc;
     const storedRawContentPath = params.content != null
-      ? `rawdocs/${captureId}.${params.contentExt ?? params.sourceType}`
+      ? `rawdocs/${captureId}.${storedContentExt}`
       : String(params.rawContentPath);
     return {
       knowledgeItem: item!,
@@ -2347,6 +2377,280 @@ export class KnowledgeStore {
     };
   }
 
+  async localPackageHash(itemId: string): Promise<string | undefined> {
+    await this.ensure();
+    const row = this.database!.prepare(
+      "SELECT content_hash, active_doc_id FROM items WHERE item_id = ? AND item_type = 'document'"
+    ).get(itemId) as { content_hash: string | null; active_doc_id: string | null } | undefined;
+    if (!row?.content_hash || !row.active_doc_id) return undefined;
+    try {
+      const outline = await this.loadOutlineFile(row.active_doc_id);
+      if (!outline) return undefined;
+      return readerPackageContentHash(row.content_hash, serializeOutlineFile(outline));
+    } catch (error) {
+      if (error instanceof InvalidOutlineError || isMissingFile(error)) return undefined;
+      throw error;
+    }
+  }
+
+  async importSyncItemMetadata(item: KnowledgeItem): Promise<void> {
+    await this.ensure();
+    const identityKey = item.identityHash || null;
+    this.database!.prepare(`
+      INSERT INTO items (item_id, item_type, source_type, identity_key, title, subtitle, creators_json, language, tags_json, owner, state, active_capture_id, active_doc_id, created_at, updated_at, parsed_at)
+      VALUES (?, 'document', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(item_id) DO UPDATE SET
+        source_type = excluded.source_type,
+        identity_key = excluded.identity_key,
+        title = excluded.title,
+        subtitle = excluded.subtitle,
+        creators_json = excluded.creators_json,
+        language = excluded.language,
+        tags_json = excluded.tags_json,
+        owner = excluded.owner,
+        state = excluded.state,
+        active_capture_id = excluded.active_capture_id,
+        active_doc_id = excluded.active_doc_id,
+        created_at = excluded.created_at,
+        updated_at = excluded.updated_at,
+        parsed_at = excluded.parsed_at
+    `).run(
+      item.itemId,
+      item.sourceType,
+      identityKey,
+      item.title ?? null,
+      item.subtitle ?? null,
+      JSON.stringify(item.creators ?? []),
+      item.language ?? null,
+      JSON.stringify(item.tags ?? []),
+      item.owner ?? "master",
+      item.state,
+      item.activeRawdocId || null,
+      item.activeDocId ?? null,
+      item.createdAt,
+      item.updatedAt,
+      item.parsedAt ?? null
+    );
+    if (item.normalizedUrl) this.upsertAlias(item.itemId, "normalized_url", item.normalizedUrl, true);
+    if (item.originalUrl) this.upsertAlias(item.itemId, "original_url", item.originalUrl, false);
+    if (item.canonicalUrl) this.upsertAlias(item.itemId, "canonical_url", item.canonicalUrl, false);
+  }
+
+  async importSyncRawdoc(
+    itemId: string,
+    rawdoc: RawDoc,
+    contentExt: string,
+    contentType: string | null,
+    bytes: Buffer
+  ): Promise<void> {
+    await this.ensure();
+    const captureId = rawdoc.rawdoc_id;
+    if (!captureId) throw new Error("rawdoc id is required");
+    const ext = sanitizeExtension(contentExt || contentExtension(rawdoc.source_type));
+    const now = new Date().toISOString();
+    await Promise.all([
+      this.writeBuffer(`rawdocs/${captureId}.${ext}`, bytes),
+      this.writeJson(`rawdocs/${captureId}.json`, rawdoc)
+    ]);
+    this.database!.prepare(`
+      INSERT INTO rawdocs (capture_id, item_id, source_uri, source_type, input_mode, content_type, content_length, content_hash, content_ext, page_title, captured_at, created_at)
+      VALUES (?, ?, ?, ?, 'sync', ?, ?, ?, ?, NULL, ?, ?)
+      ON CONFLICT(capture_id) DO UPDATE SET
+        item_id = excluded.item_id,
+        source_uri = excluded.source_uri,
+        source_type = excluded.source_type,
+        content_type = excluded.content_type,
+        content_length = excluded.content_length,
+        content_hash = excluded.content_hash,
+        content_ext = excluded.content_ext,
+        captured_at = excluded.captured_at
+    `).run(
+      captureId,
+      itemId,
+      rawdoc.source_uri,
+      rawdoc.source_type,
+      contentType ?? rawdoc.content_type ?? null,
+      bytes.byteLength,
+      sha256Buffer(bytes),
+      ext,
+      rawdoc.fetch_time,
+      now
+    );
+    this.database!.prepare("UPDATE items SET active_capture_id = ? WHERE item_id = ?")
+      .run(captureId, itemId);
+  }
+
+  async writeOutlineFile(docId: string, bytes: Buffer): Promise<void> {
+    await this.ensure();
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(bytes.toString("utf8")) as unknown;
+    } catch {
+      throw new InvalidOutlineError("Outline file contains invalid JSON.");
+    }
+    validateOutlineFile(parsed, docId);
+    const relativePath = outlinePathFor(docId);
+    await this.writeBuffer(relativePath, bytes);
+    this.database!.prepare("UPDATE documents SET outline_path = ? WHERE doc_id = ?")
+      .run(relativePath, docId);
+  }
+
+  async writeSyncAssets(entries: Array<{ path: string; bytes: Buffer }>): Promise<number> {
+    await this.ensure();
+    let written = 0;
+    for (const entry of entries) {
+      const normalized = entry.path.replace(/\\/g, "/");
+      if (!normalized.startsWith("assets/") || normalized.length <= "assets/".length) continue;
+      const assetPath = normalized.slice("assets/".length);
+      if (!assetPath || assetPath.split("/").some((part) => !part || part === "." || part === "..")) {
+        throw new Error(`Unsafe package asset path: ${entry.path}`);
+      }
+      await this.writeBuffer(`assets/${assetPath}`, entry.bytes);
+      written += 1;
+    }
+    return written;
+  }
+
+  async loadRawdocBytes(itemId: string): Promise<{
+    bytes: Buffer;
+    contentExt: string;
+    contentType: string | null;
+    rawdoc?: RawDoc;
+  } | undefined> {
+    await this.ensure();
+    const row = this.database!.prepare(`
+      SELECT r.capture_id, r.content_ext, r.content_type, r.source_type
+      FROM items i
+      JOIN rawdocs r ON r.capture_id = i.active_capture_id
+      WHERE i.item_id = ?
+    `).get(itemId) as {
+      capture_id: string;
+      content_ext: string;
+      content_type: string | null;
+      source_type: string;
+    } | undefined;
+    if (!row) return undefined;
+    const contentExt = sanitizeExtension(row.content_ext || contentExtension(row.source_type));
+    try {
+      const bytes = await readFile(resolveInsideRoot(this.root, `rawdocs/${row.capture_id}.${contentExt}`));
+      const rawdoc = await this.readJson<RawDoc>(`rawdocs/${row.capture_id}.json`).catch(() => undefined);
+      return { bytes, contentExt, contentType: row.content_type, rawdoc };
+    } catch (error) {
+      if (isMissingFile(error)) return undefined;
+      throw error;
+    }
+  }
+
+  async mergeReadingProgress(itemId: string, remote: ReadingProgressSnapshot): Promise<boolean> {
+    await this.ensure();
+    const row = this.database!.prepare(
+      "SELECT reading_progress_json FROM items WHERE item_id = ?"
+    ).get(itemId) as { reading_progress_json: string | null } | undefined;
+    if (!row) return false;
+    const local = readingProgressFromJson(row.reading_progress_json);
+    const localTime = local?.updatedAt ? Date.parse(local.updatedAt) : Number.NEGATIVE_INFINITY;
+    const remoteTime = remote.updatedAt ? Date.parse(remote.updatedAt) : Number.NEGATIVE_INFINITY;
+    const newer = remoteTime > localTime ||
+      (remoteTime === localTime && remote.revision > (local?.revision ?? -1));
+    if (!newer) return false;
+    this.database!.prepare(
+      "UPDATE items SET reading_progress_json = ? WHERE item_id = ?"
+    ).run(JSON.stringify(remote), itemId);
+    return true;
+  }
+
+  async importCollectionMembers(
+    collectionId: string,
+    members: SyncedCollectionMember[]
+  ): Promise<{ written: number; skipped: number }> {
+    await this.ensure();
+    const now = new Date().toISOString();
+    let written = 0;
+    let skipped = 0;
+    this.database!.exec("BEGIN IMMEDIATE");
+    try {
+      this.database!.prepare("DELETE FROM collection_memberships WHERE collection_item_id = ?")
+        .run(collectionId);
+      const itemExists = this.database!.prepare("SELECT 1 AS present FROM items WHERE item_id = ?");
+      const insert = this.database!.prepare(`
+        INSERT INTO collection_memberships (membership_id, collection_item_id, member_item_id, order_index, depth, parent_membership_id, inclusion_mode, inclusion_reason, source_rule_id, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      const membershipIds = new Map<string, string>();
+      for (const member of members) {
+        if (!itemExists.get(member.memberItemId)) {
+          skipped += 1;
+          continue;
+        }
+        const membershipId = member.membershipId || makeId();
+        membershipIds.set(member.membershipId, membershipId);
+        const parentMembershipId = member.parentMembershipId
+          ? membershipIds.get(member.parentMembershipId) ?? member.parentMembershipId
+          : null;
+        insert.run(
+          membershipId,
+          collectionId,
+          member.memberItemId,
+          member.orderIndex,
+          member.depth,
+          parentMembershipId,
+          member.inclusionMode || "manual",
+          member.inclusionReason,
+          member.sourceRuleId,
+          now,
+          now
+        );
+        written += 1;
+      }
+      this.database!.exec("COMMIT");
+    } catch (error) {
+      this.database!.exec("ROLLBACK");
+      throw error;
+    }
+    return { written, skipped };
+  }
+
+  async exportCollections(): Promise<Array<{
+    collection: CollectionSummary;
+    members: SyncedCollectionMember[];
+  }>> {
+    await this.ensure();
+    const rows = this.database!.prepare(
+      "SELECT item_id FROM items WHERE item_type = 'collection' ORDER BY updated_at DESC, item_id ASC"
+    ).all() as Array<{ item_id: string }>;
+    return rows.map((row) => {
+      const members = this.database!.prepare(`
+        SELECT membership_id, member_item_id, order_index, depth, parent_membership_id,
+               inclusion_mode, inclusion_reason, source_rule_id
+        FROM collection_memberships
+        WHERE collection_item_id = ?
+        ORDER BY order_index ASC, created_at ASC
+      `).all(row.item_id) as Array<{
+        membership_id: string;
+        member_item_id: string;
+        order_index: number;
+        depth: number;
+        parent_membership_id: string | null;
+        inclusion_mode: string;
+        inclusion_reason: string | null;
+        source_rule_id: string | null;
+      }>;
+      return {
+        collection: this.loadCollectionSummary(row.item_id),
+        members: members.map((member) => ({
+          membershipId: member.membership_id,
+          memberItemId: member.member_item_id,
+          orderIndex: member.order_index,
+          depth: member.depth,
+          parentMembershipId: member.parent_membership_id,
+          inclusionMode: member.inclusion_mode,
+          inclusionReason: member.inclusion_reason,
+          sourceRuleId: member.source_rule_id
+        }))
+      };
+    });
+  }
+
   async listCatalogItems(): Promise<KnowledgeCatalogItem[]> {
     await this.ensure();
     const rows = this.database!.prepare(`
@@ -3065,6 +3369,18 @@ export class KnowledgeStore {
   }
 
   async saveAnnotation(docId: string, annotation: Annotation): Promise<void> {
+    await this.persistAnnotation(docId, annotation, false);
+  }
+
+  async importAnnotation(docId: string, annotation: Annotation): Promise<boolean> {
+    return this.persistAnnotation(docId, annotation, true);
+  }
+
+  private async persistAnnotation(
+    docId: string,
+    annotation: Annotation,
+    preserveTimestamps: boolean
+  ): Promise<boolean> {
     await this.ensure();
     const now = new Date().toISOString();
     const target = resolveInsideRoot(this.root, `annotations/${docId}.json`);
@@ -3077,7 +3393,14 @@ export class KnowledgeStore {
       file = { doc_id: docId, version: 0, updated_at: now, annotations: [] };
     }
     const existingIdx = file.annotations.findIndex((a) => a.annotation_id === annotation.annotation_id);
-    const nextAnnotation = { ...annotation, updated_at: now, ...(!annotation.created_at ? { created_at: now } : {}) };
+    const existing = existingIdx >= 0 ? file.annotations[existingIdx] : undefined;
+    if (preserveTimestamps && existing &&
+        Date.parse(existing.updated_at) > Date.parse(annotation.updated_at)) {
+      return false;
+    }
+    const nextAnnotation = preserveTimestamps
+      ? { ...annotation, doc_id: docId }
+      : { ...annotation, updated_at: now, ...(!annotation.created_at ? { created_at: now } : {}) };
     if (existingIdx >= 0) {
       file.annotations[existingIdx] = nextAnnotation;
     } else {
@@ -3122,6 +3445,7 @@ export class KnowledgeStore {
       dbAnnotation.label, dbAnnotation.ai_model, dbAnnotation.summary_level,
       dbAnnotation.orphaned, dbAnnotation.created_at, dbAnnotation.updated_at
     );
+    return true;
   }
 
   async deleteAnnotation(docId: string, annotationId: string): Promise<void> {

@@ -12,6 +12,13 @@ export interface EmbeddingConfig {
   timeoutMs: number;
 }
 
+export interface SyncConfig {
+  enabled: boolean;
+  sourceUrl: string;
+  sourceToken: string;
+  at: string;
+}
+
 export interface ServerConfig {
   host: string;
   port: number;
@@ -28,6 +35,7 @@ export interface ServerConfig {
   maxGithubAssetBytes?: number;
   search?: SearchMode;
   embeddings?: EmbeddingConfig;
+  sync?: SyncConfig;
 }
 
 export function loadConfig(): ServerConfig {
@@ -46,7 +54,8 @@ export function loadConfig(): ServerConfig {
     maxGithubAssetReferences: Number(process.env.KNOWLEDGE_MAX_GITHUB_ASSET_REFERENCES ?? 500),
     maxGithubAssetBytes: Number(process.env.KNOWLEDGE_MAX_GITHUB_ASSET_BYTES ?? 20 * 1024 * 1024),
     search: parseSearchMode(process.env.KNOWLEDGE_SEARCH),
-    embeddings: parseEmbeddingConfig()
+    embeddings: parseEmbeddingConfig(),
+    sync: parseSyncConfig()
   };
 }
 
@@ -70,4 +79,21 @@ function parseEmbeddingConfig(): EmbeddingConfig {
 function positiveInt(value: string | undefined, fallback: number): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? Math.trunc(parsed) : fallback;
+}
+
+function parseSyncConfig(): SyncConfig | undefined {
+  const sourceUrl = (process.env.KNOWLEDGE_SYNC_SOURCE_URL ?? "").trim();
+  const sourceToken = (process.env.KNOWLEDGE_SYNC_SOURCE_TOKEN ?? "").trim();
+  if (!sourceUrl && !sourceToken) return undefined;
+  return {
+    enabled: Boolean(sourceUrl && sourceToken),
+    sourceUrl,
+    sourceToken,
+    at: parseSyncAt(process.env.KNOWLEDGE_SYNC_AT)
+  };
+}
+
+function parseSyncAt(value: string | undefined): string {
+  const match = /^([01]\d|2[0-3]):([0-5]\d)$/.exec((value ?? "").trim());
+  return match ? `${match[1]}:${match[2]}` : "19:00";
 }

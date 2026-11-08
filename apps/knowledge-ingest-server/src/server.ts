@@ -51,8 +51,10 @@ import { ResolvedInput, resolveKnowledgeCaptureInput } from "./input.js";
 import { documentToMarkdown } from "./markdown.js";
 import { parseMarkdown, type MarkdownAssetInput } from "./markdown-import.js";
 import { parsePage, type ParsedPage } from "./parser.js";
-import { buildPackageManifest, PACKAGE_SCHEMA_VERSION, sha256Text } from "./package.js";
+import { buildPackageManifest, PACKAGE_SCHEMA_VERSION, sha256Buffer, sha256Text } from "./package.js";
 import { guessContentType, InvalidOutlineError, KnowledgeStore } from "./store.js";
+import { RemoteSuiteClient } from "./sync/remote.js";
+import { DailySyncScheduler, SyncBusyError, SyncRunner } from "./sync/runner.js";
 import { buildZipArchive } from "./zip.js";
 
 function matchesEtag(header: string | string[] | undefined, etag: string): boolean {
@@ -147,6 +149,26 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
     app.log.info(`Recovered ${recovered} stale batch job(s) from previous session.`);
   }
 
+  let syncScheduler: DailySyncScheduler | undefined;
+  let syncRunner: SyncRunner | undefined;
+  if (config.sync?.enabled && config.sync.sourceUrl && config.sync.sourceToken) {
+    const syncClient = new RemoteSuiteClient({
+      baseUrl: config.sync.sourceUrl,
+      token: config.sync.sourceToken,
+      timeoutMs: config.fetchTimeoutMs
+    });
+    syncRunner = new SyncRunner(store, syncClient);
+    syncScheduler = new DailySyncScheduler(
+      config.sync.at,
+      syncRunner,
+      (error) => app.log.error({ err: error }, "scheduled knowledge sync failed")
+    );
+    syncScheduler.start();
+    app.log.info({ at: config.sync.at }, "knowledge store sync enabled");
+  } else if (config.sync && !config.sync.enabled) {
+    app.log.warn("knowledge sync is disabled: source URL and token are both required");
+  }
+
   app.addContentTypeParser([
     "application/epub+zip",
     "application/octet-stream"
@@ -160,6 +182,7 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
 
   app.addHook("onClose", async () => {
     shuttingDown = true;
+    syncScheduler?.stop();
     await Promise.allSettled([...activeBatchRuns]);
     store.close();
   });
@@ -492,6 +515,63 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
       items: entries
     });
   });
+
+  app.get("/api/sync/items/:itemId/meta", async (request, reply) => {
+    const params = request.params as { itemId: string };
+    const detail = await store.loadItemDetail(params.itemId).catch(() => undefined);
+    if (!detail) {
+      return reply.code(404).send({ error: "item_not_found", message: "Knowledge item was not found." });
+    }
+    const docId = detail.document?.doc_id ?? detail.item.activeDocId ?? null;
+    const progress = await store.loadReadingProgress(params.itemId);
+    return {
+      schemaVersion: PACKAGE_SCHEMA_VERSION,
+      item: detail.item,
+      documentId: docId,
+      rawdoc: detail.rawdoc ?? null,
+      annotations: docId ? await store.loadAnnotations(docId) : [],
+      readingProgress: progress?.progress ?? null,
+      collections: detail.collectionIds ?? []
+    };
+  });
+
+  app.get("/api/sync/items/:itemId/rawdoc", async (request, reply) => {
+    const params = request.params as { itemId: string };
+    const loaded = await store.loadRawdocBytes(params.itemId);
+    if (!loaded) {
+      return reply.code(404).send({ error: "rawdoc_not_available", message: "Raw document was not found." });
+    }
+    const etag = `"${sha256Buffer(loaded.bytes)}"`;
+    if (matchesEtag(request.headers["if-none-match"], etag)) {
+      return reply.code(304).header("etag", etag).send();
+    }
+    return reply
+      .header("etag", etag)
+      .header("cache-control", "private, no-store")
+      .header("x-content-ext", loaded.contentExt)
+      .header("x-content-type", loaded.contentType ?? guessContentType(`rawdoc.${loaded.contentExt}`))
+      .type(loaded.contentType ?? guessContentType(`rawdoc.${loaded.contentExt}`))
+      .send(loaded.bytes);
+  });
+
+  app.get("/api/sync/collections", async () => ({
+    collections: await store.exportCollections()
+  }));
+
+  if (syncRunner) {
+    app.post("/api/sync/run", async (_request, reply) => {
+      try {
+        return await syncRunner.run();
+      } catch (error) {
+        if (error instanceof SyncBusyError) {
+          return reply.code(409).send({ error: "sync_in_progress", message: error.message });
+        }
+        throw error;
+      }
+    });
+
+    app.get("/api/sync/status", async () => syncRunner.status());
+  }
 
   app.get("/api/items/:itemId/package", async (request, reply) => {
     const params = request.params as { itemId: string };
