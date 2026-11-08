@@ -82,6 +82,7 @@
 KNOWLEDGE_SYNC_SOURCE_URL=http://<source-host>:18765
 KNOWLEDGE_SYNC_SOURCE_TOKEN=<source-bearer-token>
 KNOWLEDGE_SYNC_AT=19:00
+KNOWLEDGE_SYNC_TIMEOUT_MS=300000
 TZ=Asia/Shanghai
 ```
 
@@ -90,6 +91,7 @@ TZ=Asia/Shanghai
 | `KNOWLEDGE_SYNC_SOURCE_URL` | 未设置 | 源站基础 URL；不设置则关闭同步 |
 | `KNOWLEDGE_SYNC_SOURCE_TOKEN` | 未设置 | 源站 Bearer token；与 URL 必须同时存在 |
 | `KNOWLEDGE_SYNC_AT` | `19:00` | 每天运行时间，使用容器本地时区 |
+| `KNOWLEDGE_SYNC_TIMEOUT_MS` | `300000` | 单个同步请求（含包下载）的超时；跨境链路建议不小于 5 分钟 |
 | `TZ` | `Asia/Shanghai` | Docker Compose 默认时区；`KNOWLEDGE_SYNC_AT` 按它解释 |
 
 云端源站不要配置这些变量。源站的 `KNOWLEDGE_SEARCH` 可以保持 `fts` 或 `off`，

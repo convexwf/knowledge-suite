@@ -199,6 +199,7 @@ Open the extension options page (`chrome://extensions` → **Details** →
 | `KNOWLEDGE_SYNC_SOURCE_URL` | unset | Remote Knowledge Suite base URL; enables one-way pull when set with a token |
 | `KNOWLEDGE_SYNC_SOURCE_TOKEN` | unset | Bearer token for the remote source; leave unset on the cloud source |
 | `KNOWLEDGE_SYNC_AT` | `19:00` | Daily local time for the scheduled pull |
+| `KNOWLEDGE_SYNC_TIMEOUT_MS` | `300000` | Per-request timeout for sync, including package downloads |
 | `TZ` | `Asia/Shanghai` | Container timezone used to interpret `KNOWLEDGE_SYNC_AT` |
 | `KNOWLEDGE_AI_ENABLED` | `false` | Enable AI summary endpoints |
 | `KNOWLEDGE_AI_OLLAMA_MODEL` | `qwen2.5:7b` | Ollama model name |

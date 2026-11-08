@@ -155,7 +155,7 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
     const syncClient = new RemoteSuiteClient({
       baseUrl: config.sync.sourceUrl,
       token: config.sync.sourceToken,
-      timeoutMs: config.fetchTimeoutMs
+      timeoutMs: config.sync.timeoutMs
     });
     syncRunner = new SyncRunner(store, syncClient);
     syncScheduler = new DailySyncScheduler(

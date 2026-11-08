@@ -17,6 +17,7 @@ export interface SyncConfig {
   sourceUrl: string;
   sourceToken: string;
   at: string;
+  timeoutMs: number;
 }
 
 export interface ServerConfig {
@@ -89,7 +90,8 @@ function parseSyncConfig(): SyncConfig | undefined {
     enabled: Boolean(sourceUrl && sourceToken),
     sourceUrl,
     sourceToken,
-    at: parseSyncAt(process.env.KNOWLEDGE_SYNC_AT)
+    at: parseSyncAt(process.env.KNOWLEDGE_SYNC_AT),
+    timeoutMs: positiveInt(process.env.KNOWLEDGE_SYNC_TIMEOUT_MS, 300000)
   };
 }
 
