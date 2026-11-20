@@ -153,24 +153,35 @@
 
 | 检查项 | 结果 |
 | --- | --- |
-| 浏览器页面读取 | CDP Bridge 已通过 MCP Gateway 接入；新增 `browser_new_tab(url)`，创建后台标签，不导航或激活已有标签。用 `Target.createTarget(background:true)` 实测新页面为非前台，原前台标签保持不变。 |
+| 浏览器页面读取 | CDP Bridge 已通过 MCP Gateway 接入；Gateway 报告 browser upstream `connected=True, tools=13`。新增 `browser_new_tab(url)` 创建后台标签，不导航或激活已有标签；当前对话的工具目录仍是旧的 12 项，已用 `browser_batch` 的 CDP `Target.createTarget(background:true)` 继续抽查。 |
 | 本地 Knowledge Markdown | `knowledge-store/markdown` 有 49 份 Markdown；按附件中的正文网址检查，没有找到与这 86 个页面直接对应的来源 URL。 |
 | 相近内容 | 有一份 [Hello-Agents 整合版 Markdown](../knowledge-store/markdown/2391864d-b110-4aef-ba34-3ec63a0f6434.md)，但它的来源是 `github.com/convexwf/reference` 的锁定版本，不是 Datawhale 页面抓取结果；文件开头还重复出现了同一个 H1。 |
-| Relay 注册状态 | Relay 扩展自动连接 Knowledge Ingest Server 的 `/agent` WebSocket，握手后周期 ping 并自动重连；上次 `/api/capture/status` 检查返回 `agentConnected: true`。Relay 是 Knowledge 的浏览器采集端，不是 MCP Gateway 上游。 |
+| Relay 注册状态 | Relay 扩展自动连接 Knowledge Ingest Server 的 `/agent` WebSocket，握手后周期 ping 并自动重连；本轮 `/api/capture/status` 返回 `agentConnected: true`。Relay 是 Knowledge 的浏览器采集端，不是 MCP Gateway 上游。 |
 | Relay 覆盖范围 | Capture Relay 白名单只有 `xiaoheihe.cn`、`reddit.com` 的相关 hostname，不包括本清单中的博客、研究站和金融站点。现有白名单不能直接抓取这批页面。 |
-| 只读预览 | Yuanchaofa 的一篇文章经 CDP 读取后调用 Knowledge `/api/ingest/preview`，返回 Defuddle Markdown（6,718 字符），`status.state=empty`，没有写入 Knowledge Store。正文内容基本完整，但重复输出“前置知识”段落和一条引文。 |
+| 只读预览 | 本轮 5 个页面均经 CDP 读取并调用 Knowledge `/api/ingest/preview`，返回 `status.state=empty`，没有写入 Knowledge Store。各页结果见下表。 |
 | Adapter 匹配 | Yuanchaofa URL 的 `matchedAdapters` 出现 `juejin`，原因是路径 `/post/` 命中；该站点不在 Juejin host 列表中。这说明 path pattern 可绕过 host 匹配，属于 matcher 误报。 |
-| 当前运行状态 | Gateway 曾成功重启并报告 browser upstream `connected=True, tools=13`。随后本机切换为 `BotMcpGateway` Windows 服务且目前显示 `Stopped`；启动需要管理员提升，本会话无法启动该提升进程。Simon Willison、Grab 和 Datawhale 的后台标签已创建，但尚未完成预览。 |
+| 当前运行状态 | `BotMcpGateway` Windows 服务已启动；Relay 和 browser upstream 均已连接。后台抽查标签保持非前台，原活动标签未被导航。 |
+
+### 样本预览
+
+| 站点 / 页面 | Knowledge 结果 | 观察 |
+| --- | --- | --- |
+| Yuanchaofa / Prompt Caching | Defuddle；5,794 字正文，84 个段落/结构块，27 个标题，12 个链接，4 个表格；Markdown 6,718 字 | 正文主体可用，但重复输出“前置知识”段落和一条引文；同时误匹配 Juejin adapter。 |
+| Simon Willison / Agentic Engineering Patterns 指南页 | Defuddle；6,692 字，49 个链接；Markdown 6,959 字 | 这是指南目录页，链接密度高；标题取成站点名。 |
+| Simon Willison / 对应博客文章 | Defuddle；4,061 字，16 个结构块，10 个链接；Markdown 4,332 字 | `pageTitle` 和 `og:title` 是文章标题，但 Markdown H1/title 取到 `og:site_name` 的 “Simon Willison’s Weblog”。 |
+| Grab / Griffin | Defuddle；16,376 字，105 个结构块，13 个标题，18 个链接，10 张图，5 段代码；无警告；Markdown 17,811 字 | 正文和代码结构保留良好。 |
+| Datawhale / Hello-Agents | Defuddle；11,964 字，60 个结构块，19 个标题，65 个链接，9 张图，2 个表格，1 段代码；无警告；Markdown 13,560 字 | 正文结构较完整；首页徽章及图片 alt 文本也进入了 Markdown。 |
+| 美团 / Zeus（前一轮已检查） | 现有 `meituan_tech` adapter 按 host 命中；约 10,031 字，94 个结构块，17 个标题；无警告 | 现有 adapter 工作正常。 |
 
 ### Adapter 决定
 
-**目前不新增站点 adapter，先修 matcher 再复查。** Yuanchaofa 的样本由通用 Defuddle 选中，正文主体可用；当前首要问题是 `/post/` 路径造成 Juejin adapter 误匹配。修复为“host 命中后才评估该站点 path pattern”并复查 Markdown 后，若重复段落仍存在，再考虑为 `yuanchaofa.com` 增加精确正文选择器。
+**建议新增一个轻量 Simon Willison adapter；Yuanchaofa 先修 matcher 再复查。** Simon 两个页面都把 `og:site_name` 作为 Markdown 主标题，正文文章页明明有正确的 `og:title`。adapter 可用 `og:title` 生成文章标题，并保留 Defuddle 的正文结果。
 
-`tech.meituan.com` 已有的 `meituan_tech` adapter 能按 host 命中且预览正常，不需要新增。Simon Willison、Grab、Datawhale 和其余站点还没有足够的 Knowledge 预览证据，暂不做 adapter 决定。
+Yuanchaofa 的当前正文由通用 Defuddle 选中，主体可用，但重复输出“前置知识”和一条引文；同时 `/post/` 触发了 Juejin adapter 误匹配。先修复“host 命中后才评估该站点 path pattern”，再复查；如果重复仍在，再给 `yuanchaofa.com` 增加精确正文选择器。Grab、Datawhale 没有显示需要专用 adapter 的结构问题；美团已有 adapter 正常。其他站点仍需抽样后再判断。
 
-完成其余判断需要先启动 Gateway Windows 服务并刷新当前会话的工具目录，然后对代表页面重复“后台标签读取 → Knowledge 只读预览 → 与页面正文对照”的流程。只在同一站点重复出现结构性缺失时新增 adapter。
+其余站点按“后台标签读取 → Knowledge 只读预览 → 与页面正文对照”抽样；对同站点重复出现的结构性缺失再新增 adapter。当前会话刷新工具目录后可直接使用 `browser_new_tab`，旧工具目录仍可用已验证的 CDP 后台 target 方式。
 
 ### Relay 与 CDP 的区别
 
-Knowledge Capture Relay 与 MCP Gateway 的 CDP Bridge 是两条连接：Relay 扩展以 WebSocket 自动注册到 Knowledge Ingest Server 的 `/agent`，读取受允许的页面并将快照交给服务端；CDP Bridge 由 Gateway 暴露浏览器工具，适合 Agent 在同一 Chrome 中读取网页。Relay 仍受 hostname 白名单限制，CDP 侧新增的 `browser_new_tab` 则始终以后台标签打开目标 URL。预览只生成解析结果，本次没有调用保存接口。
+Knowledge Capture Relay 与 MCP Gateway 的 CDP Bridge 是两条连接：Relay 扩展以 WebSocket 自动注册到 Knowledge Ingest Server 的 `/agent`，读取受允许的页面并将快照交给服务端；CDP Bridge 由 Gateway 暴露浏览器工具，适合 Agent 在同一 Chrome 中读取网页。本轮样本由 CDP 读取后交给 Knowledge 的只读 preview 接口解析；Relay 保持连接，但其 hostname 白名单不允许直接采集这些站点。CDP 侧新增的 `browser_new_tab` 始终以后台标签打开目标 URL。预览只生成解析结果，本次没有调用保存接口。
 
