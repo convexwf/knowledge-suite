@@ -158,7 +158,7 @@
 | 相近内容 | 有一份 [Hello-Agents 整合版 Markdown](../knowledge-store/markdown/2391864d-b110-4aef-ba34-3ec63a0f6434.md)，但它的来源是 `github.com/convexwf/reference` 的锁定版本，不是 Datawhale 页面抓取结果；文件开头还重复出现了同一个 H1。 |
 | Relay 注册状态 | Relay 扩展自动连接 Knowledge Ingest Server 的 `/agent` WebSocket，握手后周期 ping 并自动重连；本轮 `/api/capture/status` 返回 `agentConnected: true`。Relay 是 Knowledge 的浏览器采集端，不是 MCP Gateway 上游。 |
 | Relay 覆盖范围 | Capture Relay 白名单只有 `xiaoheihe.cn`、`reddit.com` 的相关 hostname，不包括本清单中的博客、研究站和金融站点。现有白名单不能直接抓取这批页面。 |
-| 只读预览 | 本轮 5 个页面均经 CDP 读取并调用 Knowledge `/api/ingest/preview`，返回 `status.state=empty`，没有写入 Knowledge Store。各页结果见下表。 |
+| 只读预览 | 本轮 6 个页面均经 CDP 读取并调用 Knowledge `/api/ingest/preview`，返回 `status.state=empty`，没有写入 Knowledge Store。各页结果见下表。 |
 | Adapter 匹配 | Yuanchaofa URL 的 `matchedAdapters` 出现 `juejin`，原因是路径 `/post/` 命中；该站点不在 Juejin host 列表中。这说明 path pattern 可绕过 host 匹配，属于 matcher 误报。 |
 | 当前运行状态 | `BotMcpGateway` Windows 服务已启动；Relay 和 browser upstream 均已连接。后台抽查标签保持非前台，原活动标签未被导航。 |
 
@@ -171,13 +171,14 @@
 | Simon Willison / 对应博客文章 | Defuddle；4,061 字，16 个结构块，10 个链接；Markdown 4,332 字 | `pageTitle` 和 `og:title` 是文章标题，但 Markdown H1/title 取到 `og:site_name` 的 “Simon Willison’s Weblog”。 |
 | Grab / Griffin | Defuddle；16,376 字，105 个结构块，13 个标题，18 个链接，10 张图，5 段代码；无警告；Markdown 17,811 字 | 正文和代码结构保留良好。 |
 | Datawhale / Hello-Agents | Defuddle；11,964 字，60 个结构块，19 个标题，65 个链接，9 张图，2 个表格，1 段代码；无警告；Markdown 13,560 字 | 正文结构较完整；首页徽章及图片 alt 文本也进入了 Markdown。 |
+| Mark Best / Hidden Dangers of Writing an OMS | Defuddle；6,500 字，24 个结构块，7 个标题，3 个链接，3 段代码；无警告；Markdown 7,086 字 | 正文与代码块完整，标题正确，无需专用 adapter。 |
 | 美团 / Zeus（前一轮已检查） | 现有 `meituan_tech` adapter 按 host 命中；约 10,031 字，94 个结构块，17 个标题；无警告 | 现有 adapter 工作正常。 |
 
 ### Adapter 决定
 
 **建议新增一个轻量 Simon Willison adapter；Yuanchaofa 先修 matcher 再复查。** Simon 两个页面都把 `og:site_name` 作为 Markdown 主标题，正文文章页明明有正确的 `og:title`。adapter 可用 `og:title` 生成文章标题，并保留 Defuddle 的正文结果。
 
-Yuanchaofa 的当前正文由通用 Defuddle 选中，主体可用，但重复输出“前置知识”和一条引文；同时 `/post/` 触发了 Juejin adapter 误匹配。先修复“host 命中后才评估该站点 path pattern”，再复查；如果重复仍在，再给 `yuanchaofa.com` 增加精确正文选择器。Grab、Datawhale 没有显示需要专用 adapter 的结构问题；美团已有 adapter 正常。其他站点仍需抽样后再判断。
+Yuanchaofa 的当前正文由通用 Defuddle 选中，主体可用，但重复输出“前置知识”和一条引文；同时 `/post/` 触发了 Juejin adapter 误匹配。先修复“host 命中后才评估该站点 path pattern”，再复查；如果重复仍在，再给 `yuanchaofa.com` 增加精确正文选择器。Grab、Datawhale、Mark Best 没有显示需要专用 adapter 的结构问题；美团已有 adapter 正常。其他站点仍需抽样后再判断。
 
 其余站点按“后台标签读取 → Knowledge 只读预览 → 与页面正文对照”抽样；对同站点重复出现的结构性缺失再新增 adapter。当前会话刷新工具目录后可直接使用 `browser_new_tab`，旧工具目录仍可用已验证的 CDP 后台 target 方式。
 
