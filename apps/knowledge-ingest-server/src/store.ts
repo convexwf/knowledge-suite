@@ -1380,6 +1380,9 @@ export class KnowledgeStore {
     itemId: string;
     sourceType: "pdf" | "epub" | "markdown" | "singlefile_html" | "url";
     sourceUri: string;
+    originalUrl?: string;
+    urlAlias?: string;
+    inputMode?: "file_import" | "structured_import";
     rawdocId: string;
     rawdoc?: RawDoc;
     rawContentPath: string | Buffer;
@@ -1475,7 +1478,7 @@ export class KnowledgeStore {
 
       this.database!.prepare(`
         INSERT INTO rawdocs (capture_id, item_id, source_uri, source_type, input_mode, content_type, content_length, content_hash, content_ext, page_title, captured_at, created_at)
-        VALUES (?, ?, ?, ?, 'file_import', ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(capture_id) DO UPDATE SET
           item_id = excluded.item_id,
           source_uri = excluded.source_uri,
@@ -1487,7 +1490,7 @@ export class KnowledgeStore {
           page_title = excluded.page_title,
           captured_at = excluded.captured_at
       `).run(
-        captureId, params.itemId, params.sourceUri, params.sourceType,
+        captureId, params.itemId, params.sourceUri, params.sourceType, params.inputMode ?? "file_import",
         params.rawdoc?.content_type ?? null,
         contentBytes?.byteLength ?? params.rawdoc?.content_length ?? null,
         contentBytes ? sha256Buffer(contentBytes) : null,
@@ -1497,7 +1500,7 @@ export class KnowledgeStore {
 
       this.database!.prepare(`
         INSERT INTO documents (doc_id, item_id, capture_id, title, page_title, source_url, language, authors_json, published_at, parser_version, parser_method, parser_profile, content_hash, outline_path, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, NULL, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(doc_id) DO UPDATE SET
           item_id = excluded.item_id,
           capture_id = excluded.capture_id,
@@ -1513,7 +1516,7 @@ export class KnowledgeStore {
           updated_at = excluded.updated_at
       `).run(
         docId, params.itemId, captureId, params.document.meta.title,
-        params.pageTitle ?? null, language, authorsJson,
+        params.pageTitle ?? null, params.sourceUri, language, authorsJson, params.document.meta.published_at ?? null,
         parserInfo.version, parserInfo.method, parserInfo.profile, contentHash, outlinePathFor(docId), now, now
       );
 
@@ -1552,8 +1555,25 @@ export class KnowledgeStore {
 
     await this.embedAndStore(chunksToEmbed);
 
-    // Create file_path alias for file imports so they're findable
-    this.upsertAlias(params.itemId, "file_path", params.sourceUri, true);
+    // Remove files belonging to replaced versions, same as save().
+    if (replacedDocId && replacedDocId !== docId) {
+      await this.deleteDerivedArtifacts(replacedDocId);
+    }
+    if (replacedCaptureId && replacedCaptureId !== captureId) {
+      await this.deleteCaptureArtifacts(replacedCaptureId);
+    }
+
+    if (params.urlAlias) {
+      const normalizedUrl = normalizeUrlForKnowledge(params.urlAlias);
+      this.upsertAlias(params.itemId, "normalized_url", normalizedUrl, true);
+      this.upsertAlias(params.itemId, "canonical_url", params.urlAlias, false);
+      if (params.originalUrl && params.originalUrl !== params.urlAlias) {
+        this.upsertAlias(params.itemId, "original_url", params.originalUrl, false);
+      }
+    } else {
+      // Create file_path alias for file imports so they're findable
+      this.upsertAlias(params.itemId, "file_path", params.sourceUri, true);
+    }
 
     const item = this.buildKnowledgeItem(
       this.database!.prepare("SELECT * FROM items WHERE item_id = ?").get(params.itemId) as unknown as ItemRow
@@ -1649,7 +1669,7 @@ export class KnowledgeStore {
 
       this.database!.prepare(`
         INSERT INTO documents (doc_id, item_id, capture_id, title, page_title, source_url, language, authors_json, published_at, parser_version, parser_method, parser_profile, content_hash, outline_path, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, NULL, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(doc_id) DO UPDATE SET
           item_id = excluded.item_id,
           capture_id = excluded.capture_id,
@@ -1665,7 +1685,7 @@ export class KnowledgeStore {
           updated_at = excluded.updated_at
       `).run(
         docId, params.itemId, captureId, params.document.meta.title,
-        params.pageTitle ?? null, language, authorsJson,
+        params.pageTitle ?? null, params.sourceUri, language, authorsJson, params.document.meta.published_at ?? null,
         parserInfo.version, parserInfo.method, parserInfo.profile, contentHash, outlinePathFor(docId), now, now
       );
 
@@ -3665,7 +3685,7 @@ export class KnowledgeStore {
 
   async deleteCaptureArtifacts(captureId: string): Promise<string[]> {
     const files: string[] = [];
-    for (const ext of ["html", "epub", "pdf", "json"]) {
+    for (const ext of ["html", "epub", "pdf", "json", "md"]) {
       const p = resolveInsideRoot(this.root, `rawdocs/${captureId}.${ext}`);
       await unlink(p).then(() => files.push(`rawdocs/${captureId}.${ext}`)).catch(ignoreMissing);
     }

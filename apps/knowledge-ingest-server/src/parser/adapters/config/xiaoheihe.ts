@@ -70,6 +70,9 @@ export const xiaoheiheAdapter: SiteAdapter = {
     defuddleRootSelectors: [".hb-bbs-post .post__content", ".hb-article"],
     fallbackCleanup: true
   },
+  enrich: {
+    tags: () => ["platform:xiaoheihe"]
+  },
   quality: {
     minScoreBonus: 80,
     preferOverGeneric: true

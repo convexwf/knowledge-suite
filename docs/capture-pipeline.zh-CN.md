@@ -16,7 +16,7 @@ Markdown 并写入 `knowledge-store`。
 | 客户端 | `scripts/capture-ext.mjs` | 发请求、落盘、输出摘要 |
 | 服务端 | `apps/knowledge-ingest-server`（Docker） | 鉴权、任务下发、解析、入库 |
 | 扩展 | `apps/knowledge-capture-relay` | 白名单校验、开标签、等渲染、回传 DOM |
-| 解析器 | `src/parser` + `xiaoheihe` adapter | 正文/标题/评论区提取 |
+| 解析器 | `src/parser` + `xiaoheihe` / `reddit` adapter | 正文/标题/评论区提取 |
 
 ## 一次抓取的完整时序
 
@@ -179,5 +179,5 @@ Invoke-RestMethod -Uri "http://127.0.0.1:18765/api/capture" -Method Post `
 
 - 评论区只取页面已渲染的部分（约 17–18 条顶级评论、25–26 条回复），正文页没有滚动加载。
 - 稳定判定是"文本长度连续 3 次不变"，偶尔会早 0.1–1 秒，可能少 1 条评论。
-- 目前只支持小黑盒。新增站点需要同时改扩展的 `host_permissions`、`content_scripts.matches` 和 `background.js` 里的 `ALLOWED_HOSTS`。
+- 目前支持小黑盒和 Reddit。新增站点需要同时改扩展的 `host_permissions`、`content_scripts.matches` 和 `background.js` 里的 `ALLOWED_HOSTS`。
 - 扩展是开发者模式加载的。Chrome 大版本更新后可能被停用，在 `chrome://extensions` 重新启用即可。

@@ -26,6 +26,8 @@ import {
   KnowledgeItemReadingProgressRequestSchema,
   StoreClearParsedRequestSchema,
   StoreClearRequestSchema,
+  StructuredImportRequest,
+  StructuredImportRequestSchema,
   urlHash
 } from "@uknowledge/knowledge-schema";
 import { createAIProvider } from "./ai-annotation/provider.js";
@@ -1112,6 +1114,85 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
     }
   });
 
+  app.post("/api/import/structured", async (request, reply) => {
+    const parsedInput = StructuredImportRequestSchema.safeParse(request.body);
+    if (!parsedInput.success) {
+      return reply.code(400).send({
+        error: "bad_request",
+        message: parsedInput.error.issues
+          .map((issue) => `${issue.path.join(".") || "body"}: ${issue.message}`)
+          .join("; ")
+      });
+    }
+    const input = parsedInput.data;
+    const canonicalUrl = normalizeUrlForKnowledge(input.canonicalUrl ?? input.url);
+    const existing = await store.status(canonicalUrl);
+    if (existing && !input.overwrite) {
+      return reply.code(409).send({ error: "item_exists", itemId: existing.itemId });
+    }
+
+    const tags = structuredImportTags(input);
+    const sourceMarkdown = structuredImportMarkdown(input);
+    const parsed = await parseMarkdown(Buffer.from(sourceMarkdown, "utf8"), {
+      sourceUri: canonicalUrl,
+      titleHint: input.title,
+      tags
+    });
+    try {
+      parsed.itemId = existing?.itemId ?? `url:sha256:${urlHash(canonicalUrl)}`;
+      parsed.identityHash = urlHash(canonicalUrl);
+      parsed.rawdoc.source_uri = canonicalUrl;
+      parsed.rawdoc.metadata = {
+        ...(parsed.rawdoc.metadata ?? {}),
+        ...structuredImportMetadata(input, canonicalUrl)
+      };
+      parsed.document.meta.title = input.title;
+      parsed.document.meta.page_title = input.title;
+      parsed.document.meta.authors = input.authors ?? [];
+      parsed.document.meta.published_at = input.publishedAt ?? null;
+      if (input.language) {
+        parsed.document.meta.language = input.language;
+      }
+      parsed.document.meta.tags = tags;
+      parsed.document.meta.source.url = canonicalUrl;
+
+      const documentWithAssets = await store.prepareDocumentAssets(parsed.document);
+      const markdown = documentToMarkdown(documentWithAssets);
+      const result = await store.saveImportItem({
+        itemId: parsed.itemId,
+        sourceType: "markdown",
+        sourceUri: canonicalUrl,
+        originalUrl: input.url,
+        urlAlias: canonicalUrl,
+        inputMode: "structured_import",
+        rawdocId: parsed.rawdoc.rawdoc_id,
+        rawdoc: parsed.rawdoc,
+        rawContentPath: Buffer.from(sourceMarkdown, "utf8"),
+        document: documentWithAssets,
+        markdown,
+        pageTitle: input.title,
+        language: input.language,
+        creators: input.authors ?? [],
+        tags,
+        identityHash: parsed.identityHash,
+        content: Buffer.from(sourceMarkdown, "utf8"),
+        contentExt: "md",
+        owner: input.owner
+      });
+      return {
+        knowledgeItem: result.knowledgeItem,
+        rawdoc: parsed.rawdoc,
+        document: documentWithAssets,
+        markdown,
+        saved: true,
+        paths: result.paths,
+        ...(parsed.warnings.length ? { warnings: parsed.warnings } : {})
+      };
+    } finally {
+      await parsed.cleanup();
+    }
+  });
+
   app.post("/api/import/github/markdown/scan", async (request): Promise<GitHubMarkdownScanResponse> => {
     const input = parseGitHubMarkdownRequest(request.body);
     const fetched = await loadGitHubMarkdown(input);
@@ -1798,6 +1879,114 @@ function parseEpubImportRequest(contentType: string | undefined, body: unknown):
   }
 
   throw new Error("EPUB file is required");
+}
+
+function structuredImportTags(input: StructuredImportRequest): string[] {
+  const tags = [...(input.tags ?? []), `platform:${input.platform}`]
+    .map((tag) => tag.trim())
+    .filter(Boolean);
+  return [...new Set(tags)];
+}
+
+function structuredImportMetadata(input: StructuredImportRequest, canonicalUrl: string): Record<string, unknown> {
+  const metadata = input.metadata ?? {};
+  return {
+    provider: input.provider,
+    platform: input.platform,
+    platformItemId: input.itemId,
+    importMode: "structured",
+    originalUrl: input.url,
+    canonicalUrl,
+    title: input.title,
+    authors: input.authors ?? [],
+    publishedAt: input.publishedAt ?? null,
+    media: input.media ?? [],
+    commentCount: input.comments?.length ?? 0,
+    stats: metadata.stats ?? null,
+    sourceMetadata: metadata
+  };
+}
+
+function structuredImportMarkdown(input: StructuredImportRequest): string {
+  const parts: string[] = [];
+  const body = stripStructuredTitle(input.markdown.trim(), input.title);
+  if (body) parts.push(body);
+
+  const media = structuredMediaSection(input);
+  if (media) parts.push(media);
+
+  if (input.commentsMode === "append" && input.comments && input.comments.length > 0) {
+    parts.push(structuredCommentsSection(input.comments));
+  }
+
+  return `${parts.join("\n\n").trimEnd()}\n`;
+}
+
+function stripStructuredTitle(markdown: string, title: string): string {
+  const match = /^#\s+(.+?)\s*(?:\r?\n|$)/.exec(markdown);
+  if (!match) return markdown;
+  const normalize = (value: string) => value.replace(/\s+/g, " ").trim().toLowerCase();
+  if (normalize(match[1]) !== normalize(title)) return markdown;
+  return markdown.slice(match[0].length).replace(/^\s*\n/, "");
+}
+
+function structuredMediaSection(input: StructuredImportRequest): string | undefined {
+  if (!input.media || input.media.length === 0) return undefined;
+  const lines = ["## 媒体", ""];
+  for (const item of input.media) {
+    if (item.type === "image") {
+      const alt = escapeStructuredLinkText(item.alt ?? item.caption ?? "image");
+      lines.push(`![${alt}](${item.url})`, "");
+      continue;
+    }
+    const label = item.caption ?? item.alt ?? item.type;
+    lines.push(`- [${label}](${item.url})`);
+  }
+  return lines.join("\n").trimEnd();
+}
+
+function structuredCommentsSection(comments: StructuredImportRequest["comments"]): string {
+  const lines = ["## 评论", ""];
+  for (const comment of comments ?? []) {
+    const meta = [comment.author?.trim() || "匿名", structuredDate(comment.createdAt), structuredLikes(comment.likes)]
+      .filter(Boolean)
+      .join(" · ");
+    lines.push(`### ${meta}`, "", neutralizeStructuredText(comment.text), "");
+    for (const reply of comment.replies ?? []) {
+      const replyMeta = [reply.author?.trim() || "匿名", structuredDate(reply.createdAt), structuredLikes(reply.likes)]
+        .filter(Boolean)
+        .join(" · ");
+      const replyBody = neutralizeStructuredText(reply.text)
+        .split("\n")
+        .map((line) => `> ${line}`)
+        .join("\n");
+      lines.push(`> **${replyMeta}**`, ">", replyBody, "");
+    }
+  }
+  return lines.join("\n").trimEnd();
+}
+
+function structuredDate(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  const match = /^(\d{4}-\d{2}-\d{2})/.exec(value.trim());
+  return match ? match[1] : value;
+}
+
+function structuredLikes(value: number | undefined): string | undefined {
+  return typeof value === "number" ? `${value} 赞` : undefined;
+}
+
+function neutralizeStructuredText(text: string): string {
+  return text
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map((line) => line.replace(/^(\s*)(#{1,6}\s)/, "$1\\$2").replace(/^(\s*)>/, "$1\\>"))
+    .join("\n")
+    .trim();
+}
+
+function escapeStructuredLinkText(value: string): string {
+  return value.replace(/[[\]]/g, "\\$&");
 }
 
 function parseMarkdownImportRequest(contentType: string | undefined, body: unknown): {

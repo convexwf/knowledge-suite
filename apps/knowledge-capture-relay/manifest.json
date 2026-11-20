@@ -7,12 +7,21 @@
   "host_permissions": [
     "https://www.xiaoheihe.cn/*",
     "https://xiaoheihe.cn/*",
+    "https://www.reddit.com/*",
+    "https://reddit.com/*",
+    "https://old.reddit.com/*",
     "http://127.0.0.1/*"
   ],
   "background": { "service_worker": "background.js", "type": "module" },
   "content_scripts": [
     {
-      "matches": ["https://www.xiaoheihe.cn/*", "https://xiaoheihe.cn/*"],
+      "matches": [
+        "https://www.xiaoheihe.cn/*",
+        "https://xiaoheihe.cn/*",
+        "https://www.reddit.com/*",
+        "https://reddit.com/*",
+        "https://old.reddit.com/*"
+      ],
       "js": ["content.js"],
       "run_at": "document_idle"
     }

@@ -87,6 +87,59 @@ export const StoreClearParsedRequestSchema = z.object({
 });
 export type StoreClearParsedRequest = z.infer<typeof StoreClearParsedRequestSchema>;
 
+// ── Structured import (external content producers such as catbus) ──────────
+
+export const StructuredImportReplySchema = z.object({
+  id: z.string().min(1).max(512).optional(),
+  author: z.string().max(256).optional(),
+  text: z.string().min(1),
+  createdAt: z.string().min(1).max(64).optional(),
+  likes: z.number().int().nonnegative().optional()
+});
+export type StructuredImportReply = z.infer<typeof StructuredImportReplySchema>;
+
+export const StructuredImportCommentSchema = z.object({
+  id: z.string().min(1).max(512).optional(),
+  parentId: z.string().min(1).max(512).optional(),
+  author: z.string().max(256).optional(),
+  text: z.string().min(1),
+  createdAt: z.string().min(1).max(64).optional(),
+  likes: z.number().int().nonnegative().optional(),
+  replies: z.array(StructuredImportReplySchema).max(10).optional()
+});
+export type StructuredImportComment = z.infer<typeof StructuredImportCommentSchema>;
+
+export const StructuredImportMediaSchema = z.object({
+  type: z.enum(["image", "video", "audio", "file"]),
+  url: z.string().url(),
+  alt: z.string().max(512).optional(),
+  caption: z.string().max(1024).optional(),
+  width: z.number().int().positive().optional(),
+  height: z.number().int().positive().optional()
+});
+export type StructuredImportMedia = z.infer<typeof StructuredImportMediaSchema>;
+
+export const StructuredImportRequestSchema = z.object({
+  provider: z.string().min(1).max(64),
+  platform: z.string().min(1).max(64),
+  itemId: z.string().min(1).max(512),
+  url: z.string().url(),
+  canonicalUrl: z.string().url().optional(),
+  title: z.string().min(1).max(1000),
+  authors: z.array(z.string().min(1).max(256)).max(50).optional(),
+  publishedAt: z.string().min(1).max(64).optional(),
+  language: z.string().min(1).max(64).optional(),
+  tags: z.array(z.string().min(1).max(64)).max(50).optional(),
+  owner: z.string().min(1).max(64).optional(),
+  markdown: z.string().min(1),
+  comments: z.array(StructuredImportCommentSchema).max(100).optional(),
+  media: z.array(StructuredImportMediaSchema).max(50).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
+  commentsMode: z.enum(["append", "none"]).default("append"),
+  overwrite: z.boolean().default(true)
+});
+export type StructuredImportRequest = z.infer<typeof StructuredImportRequestSchema>;
+
 // ── Response types ─────────────────────────────────────────────────────────
 
 export interface KnowledgeItemStatus {

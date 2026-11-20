@@ -2131,6 +2131,179 @@ describe("knowledge ingest server", () => {
     expect(response.json().message).toContain("Expected HTML");
     await app.close();
   });
+
+  it("imports structured external content with comments, media, aliases, and overwrite semantics", async () => {
+    const app = await buildServer({
+      host: "127.0.0.1",
+      port: 0,
+      token: "test-token",
+      storeRoot,
+      fetchTimeoutMs: 1000,
+      maxHtmlBytes: 1024 * 1024,
+      maxImportBytes: 1024 * 1024
+    });
+    const canonicalUrl = "https://x.com/alice/status/1234567890";
+    const payload = {
+      provider: "catbus",
+      platform: "x",
+      itemId: "1234567890",
+      url: "https://x.com/i/status/1234567890",
+      canonicalUrl,
+      title: "Agent memory notes",
+      authors: ["Alice"],
+      publishedAt: "2026-11-08T12:00:00+08:00",
+      language: "en",
+      tags: ["AI"],
+      owner: "xiaojing",
+      markdown: "# Agent memory notes\n\nLong-term memory should be explicit.\n\n- Keep notes small\n",
+      comments: [
+        {
+          id: "c1",
+          author: "Bob",
+          text: "Start with a simple **notes** file.",
+          createdAt: "2026-11-08T12:30:00+08:00",
+          likes: 12,
+          replies: [
+            {
+              author: "Carol",
+              text: "And review it weekly.",
+              createdAt: "2026-11-08T13:00:00+08:00",
+              likes: 2
+            }
+          ]
+        }
+      ],
+      media: [
+        { type: "image", url: "https://pbs.twimg.com/media/example.jpg", alt: "diagram" }
+      ],
+      metadata: { stats: { views: 1000, likes: 50 } }
+    };
+
+    const imported = await app.inject({
+      method: "POST",
+      url: "/api/import/structured",
+      headers: { authorization: "Bearer test-token" },
+      payload
+    });
+
+    expect(imported.statusCode).toBe(200);
+    const saved = imported.json();
+    expect(saved.saved).toBe(true);
+    expect(saved.knowledgeItem).toMatchObject({
+      sourceType: "markdown",
+      title: "Agent memory notes",
+      creators: ["Alice"],
+      language: "en",
+      owner: "xiaojing",
+      state: "parsed"
+    });
+    expect(saved.knowledgeItem.tags).toEqual(expect.arrayContaining(["AI", "platform:x"]));
+    expect(saved.rawdoc).toMatchObject({
+      source_type: "markdown",
+      source_uri: canonicalUrl
+    });
+    expect(saved.rawdoc.metadata).toMatchObject({
+      provider: "catbus",
+      platform: "x",
+      platformItemId: "1234567890",
+      importMode: "structured",
+      canonicalUrl,
+      originalUrl: "https://x.com/i/status/1234567890",
+      stats: { views: 1000, likes: 50 }
+    });
+    expect(saved.document.meta.source.url).toBe(canonicalUrl);
+    expect(saved.document.meta.published_at).toBe("2026-11-08T12:00:00+08:00");
+    expect(saved.markdown.match(/# Agent memory notes/g)).toHaveLength(1);
+    expect(saved.markdown).toContain("## 评论");
+    expect(saved.markdown).toContain("### Bob · 2026-11-08 · 12 赞");
+    expect(saved.markdown).toContain("> **Carol · 2026-11-08 · 2 赞**");
+    expect(saved.markdown).toContain("> And review it weekly.");
+    expect(saved.markdown).toContain("![diagram](https://pbs.twimg.com/media/example.jpg)");
+
+    const status = await app.inject({
+      method: "GET",
+      url: `/api/ingest/status?url=${encodeURIComponent(canonicalUrl)}`,
+      headers: { authorization: "Bearer test-token" }
+    });
+    expect(status.statusCode).toBe(200);
+    expect(status.json()).toMatchObject({
+      state: "parsed",
+      itemId: saved.knowledgeItem.itemId,
+      normalizedUrl: canonicalUrl
+    });
+
+    const listed = await app.inject({
+      method: "GET",
+      url: "/api/items?owner=xiaojing&tag=platform:x",
+      headers: { authorization: "Bearer test-token" }
+    });
+    expect(listed.statusCode).toBe(200);
+    expect(listed.json().items).toHaveLength(1);
+    expect(listed.json().items[0].itemId).toBe(saved.knowledgeItem.itemId);
+
+    const reimported = await app.inject({
+      method: "POST",
+      url: "/api/import/structured",
+      headers: { authorization: "Bearer test-token" },
+      payload: { ...payload, markdown: "# Agent memory notes\n\nUpdated body.\n" }
+    });
+    expect(reimported.statusCode).toBe(200);
+    expect(reimported.json().knowledgeItem.itemId).toBe(saved.knowledgeItem.itemId);
+    expect(reimported.json().markdown).toContain("Updated body.");
+    const afterReimport = await app.inject({
+      method: "GET",
+      url: "/api/items?owner=xiaojing&tag=platform:x",
+      headers: { authorization: "Bearer test-token" }
+    });
+    expect(afterReimport.json().items).toHaveLength(1);
+
+    const conflict = await app.inject({
+      method: "POST",
+      url: "/api/import/structured",
+      headers: { authorization: "Bearer test-token" },
+      payload: { ...payload, overwrite: false }
+    });
+    expect(conflict.statusCode).toBe(409);
+    expect(conflict.json()).toMatchObject({ error: "item_exists", itemId: saved.knowledgeItem.itemId });
+
+    const invalid = await app.inject({
+      method: "POST",
+      url: "/api/import/structured",
+      headers: { authorization: "Bearer test-token" },
+      payload: { provider: "catbus" }
+    });
+    expect(invalid.statusCode).toBe(400);
+    expect(invalid.json().error).toBe("bad_request");
+
+    await app.close();
+  });
+
+  it("rejects oversized structured payloads", async () => {
+    const app = await buildServer({
+      host: "127.0.0.1",
+      port: 0,
+      token: "test-token",
+      storeRoot,
+      fetchTimeoutMs: 1000,
+      maxHtmlBytes: 2048,
+      maxImportBytes: 2048
+    });
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/import/structured",
+      headers: { authorization: "Bearer test-token" },
+      payload: {
+        provider: "catbus",
+        platform: "x",
+        itemId: "1",
+        url: "https://x.com/a/status/1",
+        title: "Too large",
+        markdown: "x".repeat(4096)
+      }
+    });
+    expect(response.statusCode).toBe(413);
+    await app.close();
+  });
 });
 
 async function waitForBatchJob(app: FastifyInstance, jobId: string): Promise<{

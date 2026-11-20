@@ -1,6 +1,12 @@
 const DEFAULT_SERVER = "http://127.0.0.1:18765";
 const DEFAULT_TOKEN = "dev-token";
-const ALLOWED_HOSTS = new Set(["www.xiaoheihe.cn", "xiaoheihe.cn"]);
+const ALLOWED_HOSTS = new Set([
+  "www.xiaoheihe.cn",
+  "xiaoheihe.cn",
+  "www.reddit.com",
+  "reddit.com",
+  "old.reddit.com"
+]);
 const BLOCKED_PATTERN = /(\u9a8c\u8bc1\u7801|\u5b89\u5168\u9a8c\u8bc1|\u8bbf\u95ee\u8fc7\u4e8e\u9891\u7e41|\u8bf7\u5b8c\u6210\u9a8c\u8bc1|\u6ed1\u5757\u9a8c\u8bc1)/;
 const PING_INTERVAL_MS = 20000;
 const RECONNECT_DELAY_MS = 3000;
