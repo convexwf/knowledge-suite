@@ -714,64 +714,6 @@ export class KnowledgeStore {
     }
   }
 
-  async importCategoryPartition(sourcePath: string, category: string): Promise<void> {
-    await this.ensure();
-    this.assertRegisteredCategory(category);
-    const existing = (this.database!.prepare("SELECT COUNT(*) AS count FROM items").get() as { count: number }).count;
-    if (existing !== 0) throw new Error(`Category database '${category}' is not empty during migration`);
-
-    this.database!.prepare("ATTACH DATABASE ? AS legacy_store").run(sourcePath);
-    this.database!.exec("BEGIN IMMEDIATE");
-    try {
-      const copyFromLegacy = (table: string, where: string, values: string[] = []): void => {
-        const targetColumns = this.database!.prepare(`PRAGMA main.table_info(${table})`).all() as Array<{ name: string }>;
-        const sourceColumns = this.database!.prepare(`PRAGMA legacy_store.table_info(${table})`).all() as Array<{ name: string }>;
-        const sourceNames = new Set(sourceColumns.map((column) => column.name));
-        const columns = targetColumns.map((column) => column.name).filter((name) => sourceNames.has(name));
-        if (columns.length === 0) {
-          throw new Error(`Cannot migrate '${table}': source and target have no columns in common`);
-        }
-        const columnList = columns.map((name) => `"${name.replace(/"/g, '""')}"`).join(", ");
-        this.database!.prepare(
-          `INSERT INTO main.${table} (${columnList}) SELECT ${columnList} FROM legacy_store.${table} WHERE ${where}`
-        ).run(...values);
-      };
-      const copyForCategory = [
-        "items",
-        "item_aliases",
-        "rawdocs",
-        "documents",
-        "collection_memberships",
-        "epub_metadata",
-        "chunks"
-      ];
-      for (const table of copyForCategory) {
-        const itemFilter = table === "items"
-          ? "category = ?"
-          : table === "item_aliases" || table === "rawdocs" || table === "documents" || table === "epub_metadata" || table === "chunks"
-            ? `item_id IN (SELECT item_id FROM legacy_store.items WHERE category = ?)`
-            : `collection_item_id IN (SELECT item_id FROM legacy_store.items WHERE category = ?)`;
-        copyFromLegacy(table, itemFilter, [category]);
-      }
-
-      copyFromLegacy(
-        "batch_jobs",
-        "collection_id IN (SELECT item_id FROM legacy_store.items WHERE category = ?) OR (collection_id IS NULL AND ? = 'default')",
-        [category, category]
-      );
-      copyFromLegacy("batch_items", "job_id IN (SELECT job_id FROM main.batch_jobs)");
-      copyFromLegacy("chunk_embeddings", "chunk_id IN (SELECT chunk_id FROM main.chunks)");
-      copyFromLegacy("annotations", "doc_id IN (SELECT doc_id FROM main.documents)");
-      this.database!.exec("INSERT INTO chunks_fts(chunks_fts) VALUES('rebuild')");
-      this.database!.exec("COMMIT");
-    } catch (error) {
-      this.database!.exec("ROLLBACK");
-      throw error;
-    } finally {
-      this.database!.exec("DETACH DATABASE legacy_store");
-    }
-  }
-
   private ensureFtsTokenizer(): void {
     const row = this.database!.prepare(
       "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'chunks_fts'"

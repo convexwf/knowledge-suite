@@ -1,13 +1,10 @@
-import { DatabaseSync } from "node:sqlite";
-import { access, mkdir, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { StoreClearParsedResponse, StoreClearResponse, StoreMaintenanceScan } from "@uknowledge/knowledge-schema";
 import { KnowledgeStore, type StoreOptions } from "./store.js";
 
 const CATEGORY_DATABASE_DIR = join("index", "categories");
-const CATEGORY_MIGRATION_MARKER = "migration.json";
-const CATEGORY_SCHEMA_VERSION = 1;
 
 export class CategoryItemConflictError extends Error {
   readonly statusCode = 409;
@@ -100,7 +97,7 @@ export class CategoryStoreRegistry {
   }
 
   async ensureAll(): Promise<void> {
-    await this.migrateLegacyDatabase();
+    await mkdir(join(this.root, CATEGORY_DATABASE_DIR), { recursive: true });
     await this.assertRegisteredDatabaseFiles();
     for (const category of this.categories) {
       await this.withCategory(category, () => this.getStore(category).ensure());
@@ -287,97 +284,6 @@ export class CategoryStoreRegistry {
     return results;
   }
 
-  private async migrateLegacyDatabase(): Promise<void> {
-    const indexRoot = join(this.root, "index");
-    const finalDir = join(this.root, CATEGORY_DATABASE_DIR);
-    const stagingDir = join(this.root, "index", "categories.next");
-    const markerPath = join(finalDir, CATEGORY_MIGRATION_MARKER);
-    const legacyPath = join(this.root, "index.sqlite3");
-    const legacyBackupPath = `${legacyPath}.pre-category-split`;
-
-    if (await exists(markerPath)) {
-      if (await exists(legacyPath) && !(await exists(legacyBackupPath))) {
-        await rename(legacyPath, legacyBackupPath);
-      }
-      return;
-    }
-    if (await exists(finalDir)) {
-      throw new Error(`Category database directory exists without a migration marker: ${finalDir}`);
-    }
-    if (await exists(stagingDir)) {
-      throw new Error(`Incomplete category database migration staging directory exists: ${stagingDir}`);
-    }
-
-    await mkdir(indexRoot, { recursive: true });
-    const hasLegacyDatabase = await exists(legacyPath);
-    if (hasLegacyDatabase) {
-      const legacyStore = new KnowledgeStore(this.root, {
-        ...this.options,
-        databasePath: legacyPath
-      });
-      try {
-        await legacyStore.ensure();
-      } finally {
-        await legacyStore.close();
-      }
-
-      const legacy = new DatabaseSync(legacyPath);
-      try {
-        const categoryRows = legacy.prepare("SELECT DISTINCT category FROM items").all() as Array<{ category: string }>;
-        const unregistered = categoryRows.map((row) => row.category).filter((category) => !this.categories.includes(category));
-        if (unregistered.length > 0) {
-          throw new Error(`Legacy store uses unregistered categories: ${unregistered.join(", ")}. Add them to KNOWLEDGE_CATEGORIES before starting.`);
-        }
-        const crossCategoryMembership = legacy.prepare(`
-          SELECT cm.collection_item_id
-          FROM collection_memberships cm
-          JOIN items collection_item ON collection_item.item_id = cm.collection_item_id
-          JOIN items member_item ON member_item.item_id = cm.member_item_id
-          WHERE collection_item.category <> member_item.category
-          LIMIT 1
-        `).get() as { collection_item_id: string } | undefined;
-        if (crossCategoryMembership) {
-          throw new Error(`Legacy collection '${crossCategoryMembership.collection_item_id}' spans categories; split its members before migration.`);
-        }
-      } finally {
-        legacy.close();
-      }
-    }
-
-    await mkdir(stagingDir, { recursive: false });
-    const migratedCategories: string[] = [];
-    const stagedStores: KnowledgeStore[] = [];
-    try {
-      for (const category of this.categories) {
-        const stagedStore = new KnowledgeStore(this.root, {
-          ...this.options,
-          databasePath: join(stagingDir, `${category}.sqlite3`),
-          databaseCategory: category,
-          isAssetReferencedElsewhere: undefined
-        });
-        stagedStores.push(stagedStore);
-        await stagedStore.ensure();
-        if (hasLegacyDatabase) await stagedStore.importCategoryPartition(legacyPath, category);
-        migratedCategories.push(category);
-        await stagedStore.close();
-      }
-      await writeFile(join(stagingDir, CATEGORY_MIGRATION_MARKER), JSON.stringify({
-        schemaVersion: CATEGORY_SCHEMA_VERSION,
-        source: hasLegacyDatabase ? "index.sqlite3" : "empty-store",
-        categories: migratedCategories,
-        migratedAt: new Date().toISOString()
-      }, null, 2), "utf8");
-      await rename(stagingDir, finalDir);
-      if (hasLegacyDatabase && !(await exists(legacyBackupPath))) {
-        await rename(legacyPath, legacyBackupPath);
-      }
-    } catch (error) {
-      await Promise.allSettled(stagedStores.map((store) => store.close()));
-      await rm(stagingDir, { recursive: true, force: true });
-      throw error;
-    }
-  }
-
   private async assertRegisteredDatabaseFiles(): Promise<void> {
     const directory = join(this.root, CATEGORY_DATABASE_DIR);
     const entries = await readdir(directory);
@@ -388,14 +294,5 @@ export class CategoryStoreRegistry {
     if (unregistered.length > 0) {
       throw new Error(`Stored categories are not registered: ${unregistered.join(", ")}. Add them to KNOWLEDGE_CATEGORIES.`);
     }
-  }
-}
-
-async function exists(path: string): Promise<boolean> {
-  try {
-    await access(path);
-    return true;
-  } catch {
-    return false;
   }
 }
