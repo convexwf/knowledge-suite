@@ -135,7 +135,7 @@ Invoke-RestMethod -Uri "http://127.0.0.1:18765/api/capture" -Method Post `
   -Body ([Text.Encoding]::UTF8.GetBytes($body))
 ```
 
-`tabId` 是 Chrome `tabs` API 使用的正整数标签 ID，不是 CDP target ID。Relay 会确认标签仍位于白名单 HTTPS 主机，且路径与请求 URL 一致；不匹配时拒绝快照。复用现有标签只支持 `mode: "document"`，因为链接发现会点击分类并改变页面导航。捕获前 Relay 会在目标标签注入幂等的 `content.js`，以兼容页面先于扩展加载的情况；不会刷新、导航或关闭标签，`keepOpen` 不改变这一点。登录身份检查和正文/评论加载判断由 CDP 调用方在交接前完成。
+`tabId` 是 Chrome `tabs` API 使用的正整数标签 ID，不是 CDP target ID。Relay 会确认标签仍位于白名单 HTTPS 主机，且路径与请求 URL 一致；不匹配时拒绝快照。复用现有标签只支持 `mode: "document"`，因为链接发现会点击分类并改变页面导航。目标页正常情况下使用 `manifest.json` 声明的静态 `content.js`；若扩展重载前已打开的页面没有接收端，Relay 才按需注入一次。该模式不会刷新、导航或关闭标签，`keepOpen` 不改变这一点。登录身份检查和正文/评论加载判断由 CDP 调用方在交接前完成。
 
 ## Token 消耗
 

@@ -165,11 +165,10 @@ async function runCaptureInExistingTab(task, target) {
   assertTabMatchesTarget(target, tab.url);
   await waitForLoad(tabId, Number(task.loadTimeoutMs) || 45000);
   await waitForStable(tabId, Number(task.waitMs) || 8000);
-  await injectContentScript(tabId);
 
   const currentTab = await chrome.tabs.get(tabId);
   assertTabMatchesTarget(target, currentTab.url);
-  const result = await captureTab(tabId, task, true);
+  const result = await captureTab(tabId, task, true, true);
   if (result.snapshot) assertTabMatchesTarget(target, result.snapshot.pageUrl);
   return { ...result, reusedTab: true };
 }
@@ -181,7 +180,7 @@ async function injectContentScript(tabId) {
   });
 }
 
-async function captureTab(tabId, task, ready = false) {
+async function captureTab(tabId, task, ready = false, injectContentScriptIfMissing = false) {
   if (!ready) {
     await waitForLoad(tabId, Number(task.loadTimeoutMs) || 45000);
     await waitForStable(tabId, Number(task.waitMs) || 8000);
@@ -190,7 +189,7 @@ async function captureTab(tabId, task, ready = false) {
     const links = await requestLinks(tabId, 10);
     return { blocked: false, links };
   }
-  const snapshot = await requestSnapshot(tabId, 10);
+  const snapshot = await requestSnapshot(tabId, 10, injectContentScriptIfMissing);
   const text = String(snapshot.text || "");
   const compact = text.replace(/\s+/g, "");
   if (compact.length < 60) {
@@ -268,8 +267,9 @@ async function measureBodyLength(tabId) {
   }
 }
 
-async function requestSnapshot(tabId, attempts) {
+async function requestSnapshot(tabId, attempts, injectContentScriptIfMissing = false) {
   let lastError = new Error("snapshot request failed");
+  let injectedContentScript = false;
   for (let index = 0; index < attempts; index += 1) {
     try {
       const snapshot = await chrome.tabs.sendMessage(tabId, { type: "knowledge.capture.snapshot" });
@@ -277,6 +277,15 @@ async function requestSnapshot(tabId, attempts) {
       lastError = new Error("content script returned an empty snapshot");
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
+      if (
+        injectContentScriptIfMissing &&
+        !injectedContentScript &&
+        /receiving end does not exist|could not establish connection/i.test(lastError.message)
+      ) {
+        await injectContentScript(tabId);
+        injectedContentScript = true;
+        continue;
+      }
     }
     await sleep(400);
   }
