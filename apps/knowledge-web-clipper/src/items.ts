@@ -902,46 +902,41 @@ function renderCategoryFilterBar(): void {
 }
 
 function renderTagFilterBar(): void {
-  const label = document.createElement("span");
-  label.className = "filter-chip-label";
+  const label = document.createElement("label");
   label.textContent = "Tag";
-  const rail = document.createElement("div");
-  rail.className = "filter-chip-rail";
-  const makeChip = (value: string, text: string) => {
-    const chip = document.createElement("button");
-    chip.type = "button";
-    chip.className = "filter-chip";
-    chip.dataset.active = String(value === activeTagFilter);
-    chip.setAttribute("aria-pressed", String(value === activeTagFilter));
-    chip.textContent = text;
-    chip.addEventListener("click", () => {
-      activeTagFilter = value;
-      const url = new URL(globalThis.location.href);
-      if (activeTagFilter) {
-        url.searchParams.set("tag", activeTagFilter);
-      } else {
-        url.searchParams.delete("tag");
-      }
-      globalThis.history.replaceState(null, "", url);
-      renderFilterBar();
-      void refreshItems();
-    });
-    rail.append(chip);
-  };
-  makeChip("", "All tags");
+  const select = document.createElement("select");
+  select.setAttribute("aria-label", "Filter saved items by tag");
+  const allOption = document.createElement("option");
+  allOption.value = "";
+  allOption.textContent = "All tags";
+  select.append(allOption);
   if (activeTagFilter && !availableTags.some((entry) => entry.tag === activeTagFilter)) {
-    makeChip(activeTagFilter, activeTagFilter);
+    const selectedOption = document.createElement("option");
+    selectedOption.value = activeTagFilter;
+    selectedOption.textContent = activeTagFilter;
+    select.append(selectedOption);
   }
-  for (const entry of availableTags.slice(0, 24)) {
-    makeChip(entry.tag, `${entry.tag} (${entry.count})`);
+  for (const entry of availableTags) {
+    const option = document.createElement("option");
+    option.value = entry.tag;
+    option.textContent = `${entry.tag} (${entry.count})`;
+    select.append(option);
   }
-  if (availableTags.length === 0) {
-    const empty = document.createElement("span");
-    empty.className = "filter-chip-label";
-    empty.textContent = "No tags yet";
-    rail.append(empty);
-  }
-  tagFilterBar.replaceChildren(label, rail);
+  select.value = activeTagFilter;
+  select.addEventListener("change", () => {
+    activeTagFilter = select.value;
+    const url = new URL(globalThis.location.href);
+    if (activeTagFilter) {
+      url.searchParams.set("tag", activeTagFilter);
+    } else {
+      url.searchParams.delete("tag");
+    }
+    globalThis.history.replaceState(null, "", url);
+    renderFilterBar();
+    void refreshItems();
+  });
+  label.append(select);
+  tagFilterBar.replaceChildren(label);
 }
 
 function collectionRow(collection: ReaderListCollection): HTMLElement {
