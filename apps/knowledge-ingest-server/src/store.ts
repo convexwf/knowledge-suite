@@ -554,15 +554,10 @@ export class KnowledgeStore {
   // ── lifecycle ──────────────────────────────────────────────────────────
 
   async ensure(): Promise<void> {
-    await Promise.all([
-      mkdir(dirname(this.databasePath), { recursive: true }),
-      mkdir(join(this.root, "rawdocs"), { recursive: true }),
-      mkdir(join(this.root, "documents"), { recursive: true }),
-      mkdir(join(this.root, "outlines"), { recursive: true }),
-      mkdir(join(this.root, "markdown"), { recursive: true }),
-      mkdir(join(this.root, "assets"), { recursive: true })
-    ]);
-    this.ensureDatabase();
+    if (!this.database) {
+      await mkdir(dirname(this.databasePath), { recursive: true });
+      this.ensureDatabase();
+    }
     this.migrateSchemaIfNeeded();
     this.ensureRegisteredCategories();
     this.ensureFtsTokenizer();
