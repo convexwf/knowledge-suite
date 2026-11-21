@@ -251,6 +251,35 @@ select {
   gap: 10px;
 }
 
+.list-pagination {
+  align-items: center;
+  border-top: 1px solid #e3e9f0;
+  color: #526174;
+  display: flex;
+  font-size: 13px;
+  justify-content: space-between;
+  margin-top: 16px;
+  padding-top: 14px;
+}
+
+.pagination-controls {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+}
+
+.pagination-controls button {
+  min-height: 34px;
+  padding: 6px 10px;
+}
+
+.pagination-page-label {
+  color: #34445a;
+  font-variant-numeric: tabular-nums;
+  min-width: 82px;
+  text-align: center;
+}
+
 .item-row {
   align-items: start;
   border: 1px solid #d9e1ea;
@@ -470,6 +499,16 @@ select {
   .header-actions,
   .item-actions {
     align-items: stretch;
+  }
+
+  .list-pagination {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .pagination-controls {
+    justify-content: space-between;
   }
 
   .category-filter-control {

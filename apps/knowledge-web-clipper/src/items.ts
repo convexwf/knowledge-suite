@@ -1,8 +1,8 @@
 import { createKnowledgeApiClient } from "./api-client.js";
 import {
   buildBatchDeletePlan,
-  buildReaderListEntries,
   normalizeSourceFilter,
+  ReaderListEntry,
   ReaderListCollection,
   resolveCollectionShellsToDelete,
   SourceFilter
@@ -14,11 +14,9 @@ import { openKnowledgePage } from "./tabs.js";
 import { parseGitHubMarkdownUrl } from "./github-markdown-url.js";
 import {
   CollectionDetail,
-  CollectionSummary,
   GitHubMarkdownRequest,
   GitHubMarkdownScanResult,
   KnowledgeItem,
-  KnowledgeItemListResult,
   KnowledgeSearchResponse,
   KnowledgeSearchResultItem,
   KnowledgeSourceType
@@ -70,6 +68,7 @@ const githubScanOutput = mustGet<HTMLElement>("github-scan-output");
 const githubScanButton = mustGet<HTMLButtonElement>("github-scan");
 const githubImportButton = mustGet<HTMLButtonElement>("github-import");
 const itemList = mustGet<HTMLElement>("item-list");
+const pagination = mustGet<HTMLElement>("pagination");
 const refreshButton = mustGet<HTMLButtonElement>("refresh-items");
 const settingsButton = mustGet<HTMLButtonElement>("open-settings");
 const serverProfileSelect = mustGet<HTMLSelectElement>("server-profile");
@@ -106,7 +105,6 @@ let activeCategoryFilter: CategoryFilter = normalizeCategoryFilter(query.get("ca
 let client = createKnowledgeApiClient(settings, activeCategoryFilter);
 
 let currentItems: KnowledgeItem[] = [];
-let currentCollections: CollectionSummary[] = [];
 let markdownScan: MarkdownImportScan | undefined;
 let githubScan: GitHubMarkdownScanResult | undefined;
 let markdownFolderHandle: MarkdownDirectoryHandle | undefined;
@@ -114,6 +112,7 @@ let markdownResourceFolderHandle: MarkdownDirectoryHandle | undefined;
 let activeSourceFilter: SourceFilter = normalizeSourceFilter(query.get("source") ?? (query.get("collectionId") ? "collection" : "all"));
 let activeTagFilter = (query.get("tag") ?? "").trim();
 let activeSearchQuery = (query.get("q") ?? "").trim();
+let activePage = Math.max(Number.parseInt(query.get("page") ?? "1", 10) || 1, 1);
 let availableTags: Array<{ tag: string; count: number }> = [];
 let availableCategories = ["default"];
 const focusCollectionId = query.get("collectionId") || "";
@@ -633,6 +632,8 @@ async function refreshItems(): Promise<void> {
   const requestLimit = settings.savedListLimit;
   refreshButton.disabled = true;
   itemList.replaceChildren(loadingNode());
+  pagination.hidden = true;
+  pagination.replaceChildren();
   collectionDetailCache.clear();
   try {
     const categoriesResult = await requestClient.categories();
@@ -642,37 +643,41 @@ async function refreshItems(): Promise<void> {
       activeCategoryFilter = categoriesResult.defaultCategory;
       client = createKnowledgeApiClient(settings, activeCategoryFilter);
       requestClient = client;
+      activePage = 1;
       const url = new URL(globalThis.location.href);
       url.searchParams.delete("category");
+      url.searchParams.delete("page");
       globalThis.history.replaceState(null, "", url);
     }
-    const sourceType = activeSourceFilter !== "all" && activeSourceFilter !== "collection"
-      ? activeSourceFilter as KnowledgeSourceType
-      : undefined;
     const categoryParam = activeCategoryFilter;
     const listRequest = activeSearchQuery
       ? requestClient.search(activeSearchQuery, { limit: requestLimit, category: categoryParam })
-      : requestClient.listItems(sourceType, requestLimit, {
-        category: categoryParam,
-        tag: activeTagFilter || undefined
+      : requestClient.listReaderEntries({
+        sourceType: activeSourceFilter === "all" ? undefined : activeSourceFilter,
+        tag: activeTagFilter || undefined,
+        page: activePage,
+        pageSize: requestLimit
       });
-    const [result, collectionsResult, tagsResult] = await Promise.all([
+    const [result, tagsResult] = await Promise.all([
       listRequest,
-      requestClient.listCollections(),
       requestClient.listTags(categoryParam).catch(() => ({ tags: [] }))
     ]);
     if (generation !== refreshGeneration) return;
-    currentCollections = collectionsResult.collections;
     availableTags = tagsResult.tags;
     renderFilterBar();
     if (activeSearchQuery) {
+      pagination.hidden = true;
       renderSearchResults(result as KnowledgeSearchResponse);
       return;
     }
     searchStatus.hidden = true;
-    currentItems = await hydrateCollectionIds((result as KnowledgeItemListResult).items, requestClient);
-    if (generation !== refreshGeneration) return;
-    renderItems(currentItems);
+    const page = result as Awaited<ReturnType<typeof requestClient.listReaderEntries>>;
+    activePage = page.page;
+    syncPageQuery();
+    renderItems(page.entries.map((entry): ReaderListEntry => entry.kind === "standalone"
+      ? { ...entry.item, kind: "standalone" }
+      : { ...entry.collection, kind: "collection" }));
+    renderPagination(page.page, page.total, page.pageSize);
   } catch (error) {
     if (generation !== refreshGeneration) return;
     itemList.replaceChildren(emptyNode(errorMessage(error)));
@@ -685,6 +690,7 @@ async function refreshItems(): Promise<void> {
 
 function applySearch(value: string): void {
   activeSearchQuery = value.trim();
+  activePage = 1;
   clearSearchButton.hidden = !activeSearchQuery;
   const url = new URL(globalThis.location.href);
   if (activeSearchQuery) {
@@ -692,6 +698,7 @@ function applySearch(value: string): void {
   } else {
     url.searchParams.delete("q");
   }
+  url.searchParams.delete("page");
   globalThis.history.replaceState(null, "", url);
   void refreshItems();
 }
@@ -787,30 +794,13 @@ async function reloadServerProfileInternal(): Promise<void> {
     : "";
   if (previousSignature === nextSignature) return;
   currentItems = [];
-  currentCollections = [];
   collectionDetailCache.clear();
   renderFilterBar();
   await refreshItems();
 }
 
-async function hydrateCollectionIds(items: KnowledgeItem[], requestClient = client): Promise<KnowledgeItem[]> {
-  return Promise.all(items.map(async (item) => {
-    try {
-      const detail = await requestClient.item(item.itemId);
-      return { ...item, collectionIds: detail.collectionIds ?? [] };
-    } catch {
-      return { ...item, collectionIds: [] };
-    }
-  }));
-}
-
-function renderItems(items: KnowledgeItem[]): void {
-  currentItems = items;
-  const entries = buildReaderListEntries({
-    items,
-    collections: currentCollections,
-    sourceFilter: activeSourceFilter
-  });
+function renderItems(entries: ReaderListEntry[]): void {
+  currentItems = entries.flatMap((entry) => entry.kind === "standalone" ? [entry] : []);
   renderOverview(entries);
   itemList.replaceChildren();
 
@@ -824,6 +814,49 @@ function renderItems(items: KnowledgeItem[]): void {
     itemList.append(entry.kind === "collection" ? collectionRow(entry) : itemRow(entry));
   }
   updateBatchBar();
+}
+
+function syncPageQuery(): void {
+  const url = new URL(globalThis.location.href);
+  if (activePage > 1) {
+    url.searchParams.set("page", String(activePage));
+  } else {
+    url.searchParams.delete("page");
+  }
+  globalThis.history.replaceState(null, "", url);
+}
+
+function renderPagination(page: number, total: number, pageSize: number): void {
+  const pageCount = Math.ceil(total / pageSize);
+  pagination.replaceChildren();
+  if (pageCount <= 1) {
+    pagination.hidden = true;
+    return;
+  }
+
+  const summary = document.createElement("span");
+  summary.className = "pagination-summary";
+  summary.textContent = `Showing ${(page - 1) * pageSize + 1}–${Math.min(page * pageSize, total)} of ${total}`;
+  const controls = document.createElement("div");
+  controls.className = "pagination-controls";
+  const previous = button("Previous", "", () => {
+    activePage = Math.max(page - 1, 1);
+    syncPageQuery();
+    void refreshItems();
+  });
+  previous.disabled = page <= 1;
+  const pageLabel = document.createElement("span");
+  pageLabel.className = "pagination-page-label";
+  pageLabel.textContent = `Page ${page} of ${pageCount}`;
+  const next = button("Next", "", () => {
+    activePage = Math.min(page + 1, pageCount);
+    syncPageQuery();
+    void refreshItems();
+  });
+  next.disabled = page >= pageCount;
+  controls.append(previous, pageLabel, next);
+  pagination.append(summary, controls);
+  pagination.hidden = false;
 }
 
 function renderFilterBar(): void {
@@ -850,7 +883,9 @@ function renderFilterBar(): void {
     chip.textContent = option.label;
     chip.addEventListener("click", () => {
       activeSourceFilter = normalizeSourceFilter(option.value);
+      activePage = 1;
       const url = new URL(globalThis.location.href);
+      url.searchParams.delete("page");
       if (activeSourceFilter === "all") {
         url.searchParams.delete("source");
       } else {
@@ -886,8 +921,10 @@ function renderCategoryFilterBar(): void {
   select.value = activeCategoryFilter;
   select.addEventListener("change", () => {
     activeCategoryFilter = select.value || "default";
+    activePage = 1;
     client = createKnowledgeApiClient(settings, activeCategoryFilter);
     const url = new URL(globalThis.location.href);
+    url.searchParams.delete("page");
     if (activeCategoryFilter === "default") {
       url.searchParams.delete("category");
     } else {
@@ -925,7 +962,9 @@ function renderTagFilterBar(): void {
   select.value = activeTagFilter;
   select.addEventListener("change", () => {
     activeTagFilter = select.value;
+    activePage = 1;
     const url = new URL(globalThis.location.href);
+    url.searchParams.delete("page");
     if (activeTagFilter) {
       url.searchParams.set("tag", activeTagFilter);
     } else {
@@ -1028,10 +1067,19 @@ async function loadCollectionMembers(collectionId: string, host: HTMLElement, se
     const detail = await loadCollectionDetail(collectionId);
     const list = document.createElement("div");
     list.className = "collection-members-list";
-    for (const member of detail.items) {
-      if (!member.itemId) continue;
-      const item = currentItems.find((entry) => entry.itemId === member.itemId);
-      if (!item) continue;
+    const members = await Promise.all(detail.items.map(async (member) => {
+      if (!member.itemId) return { member, item: undefined };
+      const listedItem = currentItems.find((entry) => entry.itemId === member.itemId);
+      if (listedItem) return { member, item: listedItem };
+      try {
+        const response = await client.item(member.itemId);
+        return { member, item: response.item };
+      } catch {
+        return { member, item: undefined };
+      }
+    }));
+    for (const { member, item } of members) {
+      if (!member.itemId || !item) continue;
       const nestedRow = itemRow(item, { nested: true, indexLabel: `[${member.orderIndex + 1}]` });
       const nestedCheckbox = nestedRow.querySelector<HTMLInputElement>(".item-checkbox");
       if (nestedCheckbox) {
@@ -1108,7 +1156,7 @@ function itemRow(item: KnowledgeItem, options?: { nested?: boolean; indexLabel?:
   return row;
 }
 
-function renderOverview(entries: ReturnType<typeof buildReaderListEntries>): void {
+function renderOverview(entries: ReaderListEntry[]): void {
   const latest = entries
     .map((entry) => ({ entry, time: Date.parse(entry.updatedAt) }))
     .filter((entry) => !Number.isNaN(entry.time))

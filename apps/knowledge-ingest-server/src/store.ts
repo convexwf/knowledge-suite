@@ -63,6 +63,17 @@ export interface KnowledgeCatalogItem {
   sourceUrl: string | null;
 }
 
+export type ReaderListPageEntry =
+  | { kind: "standalone"; item: KnowledgeItem }
+  | { kind: "collection"; collection: CollectionSummary };
+
+export interface ReaderListPage {
+  entries: ReaderListPageEntry[];
+  page: number;
+  pageSize: number;
+  total: number;
+}
+
 export interface SyncedCollectionMember {
   membershipId: string;
   memberItemId: string;
@@ -1020,6 +1031,79 @@ export class KnowledgeStore {
     return {
       items: rows.map((row) => this.buildKnowledgeItem(row))
     };
+  }
+
+  async listReaderEntries(options: {
+    sourceType?: string;
+    tag?: string;
+    page?: number;
+    pageSize?: number;
+  } = {}): Promise<ReaderListPage> {
+    await this.ensure();
+    const pageSize = Math.min(Math.max(Math.trunc(options.pageSize ?? 50) || 50, 1), 200);
+    const requestedPage = Math.max(Math.trunc(options.page ?? 1) || 1, 1);
+    const selects: string[] = [];
+    const params: string[] = [];
+
+    if (options.sourceType !== "collection") {
+      let documentQuery = `SELECT i.item_id, i.item_type, i.updated_at AS sort_at
+        FROM items i
+        WHERE i.item_type = 'document'
+          AND NOT EXISTS (
+            SELECT 1 FROM collection_memberships cm WHERE cm.member_item_id = i.item_id
+          )`;
+      if (options.sourceType) {
+        documentQuery += " AND i.source_type = ?";
+        params.push(options.sourceType);
+      }
+      if (options.tag) {
+        documentQuery += " AND EXISTS (SELECT 1 FROM json_each(i.tags_json) AS jt WHERE jt.value = ?)";
+        params.push(options.tag);
+      }
+      selects.push(documentQuery);
+    }
+
+    if (!options.sourceType || options.sourceType === "collection") {
+      selects.push(`SELECT i.item_id, i.item_type, i.updated_at AS sort_at
+        FROM items i WHERE i.item_type = 'collection'`);
+    }
+
+    const unionQuery = selects.join(" UNION ALL ");
+    const total = (this.database!.prepare(
+      `SELECT COUNT(*) AS count FROM (${unionQuery})`
+    ).get(...params) as { count: number }).count;
+    const totalPages = Math.max(Math.ceil(total / pageSize), 1);
+    const page = Math.min(requestedPage, totalPages);
+    const offset = (page - 1) * pageSize;
+    const pageRows = this.database!.prepare(
+      `${unionQuery} ORDER BY sort_at DESC, item_id ASC LIMIT ? OFFSET ?`
+    ).all(...params, String(pageSize), String(offset)) as Array<{
+      item_id: string;
+      item_type: "document" | "collection";
+    }>;
+
+    const documentIds = pageRows.filter((row) => row.item_type === "document").map((row) => row.item_id);
+    const documents = documentIds.length > 0
+      ? this.database!.prepare(
+        `SELECT * FROM items WHERE item_id IN (${documentIds.map(() => "?").join(", ")})`
+      ).all(...documentIds) as unknown as ItemRow[]
+      : [];
+    const documentsById = new Map(documents.map((row) => [row.item_id, this.buildKnowledgeItem(row)]));
+    const collectionsById = new Map(pageRows
+      .filter((row) => row.item_type === "collection")
+      .map((row) => [row.item_id, this.loadCollectionSummary(row.item_id)]));
+    const entries: ReaderListPageEntry[] = [];
+    for (const row of pageRows) {
+      if (row.item_type === "collection") {
+        const collection = collectionsById.get(row.item_id);
+        if (collection) entries.push({ kind: "collection", collection });
+      } else {
+        const item = documentsById.get(row.item_id);
+        if (item) entries.push({ kind: "standalone", item });
+      }
+    }
+
+    return { entries, page, pageSize, total };
   }
 
   async listStoredItemIds(): Promise<Array<{ itemId: string; category: string }>> {

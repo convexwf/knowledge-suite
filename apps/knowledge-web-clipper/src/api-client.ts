@@ -81,6 +81,20 @@ export interface KnowledgeApiClient {
     limit?: number,
     filters?: { category?: string; tag?: string }
   ): Promise<KnowledgeItemListResult>;
+  listReaderEntries(filters?: {
+    sourceType?: KnowledgeSourceType | "collection";
+    tag?: string;
+    page?: number;
+    pageSize?: number;
+  }): Promise<{
+    entries: Array<
+      | { kind: "standalone"; item: KnowledgeItem }
+      | { kind: "collection"; collection: CollectionSummary }
+    >;
+    page: number;
+    pageSize: number;
+    total: number;
+  }>;
   listTags(category?: string): Promise<{ tags: Array<{ tag: string; count: number }> }>;
   search(query: string, filters?: { limit?: number; category?: string }): Promise<KnowledgeSearchResponse>;
   item(itemId: string): Promise<KnowledgeItemDetailResult>;
@@ -257,6 +271,29 @@ export function createKnowledgeApiClient(settings: ExtensionSettings, category =
         settings.token,
         "GET",
         `/api/items?${params.toString()}`,
+        undefined,
+        options
+      );
+    },
+    listReaderEntries: (filters = {}) => {
+      const params = new URLSearchParams();
+      if (filters.sourceType) params.set("sourceType", filters.sourceType);
+      if (filters.tag) params.set("tag", filters.tag);
+      if (filters.page != null) params.set("page", String(filters.page));
+      if (filters.pageSize != null) params.set("pageSize", String(filters.pageSize));
+      return request<{
+        entries: Array<
+          | { kind: "standalone"; item: KnowledgeItem }
+          | { kind: "collection"; collection: CollectionSummary }
+        >;
+        page: number;
+        pageSize: number;
+        total: number;
+      }>(
+        baseUrl,
+        settings.token,
+        "GET",
+        `/api/reader-list?${params.toString()}`,
         undefined,
         options
       );

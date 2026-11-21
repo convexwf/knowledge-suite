@@ -502,6 +502,21 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
     });
   });
 
+  app.get("/api/reader-list", async (request) => {
+    const query = request.query as {
+      sourceType?: string;
+      tag?: string;
+      page?: string;
+      pageSize?: string;
+    };
+    return store.listReaderEntries({
+      sourceType: query.sourceType,
+      tag: query.tag,
+      page: query.page ? Number(query.page) : undefined,
+      pageSize: query.pageSize ? Number(query.pageSize) : undefined
+    });
+  });
+
   app.get("/api/tags", async (request, reply) => {
     const query = request.query as { category?: string };
     if (query.category && !categories.includes(query.category)) {
