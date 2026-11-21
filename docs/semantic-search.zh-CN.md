@@ -78,5 +78,5 @@ Invoke-RestMethod -Uri "http://127.0.0.1:18765/api/embeddings/stats" -Headers @{
 ## 云上建议
 
 - 云上不装 Ollama：`KNOWLEDGE_SEARCH=off` 或 `fts`，`KNOWLEDGE_EMBEDDINGS=none`。
-- 只存内容：`off`；owner/tag 过滤仍然可用。
+- 只存内容：`off`；category/tag 过滤仍然可用。
 - 若云上也要语义检索，必须外接 embedding 服务；当前实现只支持 Ollama。

@@ -138,7 +138,7 @@ describe("KnowledgeStore", () => {
       const columns = migratedDatabase.prepare("PRAGMA table_info(items)").all() as Array<{ name: string }>;
       expect(columns.map((column) => column.name)).toContain("reading_progress_json");
       expect(columns.map((column) => column.name)).not.toContain("reading_section_id");
-      expect((migratedDatabase.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(17);
+      expect((migratedDatabase.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(18);
     } finally {
       migratedDatabase.close();
     }
@@ -553,34 +553,34 @@ describe("KnowledgeStore", () => {
     store.close();
   });
 
-  it("tracks item owner and filters by owner and tag", async () => {
+  it("tracks item category and filters by category and tag", async () => {
     const store = new KnowledgeStore(storeRoot);
-    const mine = fixture("40000000-0000-4000-8000-000000000001", "40000000-0000-4000-8000-00000000000a", "Mine", "Mine", "https://example.com/mine", {
-      tags: ["shared", "master-only"]
+    const defaultItem = fixture("40000000-0000-4000-8000-000000000001", "40000000-0000-4000-8000-00000000000a", "Default", "Default", "https://example.com/default", {
+      tags: ["shared", "default-only"]
     });
-    const hers = fixture("40000000-0000-4000-8000-000000000002", "40000000-0000-4000-8000-00000000000b", "Hers", "Hers", "https://example.com/hers", {
+    const botItem = fixture("40000000-0000-4000-8000-000000000002", "40000000-0000-4000-8000-00000000000b", "Bot", "Bot", "https://example.com/bot", {
       tags: ["shared", "agent-only"]
     });
 
-    await store.save(mine);
-    await store.save({ ...hers, owner: "xiaojing" });
+    await store.save(defaultItem);
+    await store.save({ ...botItem, category: "bot" });
 
     const all = await store.listItems();
-    expect(all.items.map((item) => item.owner)).toEqual(expect.arrayContaining(["master", "xiaojing"]));
+    expect(all.items.map((item) => item.category)).toEqual(expect.arrayContaining(["default", "bot"]));
 
-    expect((await store.listItems(undefined, 50, { owner: "master" })).items.map((item) => item.title)).toEqual(["Mine"]);
-    expect((await store.listItems(undefined, 50, { owner: "xiaojing" })).items.map((item) => item.title)).toEqual(["Hers"]);
+    expect((await store.listItems(undefined, 50, { category: "default" })).items.map((item) => item.title)).toEqual(["Default"]);
+    expect((await store.listItems(undefined, 50, { category: "bot" })).items.map((item) => item.title)).toEqual(["Bot"]);
     expect((await store.listItems(undefined, 50, { tag: "shared" })).items).toHaveLength(2);
-    expect((await store.listItems(undefined, 50, { owner: "xiaojing", tag: "shared" })).items).toHaveLength(1);
+    expect((await store.listItems(undefined, 50, { category: "bot", tag: "shared" })).items).toHaveLength(1);
 
-    expect(await store.listTags("xiaojing")).toEqual([
+    expect(await store.listTags("bot")).toEqual([
       { tag: "agent-only", count: 1 },
       { tag: "shared", count: 1 }
     ]);
 
-    // Re-saving without an owner keeps the existing owner.
-    await store.save(hers);
-    expect((await store.listItems(undefined, 50, { owner: "xiaojing" })).items).toHaveLength(1);
+    // Re-saving without a category keeps the existing category.
+    await store.save(botItem);
+    expect((await store.listItems(undefined, 50, { category: "bot" })).items).toHaveLength(1);
     store.close();
   });
 
@@ -778,7 +778,7 @@ function expectStoreSchema(root: string): void {
       "creators_json",
       "language",
       "tags_json",
-      "owner",
+      "category",
       "state",
       "member_visibility_mode",
       "active_capture_id",
@@ -792,6 +792,7 @@ function expectStoreSchema(root: string): void {
       "section_count",
       "asset_count"
     ]));
+    expect(columnsByTable.items).not.toContain("owner");
     expect(columnsByTable.item_aliases).toEqual(expect.arrayContaining([
       "alias_id",
       "item_id",

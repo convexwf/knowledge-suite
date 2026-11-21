@@ -612,7 +612,8 @@ select {
   color: var(--accent-warm);
 }
 
-.item-badge.owner {
+.item-badge.category,
+.item-badge.meta {
   background: var(--bg-hover);
   color: var(--text-muted);
 }

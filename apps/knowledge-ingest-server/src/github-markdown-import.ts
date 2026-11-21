@@ -9,6 +9,7 @@ export interface GitHubMarkdownRequest {
   ref: string;
   path: string;
   tags?: string[];
+  category?: string;
 }
 
 export interface GitHubImageAsset {
@@ -87,7 +88,8 @@ export function parseGitHubMarkdownRequest(body: unknown): GitHubMarkdownRequest
   const tags = Array.isArray(record.tags)
     ? record.tags.map(String).map((tag) => tag.trim()).filter(Boolean)
     : undefined;
-  return { owner, repo, ref, path: normalizedPath, tags };
+  const category = typeof record.category === "string" ? record.category.trim() : undefined;
+  return { owner, repo, ref, path: normalizedPath, tags, category };
 }
 
 export async function fetchGitHubMarkdown(

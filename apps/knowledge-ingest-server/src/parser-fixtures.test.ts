@@ -75,6 +75,7 @@ const casesRoot = join(fixtureRoot, "cases");
 const shouldUpdate = process.env.UPDATE_PARSER_FIXTURES === "1";
 
 const testConfig: ServerConfig = {
+  categories: ["default", "bot"],
   host: "127.0.0.1",
   port: 0,
   token: "fixture-token",

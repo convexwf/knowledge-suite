@@ -3,6 +3,10 @@ export type PanelView = "preview" | "json" | "rawdoc" | "parser" | "saved" | "ba
 export type KnowledgeItemState = "empty" | "captured" | "parsed";
 export type KnowledgeSourceType = "url" | "singlefile_html" | "pdf" | "epub" | "markdown";
 export type KnowledgeItemDeleteMode = "remove" | "purge";
+export interface KnowledgeCategoryListResult {
+  categories: string[];
+  defaultCategory: "default";
+}
 export const STORE_CLEAR_CONFIRMATION = "CLEAR KNOWLEDGE STORE";
 export const STORE_CLEAR_PARSED_CONFIRMATION = "CLEAR PARSED RESULTS";
 
@@ -63,6 +67,7 @@ export type KnowledgeCaptureRequestBody =
 
 export type KnowledgeCaptureSaveRequestBody = KnowledgeCaptureRequestBody & {
   candidateId?: string;
+  category?: string;
 };
 
 export interface ActiveTabInfo {
@@ -198,7 +203,7 @@ export interface KnowledgeItem {
   creators: string[];
   language?: string;
   tags: string[];
-  owner?: string;
+  category: string;
   state: "captured" | "parsed";
   createdAt: string;
   updatedAt: string;
@@ -292,6 +297,7 @@ export interface GitHubMarkdownRequest {
   ref: string;
   path: string;
   tags?: string[];
+  category?: string;
 }
 
 export interface GitHubMarkdownAssetSummary {

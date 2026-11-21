@@ -35,7 +35,7 @@ Content-Type: application/json
   "publishedAt": "2026-11-08T12:00:00+08:00",
   "language": "en",
   "tags": ["AI"],
-  "owner": "xiaojing",
+  "category": "bot",
   "markdown": "Long-term memory should be explicit.",
   "comments": [
     {
@@ -73,7 +73,7 @@ Content-Type: application/json
 | `publishedAt` | 否 | 发布时间，原样保存 |
 | `language` | 否 | 语言标签 |
 | `tags` | 否 | 额外标签；自动追加 `platform:<platform>` |
-| `owner` | 否 | 归属人；缺省沿用已存在条目或 `master` |
+| `category` | 否 | 已注册的分类；缺省沿用已存在条目或 `default`。新值必须先加入 `KNOWLEDGE_CATEGORIES` |
 | `comments` | 否 | 评论数组，最多 100 条；每条最多 10 条回复 |
 | `media` | 否 | 媒体数组，只保存远程 URL，不下载 |
 | `metadata` | 否 | 任意附加数据；`stats` 会提升到 `rawdoc.metadata.stats` |

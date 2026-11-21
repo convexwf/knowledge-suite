@@ -334,7 +334,7 @@ export class SyncRunner {
       identityHash: meta.item.identityHash || undefined,
       content: rawdoc?.bytes,
       contentExt: rawdoc?.contentExt ?? contentExtFor(meta.item.sourceType),
-      owner: meta.item.owner,
+      category: meta.item.category,
       createdAt: meta.item.createdAt,
       updatedAt: meta.item.updatedAt,
       parsedAt: meta.item.parsedAt ?? null

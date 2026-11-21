@@ -84,7 +84,7 @@ interface ItemRow {
   creators_json: string;
   language: string | null;
   tags_json: string;
-  owner: string | null;
+  category: string;
   state: "empty" | "captured" | "parsed" | "stale" | "archived";
   member_visibility_mode: "hide_members" | "show_members" | null;
   active_capture_id: string | null;
@@ -258,12 +258,13 @@ interface SearchOptions {
   url?: string;
   parserMethod?: string;
   trace?: boolean;
-  owner?: string;
+  category?: string;
 }
 
 export interface StoreOptions {
   search?: SearchMode;
   embedder?: KnowledgeEmbedder;
+  categories?: string[];
 }
 
 interface ChunkForEmbedding {
@@ -288,7 +289,7 @@ interface CollectionItemDetail extends CollectionItem {
   language?: string;
 }
 
-const STORE_SCHEMA_VERSION = 17;
+const STORE_SCHEMA_VERSION = 18;
 
 export class InvalidOutlineError extends Error {
   constructor(message: string) {
@@ -507,6 +508,16 @@ export class KnowledgeStore {
     return this.hybridEnabled ? this.options.embedder : undefined;
   }
 
+  private get registeredCategories(): string[] {
+    return this.options.categories ?? ["default", "bot"];
+  }
+
+  private assertRegisteredCategory(category: string): void {
+    if (!this.registeredCategories.includes(category)) {
+      throw new Error(`Category '${category}' is not registered. Registered categories: ${this.registeredCategories.join(", ")}`);
+    }
+  }
+
   // ── lifecycle ──────────────────────────────────────────────────────────
 
   async ensure(): Promise<void> {
@@ -519,6 +530,7 @@ export class KnowledgeStore {
     ]);
     this.ensureDatabase();
     this.migrateSchemaIfNeeded();
+    this.ensureRegisteredCategories();
     this.ensureFtsTokenizer();
     this.ensureIndexes();
   }
@@ -537,6 +549,7 @@ export class KnowledgeStore {
   private ensureIndexes(): void {
     this.database!.exec(`
       CREATE INDEX IF NOT EXISTS idx_items_type_state ON items(item_type, state);
+      CREATE INDEX IF NOT EXISTS idx_items_category ON items(item_type, category);
       CREATE INDEX IF NOT EXISTS idx_items_identity_key ON items(identity_key);
       CREATE INDEX IF NOT EXISTS idx_item_aliases_lookup ON item_aliases(alias_type, alias_value);
       CREATE INDEX IF NOT EXISTS idx_rawdocs_item ON rawdocs(item_id);
@@ -581,7 +594,6 @@ export class KnowledgeStore {
         this.database!.exec("ROLLBACK");
         throw error;
       }
-      return;
     }
 
     // Version 12+: package fingerprint columns on items (lazy backfilled)
@@ -635,21 +647,46 @@ export class KnowledgeStore {
           update.run(JSON.stringify(snapshot), row.item_id);
         }
 
-        this.addColumnIfMissing("items", "owner", "TEXT NOT NULL DEFAULT 'master'");
+        this.database!.exec("COMMIT");
+      } catch (error) {
+        this.database!.exec("ROLLBACK");
+        throw error;
+      }
+    }
+
+    if (currentVersion < 18) {
+      this.database!.exec("BEGIN IMMEDIATE");
+      try {
+        const columns = this.database!.prepare("PRAGMA table_info(items)").all() as Array<{ name: string }>;
+        const hasOwnerColumn = columns.some((entry) => entry.name === "owner");
+        this.addColumnIfMissing("items", "category", "TEXT NOT NULL DEFAULT 'default'");
+        if (hasOwnerColumn) {
+          const botCategory = this.registeredCategories.includes("bot") ? "bot" : "default";
+          this.database!.prepare(`
+            UPDATE items
+            SET category = CASE owner WHEN 'xiaojing' THEN ? ELSE 'default' END
+          `).run(botCategory);
+          this.database!.exec("ALTER TABLE items DROP COLUMN owner");
+        }
         this.database!.exec(`PRAGMA user_version = ${STORE_SCHEMA_VERSION}`);
         this.database!.exec("COMMIT");
       } catch (error) {
         this.database!.exec("ROLLBACK");
         throw error;
       }
-      return;
-    }
-
-    if (currentVersion < 16) {
-      this.addColumnIfMissing("items", "owner", "TEXT NOT NULL DEFAULT 'master'");
     }
 
     this.database!.exec(`PRAGMA user_version = ${STORE_SCHEMA_VERSION}`);
+  }
+
+  private ensureRegisteredCategories(): void {
+    const rows = this.database!.prepare(
+      "SELECT DISTINCT category FROM items WHERE category IS NOT NULL"
+    ).all() as Array<{ category: string }>;
+    const unregistered = rows.map((row) => row.category).filter((category) => !this.registeredCategories.includes(category));
+    if (unregistered.length > 0) {
+      throw new Error(`Stored categories are not registered: ${unregistered.join(", ")}. Add them to KNOWLEDGE_CATEGORIES.`);
+    }
   }
 
   private ensureFtsTokenizer(): void {
@@ -689,7 +726,7 @@ export class KnowledgeStore {
         creators_json TEXT NOT NULL DEFAULT '[]',
         language TEXT,
         tags_json TEXT NOT NULL DEFAULT '[]',
-        owner TEXT NOT NULL DEFAULT 'master',
+        category TEXT NOT NULL DEFAULT 'default',
         state TEXT NOT NULL DEFAULT 'empty',
         member_visibility_mode TEXT CHECK(member_visibility_mode IN ('hide_members', 'show_members')),
         active_capture_id TEXT,
@@ -887,7 +924,7 @@ export class KnowledgeStore {
   async listItems(
     sourceType?: string,
     limit = 50,
-    filters: { owner?: string; tag?: string } = {}
+    filters: { category?: string; tag?: string } = {}
   ): Promise<{ items: (KnowledgeItem & { normalizedUrl?: string })[] }> {
     await this.ensure();
     const boundedLimit = Math.min(Math.max(Math.trunc(limit) || 50, 1), 500);
@@ -897,9 +934,9 @@ export class KnowledgeStore {
       query += " AND i.source_type = ?";
       params.push(sourceType);
     }
-    if (filters.owner) {
-      query += " AND i.owner = ?";
-      params.push(filters.owner);
+    if (filters.category) {
+      query += " AND i.category = ?";
+      params.push(filters.category);
     }
     if (filters.tag) {
       query += " AND EXISTS (SELECT 1 FROM json_each(i.tags_json) AS jt WHERE jt.value = ?)";
@@ -913,18 +950,18 @@ export class KnowledgeStore {
     };
   }
 
-  async listTags(owner?: string): Promise<Array<{ tag: string; count: number }>> {
+  async listTags(category?: string): Promise<Array<{ tag: string; count: number }>> {
     await this.ensure();
-    const sql = owner
+    const sql = category
       ? `SELECT jt.value AS tag, COUNT(*) AS count
          FROM items i, json_each(i.tags_json) AS jt
-         WHERE i.item_type = 'document' AND i.owner = ?
+         WHERE i.item_type = 'document' AND i.category = ?
          GROUP BY jt.value ORDER BY count DESC, tag ASC`
       : `SELECT jt.value AS tag, COUNT(*) AS count
          FROM items i, json_each(i.tags_json) AS jt
          WHERE i.item_type = 'document'
          GROUP BY jt.value ORDER BY count DESC, tag ASC`;
-    const rows = (owner ? this.database!.prepare(sql).all(owner) : this.database!.prepare(sql).all()) as Array<{ tag: string; count: number }>;
+    const rows = (category ? this.database!.prepare(sql).all(category) : this.database!.prepare(sql).all()) as Array<{ tag: string; count: number }>;
     return rows.filter((row) => typeof row.tag === "string" && row.tag.length > 0);
   }
 
@@ -1208,14 +1245,15 @@ export class KnowledgeStore {
     rawdoc: RawDoc;
     document: KnowledgeDocument;
     markdown: string;
-    owner?: string;
+    category?: string;
   }): Promise<ReturnType<typeof pathsFor>> {
     await this.ensure();
     const normalized = normalizeUrlForKnowledge(params.normalizedUrl);
     const hash = urlHash(normalized);
     const itemId = `url:sha256:${hash}`;
     const previous = this.findItemByAlias("normalized_url", normalized);
-    const owner = params.owner ?? previous?.owner ?? "master";
+    const category = params.category ?? previous?.category ?? "default";
+    this.assertRegisteredCategory(category);
     const captureId = params.rawdoc.rawdoc_id; // keep rawdoc_id for file storage
     const docId = params.document.doc_id;
     const paths = pathsFor(docId, captureId);
@@ -1253,7 +1291,7 @@ export class KnowledgeStore {
       // items
       const nowIso = now;
       this.database!.prepare(`
-        INSERT INTO items (item_id, item_type, source_type, identity_key, title, creators_json, language, tags_json, owner, state, active_capture_id, active_doc_id, created_at, updated_at, parsed_at)
+        INSERT INTO items (item_id, item_type, source_type, identity_key, title, creators_json, language, tags_json, category, state, active_capture_id, active_doc_id, created_at, updated_at, parsed_at)
         VALUES (?, 'document', ?, ?, ?, ?, ?, ?, ?, 'parsed', ?, ?, ?, ?, ?)
         ON CONFLICT(item_id) DO UPDATE SET
           source_type = excluded.source_type,
@@ -1262,7 +1300,7 @@ export class KnowledgeStore {
           creators_json = excluded.creators_json,
           language = excluded.language,
           tags_json = excluded.tags_json,
-          owner = excluded.owner,
+          category = excluded.category,
           state = 'parsed',
           active_capture_id = excluded.active_capture_id,
           active_doc_id = excluded.active_doc_id,
@@ -1271,7 +1309,7 @@ export class KnowledgeStore {
       `).run(
         itemId, params.rawdoc.source_type, hash, pageTitle, authorsJson,
         params.document.meta.language ?? null, JSON.stringify(params.document.meta.tags ?? []),
-        owner,
+        category,
         captureId, docId,
         previous?.created_at ?? nowIso, nowIso, nowIso
       );
@@ -1396,7 +1434,7 @@ export class KnowledgeStore {
     content?: string | Buffer;
     contentExt?: string;
     epubMetadata?: EpubMetadataInput;
-    owner?: string;
+    category?: string;
     createdAt?: string;
     updatedAt?: string;
     parsedAt?: string | null;
@@ -1424,6 +1462,8 @@ export class KnowledgeStore {
       ? undefined
       : Buffer.isBuffer(params.content) ? params.content : Buffer.from(params.content);
     const previous = this.database!.prepare("SELECT * FROM items WHERE item_id = ?").get(params.itemId) as unknown as ItemRow | undefined;
+    const category = params.category ?? previous?.category ?? "default";
+    this.assertRegisteredCategory(category);
     const replacedDocId = previous?.active_doc_id && previous.active_doc_id !== docId
       ? previous.active_doc_id : undefined;
     const replacedCaptureId = previous?.active_capture_id && previous.active_capture_id !== captureId
@@ -1455,7 +1495,7 @@ export class KnowledgeStore {
     this.database!.exec("BEGIN");
     try {
       this.database!.prepare(`
-        INSERT INTO items (item_id, item_type, source_type, identity_key, title, creators_json, language, tags_json, owner, state, active_capture_id, active_doc_id, created_at, updated_at, parsed_at)
+        INSERT INTO items (item_id, item_type, source_type, identity_key, title, creators_json, language, tags_json, category, state, active_capture_id, active_doc_id, created_at, updated_at, parsed_at)
         VALUES (?, 'document', ?, ?, ?, ?, ?, ?, ?, 'parsed', ?, ?, ?, ?, ?)
         ON CONFLICT(item_id) DO UPDATE SET
           source_type = excluded.source_type,
@@ -1463,7 +1503,7 @@ export class KnowledgeStore {
           creators_json = excluded.creators_json,
           language = excluded.language,
           tags_json = excluded.tags_json,
-          owner = excluded.owner,
+          category = excluded.category,
           state = 'parsed',
           active_capture_id = excluded.active_capture_id,
           active_doc_id = excluded.active_doc_id,
@@ -1471,7 +1511,7 @@ export class KnowledgeStore {
           parsed_at = excluded.parsed_at
       `).run(
         params.itemId, params.sourceType, params.identityHash ?? null, params.pageTitle ?? params.document.meta.title,
-        authorsJson, language, JSON.stringify(tags), params.owner ?? previous?.owner ?? "master",
+        authorsJson, language, JSON.stringify(tags), category,
         captureId, docId, params.createdAt ?? previous?.created_at ?? now,
         params.updatedAt ?? now, params.parsedAt === undefined ? now : params.parsedAt
       );
@@ -2415,9 +2455,10 @@ export class KnowledgeStore {
 
   async importSyncItemMetadata(item: KnowledgeItem): Promise<void> {
     await this.ensure();
+    this.assertRegisteredCategory(item.category);
     const identityKey = item.identityHash || null;
     this.database!.prepare(`
-      INSERT INTO items (item_id, item_type, source_type, identity_key, title, subtitle, creators_json, language, tags_json, owner, state, active_capture_id, active_doc_id, created_at, updated_at, parsed_at)
+      INSERT INTO items (item_id, item_type, source_type, identity_key, title, subtitle, creators_json, language, tags_json, category, state, active_capture_id, active_doc_id, created_at, updated_at, parsed_at)
       VALUES (?, 'document', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(item_id) DO UPDATE SET
         source_type = excluded.source_type,
@@ -2427,7 +2468,7 @@ export class KnowledgeStore {
         creators_json = excluded.creators_json,
         language = excluded.language,
         tags_json = excluded.tags_json,
-        owner = excluded.owner,
+        category = excluded.category,
         state = excluded.state,
         active_capture_id = excluded.active_capture_id,
         active_doc_id = excluded.active_doc_id,
@@ -2443,7 +2484,7 @@ export class KnowledgeStore {
       JSON.stringify(item.creators ?? []),
       item.language ?? null,
       JSON.stringify(item.tags ?? []),
-      item.owner ?? "master",
+      item.category,
       item.state,
       item.activeRawdocId || null,
       item.activeDocId ?? null,
@@ -3063,8 +3104,8 @@ export class KnowledgeStore {
   private searchChunksFts(query: string, options: SearchOptions, limit: number): SearchChunkRow[] {
     const terms = splitSearchTerms(query);
     if (terms.length === 0) return [];
-    const ownerFilter = options.owner
-      ? " AND c.item_id IN (SELECT item_id FROM items WHERE owner = ?)"
+    const categoryFilter = options.category
+      ? " AND c.item_id IN (SELECT item_id FROM items WHERE category = ?)"
       : "";
     const useLike = terms.some((term) => Array.from(term).length < 3);
 
@@ -3080,8 +3121,8 @@ export class KnowledgeStore {
         sql += " AND c.doc_id = ?";
         allParams.push(options.docId);
       }
-      sql += ownerFilter;
-      if (options.owner) allParams.push(options.owner);
+      sql += categoryFilter;
+      if (options.category) allParams.push(options.category);
       sql += " ORDER BY c.rowid DESC LIMIT ?";
       allParams.push(limit);
       return this.database!.prepare(sql).all(...allParams as string[]) as unknown as SearchChunkRow[];
@@ -3094,8 +3135,8 @@ export class KnowledgeStore {
       sql += " AND c.doc_id = ?";
       allParams.push(options.docId);
     }
-    sql += ownerFilter;
-    if (options.owner) allParams.push(options.owner);
+    sql += categoryFilter;
+    if (options.category) allParams.push(options.category);
     sql += " ORDER BY rank LIMIT ?";
     allParams.push(limit);
     return this.database!.prepare(sql).all(...allParams as string[]) as unknown as SearchChunkRow[];
@@ -3116,9 +3157,9 @@ export class KnowledgeStore {
       filters.push("c.parser_method = ?");
       params.push(options.parserMethod);
     }
-    if (options.owner) {
-      filters.push("c.item_id IN (SELECT item_id FROM items WHERE owner = ?)");
-      params.push(options.owner);
+    if (options.category) {
+      filters.push("c.item_id IN (SELECT item_id FROM items WHERE category = ?)");
+      params.push(options.category);
     }
     const sql = `
       SELECT c.*, e.vector, e.part
@@ -3790,7 +3831,7 @@ function toKnowledgeItem(
     creators: safeJsonArray(row.creators_json),
     language: row.language ?? undefined,
     tags: safeJsonArray(row.tags_json),
-    owner: row.owner ?? undefined,
+    category: row.category,
     state: row.state === "empty" ? "captured" : row.state === "stale" || row.state === "archived" ? "parsed" : row.state,
     createdAt: row.created_at,
     updatedAt: row.updated_at,

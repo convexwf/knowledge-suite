@@ -47,7 +47,7 @@ export type KnowledgeCapturePreviewRequest = z.infer<typeof KnowledgeCapturePrev
 const KnowledgeCaptureSaveOptionsSchema = z.object({
   candidateId: z.string().optional(),
   overwrite: z.boolean().optional(),
-  owner: z.string().min(1).max(64).optional()
+  category: z.string().min(1).max(64).optional()
 });
 
 export const KnowledgeCaptureSaveRequestSchema = z.discriminatedUnion("inputMode", [
@@ -130,7 +130,7 @@ export const StructuredImportRequestSchema = z.object({
   publishedAt: z.string().min(1).max(64).optional(),
   language: z.string().min(1).max(64).optional(),
   tags: z.array(z.string().min(1).max(64)).max(50).optional(),
-  owner: z.string().min(1).max(64).optional(),
+  category: z.string().min(1).max(64).optional(),
   markdown: z.string().min(1),
   comments: z.array(StructuredImportCommentSchema).max(100).optional(),
   media: z.array(StructuredImportMediaSchema).max(50).optional(),
@@ -207,6 +207,7 @@ export interface GitHubMarkdownImportRequest {
   ref: string;
   path: string;
   tags?: string[];
+  category?: string;
 }
 
 export interface GitHubMarkdownAssetSummary {

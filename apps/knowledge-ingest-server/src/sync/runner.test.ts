@@ -97,7 +97,7 @@ describe("knowledge store sync runner", () => {
     expect(detail.json()).toMatchObject({
       item: {
         itemId: seeded.itemId,
-        owner: "xiaojing",
+        category: "bot",
         tags: ["sync", "fixture"],
         activeDocId: seeded.docId,
         activeRawdocId: seeded.rawdocId
@@ -201,7 +201,7 @@ async function seedSource(root: string): Promise<{
     rawdoc,
     document,
     markdown: "# Synced article\n\nSynced article body for the package.\n",
-    owner: "xiaojing"
+    category: "bot"
   });
   const item = await store.status(ITEM_URL);
   if (!item) throw new Error("source item was not saved");

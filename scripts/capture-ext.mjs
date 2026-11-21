@@ -8,7 +8,7 @@ const DEFAULT_TOKEN = process.env.KNOWLEDGE_TOKEN || "dev-token";
 const USAGE = `Usage: node scripts/capture-ext.mjs <url> [options]
 
   --save              Persist into the knowledge store (default: preview only)
-  --owner <name>      Owner for saved items (default: master, or the existing owner)
+  --category <name>   Registered category for saved items (default: default, or the existing category)
   --wait-ms <ms>      Max stabilization wait inside the extension (default 8000)
   --server <url>      knowledge-ingest-server base URL (default ${DEFAULT_SERVER})
   --token <token>     API token (default $KNOWLEDGE_TOKEN or dev-token)
@@ -20,7 +20,7 @@ function parseArgs(argv) {
   const args = {
     url: "",
     save: false,
-    owner: undefined,
+    category: undefined,
     quiet: false,
     server: DEFAULT_SERVER,
     token: DEFAULT_TOKEN,
@@ -30,7 +30,7 @@ function parseArgs(argv) {
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === "--save") args.save = true;
-    else if (arg === "--owner") args.owner = argv[++index];
+    else if (arg === "--category") args.category = argv[++index];
     else if (arg === "--quiet") args.quiet = true;
     else if (arg === "--server") args.server = argv[++index];
     else if (arg === "--token") args.token = argv[++index];
@@ -58,7 +58,7 @@ async function main() {
 
   const endpoint = `${args.server.replace(/\/$/, "")}/api/capture`;
   const payload = { url: args.url, save: args.save };
-  if (args.owner) payload.owner = args.owner;
+  if (args.category) payload.category = args.category;
   if (Number.isFinite(args.waitMs)) payload.waitMs = args.waitMs;
 
   const startedAt = Date.now();
@@ -98,7 +98,7 @@ async function main() {
     selectedCandidateId: result.selectedCandidateId,
     markdownLength: markdown.length,
     saved: Boolean(args.save && result.saved),
-    owner: args.owner,
+    category: args.category,
     outDir,
     markdownPath: join(outDir, "page.md"),
     waitedMs: Date.now() - startedAt,

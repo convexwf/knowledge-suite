@@ -27,6 +27,7 @@ import {
   KnowledgeItemDeleteResult,
   KnowledgeItemDetailResult,
   KnowledgeItemListResult,
+  KnowledgeCategoryListResult,
   KnowledgeSearchResponse,
   ReadingProgressSnapshot,
   ReadingProgressUpdateResult,
@@ -73,14 +74,15 @@ export interface KnowledgeApiClient {
   clearStore(): Promise<StoreClearResult>;
   clearParsedResults(): Promise<StoreClearParsedResult>;
   status(url: string): Promise<KnowledgeItemStatusResult>;
+  categories(): Promise<KnowledgeCategoryListResult>;
   list(limit?: number): Promise<{ items: ItemListItem[] }>;
   listItems(
     sourceType?: KnowledgeSourceType,
     limit?: number,
-    filters?: { owner?: string; tag?: string }
+    filters?: { category?: string; tag?: string }
   ): Promise<KnowledgeItemListResult>;
-  listTags(owner?: string): Promise<{ tags: Array<{ tag: string; count: number }> }>;
-  search(query: string, filters?: { limit?: number; owner?: string }): Promise<KnowledgeSearchResponse>;
+  listTags(category?: string): Promise<{ tags: Array<{ tag: string; count: number }> }>;
+  search(query: string, filters?: { limit?: number; category?: string }): Promise<KnowledgeSearchResponse>;
   item(itemId: string): Promise<KnowledgeItemDetailResult>;
   updateReadingProgress(itemId: string, sectionId: string | null, expectedRevision: number): Promise<ReadingProgressUpdateResult>;
   importEpub(body: {
@@ -88,6 +90,7 @@ export interface KnowledgeApiClient {
     sourceUri?: string;
     titleHint?: string;
     tags?: string[];
+    category?: string;
     metadataOpf?: File;
     cover?: File;
   }): Promise<EpubImportResult>;
@@ -96,6 +99,7 @@ export interface KnowledgeApiClient {
     sourceUri?: string;
     relativePath?: string;
     tags?: string[];
+    category?: string;
     assets?: Array<{ file: File; relativePath: string }>;
   }): Promise<MarkdownImportResult>;
   scanGitHubMarkdown(body: GitHubMarkdownRequest): Promise<GitHubMarkdownScanResult>;
@@ -201,6 +205,14 @@ export function createKnowledgeApiClient(settings: ExtensionSettings): Knowledge
       undefined,
       options
     ),
+    categories: () => request<KnowledgeCategoryListResult>(
+      baseUrl,
+      settings.token,
+      "GET",
+      "/api/categories",
+      undefined,
+      options
+    ),
     list: (limit = settings.savedListLimit) => {
       const params = new URLSearchParams();
       if (limit > 0) params.set("limit", String(limit));
@@ -232,8 +244,8 @@ export function createKnowledgeApiClient(settings: ExtensionSettings): Knowledge
       if (sourceType) {
         params.set("sourceType", sourceType);
       }
-      if (filters.owner) {
-        params.set("owner", filters.owner);
+      if (filters.category) {
+        params.set("category", filters.category);
       }
       if (filters.tag) {
         params.set("tag", filters.tag);
@@ -248,9 +260,9 @@ export function createKnowledgeApiClient(settings: ExtensionSettings): Knowledge
         options
       );
     },
-    listTags: (owner) => {
+    listTags: (category) => {
       const params = new URLSearchParams();
-      if (owner) params.set("owner", owner);
+      if (category) params.set("category", category);
       return request<{ tags: Array<{ tag: string; count: number }> }>(
         baseUrl,
         settings.token,
@@ -263,7 +275,7 @@ export function createKnowledgeApiClient(settings: ExtensionSettings): Knowledge
     search: (query, filters = {}) => {
       const params = new URLSearchParams({ q: query });
       if (filters.limit != null) params.set("limit", String(filters.limit));
-      if (filters.owner) params.set("owner", filters.owner);
+      if (filters.category) params.set("category", filters.category);
       return request<KnowledgeSearchResponse>(
         baseUrl,
         settings.token,
@@ -299,6 +311,7 @@ export function createKnowledgeApiClient(settings: ExtensionSettings): Knowledge
       if (body.tags?.length) {
         form.append("tags", body.tags.join(","));
       }
+      if (body.category) form.append("category", body.category);
       if (body.metadataOpf) {
         form.append("metadataOpf", body.metadataOpf, body.metadataOpf.name);
       }
@@ -317,6 +330,7 @@ export function createKnowledgeApiClient(settings: ExtensionSettings): Knowledge
       if (body.tags?.length) {
         form.append("tags", body.tags.join(","));
       }
+      if (body.category) form.append("category", body.category);
       for (const asset of body.assets ?? []) {
         form.append("assetPath", asset.relativePath);
         form.append("asset", asset.file, asset.relativePath);

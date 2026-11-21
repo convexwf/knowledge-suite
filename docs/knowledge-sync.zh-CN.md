@@ -17,7 +17,7 @@
 
 | 数据 | 处理方式 |
 | --- | --- |
-| item 行 | 同步 owner、标题、来源、tags、语言、状态、创建/更新/解析时间 |
+| item 行 | 同步 category、标题、来源、tags、语言、状态、创建/更新/解析时间 |
 | `document.json` | 从离线包导入 |
 | `markdown.md` | 从离线包导入 |
 | `outline.json` | 保留源站字节，保证内容指纹一致 |
@@ -42,7 +42,8 @@
 
 - 值相同：不下载离线包。
 - 值不同或本地不存在：下载完整离线包。
-- 元数据每轮都会校准，因此只改 tags、owner、标注或阅读进度时不需要重新下载包。
+- 元数据每轮都会校准，因此只改 tags、category、标注或阅读进度时不需要重新下载包。
+- 同步目标的 `KNOWLEDGE_CATEGORIES` 必须注册源站当前使用的所有 category；否则该 item 会作为同步错误报告。
 
 导入后会再次计算本地指纹。若与远端 catalog 不一致，该 item 记为本轮失败，不会静默
 写入一个错误版本。
@@ -131,6 +132,6 @@ Invoke-RestMethod -Method Get  -Uri "http://127.0.0.1:18765/api/sync/status" -He
 
 - `src/unzip.test.ts`：ZIP 读写与截断保护。
 - `src/sync/store.test.ts`：阅读进度新者胜，且不改 item 时间戳。
-- `src/sync/runner.test.ts`：源站到本地完整同步、owner/tags、rawdoc、标注、进度、合集和二次增量跳过。
+- `src/sync/runner.test.ts`：源站到本地完整同步、category/tags、rawdoc、标注、进度、合集和二次增量跳过。
 
 交付前按 `AGENTS.md` 执行 `make check`、`make test` 和 `make rebuild`。

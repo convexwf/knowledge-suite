@@ -34,7 +34,7 @@ export interface KnowledgeItem {
   creators: string[];
   language?: string;
   tags: string[];
-  owner?: string;
+  category: string;
   state: "captured" | "parsed";
   createdAt: string;
   updatedAt: string;

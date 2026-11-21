@@ -12,7 +12,7 @@ export interface SearchParams {
   url?: string;
   parserMethod?: string;
   trace?: boolean;
-  owner?: string;
+  category?: string;
 }
 
 export interface ContextParams {
@@ -23,7 +23,12 @@ export interface ContextParams {
   url?: string;
   parserMethod?: string;
   trace?: boolean;
-  owner?: string;
+  category?: string;
+}
+
+export interface CategoryListResponse {
+  categories: string[];
+  defaultCategory: "default";
 }
 
 interface IngestSearchResponse {
@@ -41,6 +46,19 @@ interface IngestContextResponse {
   citations: Array<Record<string, unknown>>;
 }
 
+export async function listKnowledgeCategories(): Promise<CategoryListResponse> {
+  const url = new URL("/api/categories", BASE_URL);
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${TOKEN}` },
+    signal: AbortSignal.timeout(TIMEOUT_MS),
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`ingest server returned ${res.status}: ${body}`);
+  }
+  return res.json() as Promise<CategoryListResponse>;
+}
+
 export async function searchKnowledge(
   params: SearchParams,
 ): Promise<IngestSearchResponse> {
@@ -52,7 +70,7 @@ export async function searchKnowledge(
   if (params.parserMethod)
     url.searchParams.set("parserMethod", params.parserMethod);
   if (params.trace) url.searchParams.set("trace", "true");
-  if (params.owner) url.searchParams.set("owner", params.owner);
+  if (params.category) url.searchParams.set("category", params.category);
 
   const res = await fetch(url, {
     headers: { Authorization: `Bearer ${TOKEN}` },
@@ -80,7 +98,7 @@ export async function getKnowledgeContext(
   if (params.parserMethod)
     url.searchParams.set("parserMethod", params.parserMethod);
   if (params.trace) url.searchParams.set("trace", "true");
-  if (params.owner) url.searchParams.set("owner", params.owner);
+  if (params.category) url.searchParams.set("category", params.category);
 
   const res = await fetch(url, {
     headers: { Authorization: `Bearer ${TOKEN}` },

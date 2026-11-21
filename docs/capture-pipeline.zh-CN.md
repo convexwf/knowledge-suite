@@ -21,7 +21,7 @@ Markdown 并写入 `knowledge-store`。
 ## 一次抓取的完整时序
 
 ```text
-Codex / xiaojing
+调用者
   | 1. npm run capture -- "<url>" --save
   v
 scripts/capture-ext.mjs
@@ -69,24 +69,23 @@ npm run capture -- "<url>"
 npm run capture -- "<url>" --save --quiet
 ```
 
-## 归属（owner）
+## Category
 
-每条入库文档带一个 `owner` 字段，用来区分主人的资料和小景的学习资料。没有额外的
-`visibility` 字段：能访问服务的人切换 owner 视图即可互看。
+每条入库文档带一个 `category`，用于把同一个 Knowledge Store 中的资料分组。category 必须先在服务端 `KNOWLEDGE_CATEGORIES` 配置中注册；默认配置为 `default,bot`，其中 `default` 必须保留。服务启动时会检查已存条目使用的 category 是否都已注册。
 
-| 场景 | owner | 说明 |
-| --- | --- | --- |
-| 手动抓取 / 阅读器 / 默认 | `master` | 不传 owner 时使用；重新抓取同一 URL 时沿用原条目的 owner |
-| 小景自主学习 | `xiaojing` | `ops/learning/build-packet.ps1` 调 `/api/capture` 时显式传入 |
+新条目未传 category 时使用 `default`；重新抓取或导入已有条目时未传 category 则沿用原值。传入未注册的值会被 API 拒绝。`GET /api/categories` 返回当前注册表，Clipper Saved 页按该列表生成筛选项。
 
-```powershell
-npm run capture -- "<url>" --save --owner xiaojing
+```dotenv
+KNOWLEDGE_CATEGORIES=default,bot,research
 ```
 
-- `POST /api/capture` 与 `POST /api/ingest/save` 接受 `owner`（1–64 字符）。
-- `GET /api/items?owner=master&tag=...` 按 owner 与 tag 过滤；不传则返回全部。
-- `GET /api/tags?owner=xiaojing` 返回该 owner 的标签聚合。
-- Clipper 的 Saved 页提供 `Mine / Hers / All` 和 tag 过滤。
+```powershell
+npm run capture -- "<url>" --save --category bot
+```
+
+- `POST /api/capture`、`POST /api/ingest/save` 和导入接口接受已注册的 `category`。
+- `GET /api/items?category=bot&tag=...`、`GET /api/search?category=bot` 和 `GET /api/tags?category=bot` 按 category 过滤。
+- 不传 category 的列表或搜索不做 category 过滤；Clipper 默认显示 `default`，也可以切换到单个 category 或 `All`。
 
 ## 列表页 discover（不读正文）
 

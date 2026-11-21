@@ -46,6 +46,7 @@ const statusOutput = mustGet<HTMLElement>("status-output");
 const openImportButton = mustGet<HTMLButtonElement>("open-import");
 const importDialog = mustGet<HTMLDialogElement>("import-dialog");
 const importSourceType = mustGet<HTMLSelectElement>("import-source-type");
+const importCategory = mustGet<HTMLSelectElement>("import-category");
 const epubImportConfig = mustGet<HTMLElement>("epub-import-config");
 const markdownImportConfig = mustGet<HTMLElement>("markdown-import-config");
 const githubMarkdownImportConfig = mustGet<HTMLElement>("github-markdown-import-config");
@@ -74,7 +75,7 @@ const refreshButton = mustGet<HTMLButtonElement>("refresh-items");
 const settingsButton = mustGet<HTMLButtonElement>("open-settings");
 const serverProfileSelect = mustGet<HTMLSelectElement>("server-profile");
 const sourceFilterBar = mustGet<HTMLElement>("source-filter");
-const ownerFilterBar = mustGet<HTMLElement>("owner-filter");
+const categoryFilterBar = mustGet<HTMLElement>("category-filter");
 const tagFilterBar = mustGet<HTMLElement>("tag-filter");
 const searchForm = mustGet<HTMLFormElement>("search-form");
 const searchInput = mustGet<HTMLInputElement>("search-input");
@@ -105,10 +106,11 @@ let githubScan: GitHubMarkdownScanResult | undefined;
 let markdownFolderHandle: MarkdownDirectoryHandle | undefined;
 let markdownResourceFolderHandle: MarkdownDirectoryHandle | undefined;
 let activeSourceFilter: SourceFilter = normalizeSourceFilter(query.get("source") ?? (query.get("collectionId") ? "collection" : "all"));
-let activeOwnerFilter: OwnerFilter = normalizeOwnerFilter(query.get("owner"));
+let activeCategoryFilter: CategoryFilter = normalizeCategoryFilter(query.get("category"));
 let activeTagFilter = (query.get("tag") ?? "").trim();
 let activeSearchQuery = (query.get("q") ?? "").trim();
 let availableTags: Array<{ tag: string; count: number }> = [];
+let availableCategories = ["default"];
 const focusCollectionId = query.get("collectionId") || "";
 const collectionDetailCache = new Map<string, Promise<CollectionDetail>>();
 let refreshGeneration = 0;
@@ -280,6 +282,7 @@ async function importEpub(): Promise<void> {
       sourceUri: selected.sourceUri,
       titleHint: titleHintInput.value,
       tags: parseTags(tagsInput.value),
+      category: importCategory.value,
       metadataOpf: selected.metadataOpf,
       cover: selected.cover
     });
@@ -454,6 +457,7 @@ async function importMarkdownFiles(): Promise<void> {
           sourceUri: document.sourceUri,
           relativePath: document.relativePath,
           tags,
+          category: importCategory.value,
           assets: document.assets
         });
         succeeded += 1;
@@ -539,7 +543,7 @@ async function importGitHubMarkdown(): Promise<void> {
 function githubMarkdownRequest(): GitHubMarkdownRequest | undefined {
   const parsed = parseGitHubMarkdownUrl(githubUrlInput.value);
   if (!parsed) return undefined;
-  return { ...parsed, tags: parseTags(githubTagsInput.value) };
+  return { ...parsed, tags: parseTags(githubTagsInput.value), category: importCategory.value };
 }
 
 function invalidateGitHubScan(): void {
@@ -628,20 +632,30 @@ async function refreshItems(): Promise<void> {
   itemList.replaceChildren(loadingNode());
   collectionDetailCache.clear();
   try {
+    const categoriesResult = await requestClient.categories();
+    if (generation !== refreshGeneration) return;
+    availableCategories = categoriesResult.categories;
+    if (activeCategoryFilter !== "all" && !availableCategories.includes(activeCategoryFilter)) {
+      activeCategoryFilter = categoriesResult.defaultCategory;
+      const url = new URL(globalThis.location.href);
+      url.searchParams.delete("category");
+      globalThis.history.replaceState(null, "", url);
+    }
+    renderImportCategoryOptions();
     const sourceType = activeSourceFilter !== "all" && activeSourceFilter !== "collection"
       ? activeSourceFilter as KnowledgeSourceType
       : undefined;
-    const ownerParam = activeOwnerFilter === "all" ? undefined : activeOwnerFilter;
+    const categoryParam = activeCategoryFilter === "all" ? undefined : activeCategoryFilter;
     const listRequest = activeSearchQuery
-      ? requestClient.search(activeSearchQuery, { limit: requestLimit, owner: ownerParam })
+      ? requestClient.search(activeSearchQuery, { limit: requestLimit, category: categoryParam })
       : requestClient.listItems(sourceType, requestLimit, {
-        owner: ownerParam,
+        category: categoryParam,
         tag: activeTagFilter || undefined
       });
     const [result, collectionsResult, tagsResult] = await Promise.all([
       listRequest,
       requestClient.listCollections(),
-      requestClient.listTags(ownerParam).catch(() => ({ tags: [] }))
+      requestClient.listTags(categoryParam).catch(() => ({ tags: [] }))
     ]);
     if (generation !== refreshGeneration) return;
     currentCollections = collectionsResult.collections;
@@ -711,7 +725,7 @@ function searchResultRow(result: KnowledgeSearchResultItem): HTMLElement {
   }
   if (result.headingPath) {
     const heading = result.headingPath.split(" > ").filter(Boolean).pop() ?? result.headingPath;
-    kicker.append(badge(heading, "owner"));
+    kicker.append(badge(heading, "meta"));
   }
   const title = marqueeTitle("h3", "item-title", result.displayTitle || result.title);
   const snippet = document.createElement("p");
@@ -846,41 +860,55 @@ function renderFilterBar(): void {
   }
 
   sourceFilterBar.replaceChildren(label, rail);
-  renderOwnerFilterBar();
+  renderCategoryFilterBar();
   renderTagFilterBar();
 }
 
-type OwnerFilter = "master" | "xiaojing" | "all";
+type CategoryFilter = string | "all";
 
-function normalizeOwnerFilter(value: string | null | undefined): OwnerFilter {
-  return value === "xiaojing" || value === "all" ? value : "master";
+function normalizeCategoryFilter(value: string | null | undefined): CategoryFilter {
+  return value === "all" ? value : value || "default";
 }
 
-function renderOwnerFilterBar(): void {
+function categoryLabel(category: string): string {
+  return category.split(/[-_]/).map((part) => part ? part.charAt(0).toUpperCase() + part.slice(1) : part).join(" ");
+}
+
+function renderImportCategoryOptions(): void {
+  const selected = availableCategories.includes(importCategory.value) ? importCategory.value : "default";
+  importCategory.replaceChildren(...availableCategories.map((category) => {
+    const option = document.createElement("option");
+    option.value = category;
+    option.textContent = categoryLabel(category);
+    return option;
+  }));
+  importCategory.value = selected;
+}
+
+function renderCategoryFilterBar(): void {
   const label = document.createElement("span");
   label.className = "filter-chip-label";
-  label.textContent = "Owner";
+  label.textContent = "Category";
   const rail = document.createElement("div");
   rail.className = "filter-chip-rail";
-  const options: Array<{ value: OwnerFilter; label: string }> = [
-    { value: "master", label: "Mine" },
-    { value: "xiaojing", label: "Hers" },
+  const options: Array<{ value: CategoryFilter; label: string }> = [
+    ...availableCategories.map((category) => ({ value: category, label: categoryLabel(category) })),
     { value: "all", label: "All" }
   ];
   for (const option of options) {
     const chip = document.createElement("button");
     chip.type = "button";
     chip.className = "filter-chip";
-    chip.dataset.active = String(option.value === activeOwnerFilter);
-    chip.setAttribute("aria-pressed", String(option.value === activeOwnerFilter));
+    chip.dataset.active = String(option.value === activeCategoryFilter);
+    chip.setAttribute("aria-pressed", String(option.value === activeCategoryFilter));
     chip.textContent = option.label;
     chip.addEventListener("click", () => {
-      activeOwnerFilter = option.value;
+      activeCategoryFilter = option.value;
       const url = new URL(globalThis.location.href);
-      if (activeOwnerFilter === "master") {
-        url.searchParams.delete("owner");
+      if (activeCategoryFilter === "default") {
+        url.searchParams.delete("category");
       } else {
-        url.searchParams.set("owner", activeOwnerFilter);
+        url.searchParams.set("category", activeCategoryFilter);
       }
       globalThis.history.replaceState(null, "", url);
       renderFilterBar();
@@ -888,7 +916,7 @@ function renderOwnerFilterBar(): void {
     });
     rail.append(chip);
   }
-  ownerFilterBar.replaceChildren(label, rail);
+  categoryFilterBar.replaceChildren(label, rail);
 }
 
 function renderTagFilterBar(): void {
@@ -1066,9 +1094,7 @@ function itemRow(item: KnowledgeItem, options?: { nested?: boolean; indexLabel?:
     badge(sourceBadgeLabel(item.sourceType), "source"),
     badge(item.state === "parsed" ? "Reader Ready" : "Captured", item.state),
     item.activeDocId ? badge("Document", "doc") : badge("Raw Only", "raw"),
-    ...(item.owner
-      ? [badge(item.owner === "master" ? "Mine" : item.owner === "xiaojing" ? "Hers" : item.owner, "owner")]
-      : [])
+    badge(categoryLabel(item.category), "category")
   );
   const title = marqueeTitle("h3", "item-title", displayTitle(item));
   const creator = document.createElement("div");

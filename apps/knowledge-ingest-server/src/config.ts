@@ -21,6 +21,7 @@ export interface SyncConfig {
 }
 
 export interface ServerConfig {
+  categories: string[];
   host: string;
   port: number;
   token: string;
@@ -41,6 +42,7 @@ export interface ServerConfig {
 
 export function loadConfig(): ServerConfig {
   return {
+    categories: parseCategories(process.env.KNOWLEDGE_CATEGORIES),
     host: process.env.KNOWLEDGE_HOST ?? "127.0.0.1",
     port: Number(process.env.KNOWLEDGE_PORT ?? 18765),
     token: process.env.KNOWLEDGE_TOKEN ?? "dev-token",
@@ -58,6 +60,22 @@ export function loadConfig(): ServerConfig {
     embeddings: parseEmbeddingConfig(),
     sync: parseSyncConfig()
   };
+}
+
+function parseCategories(value: string | undefined): string[] {
+  const categories = [...new Set((value ?? "default,bot")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean))];
+  if (categories.length === 0 || !categories.includes("default")) {
+    throw new Error("KNOWLEDGE_CATEGORIES must register the required 'default' category");
+  }
+  for (const category of categories) {
+    if (!/^[a-z][a-z0-9_-]{0,63}$/.test(category)) {
+      throw new Error(`Invalid category '${category}' in KNOWLEDGE_CATEGORIES; use lowercase slugs`);
+    }
+  }
+  return ["default", ...categories.filter((category) => category !== "default")];
 }
 
 function parseSearchMode(value: string | undefined): SearchMode {

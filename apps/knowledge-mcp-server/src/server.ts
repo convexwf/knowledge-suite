@@ -4,7 +4,7 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { searchKnowledge, getKnowledgeContext } from "./ingest-client.js";
+import { searchKnowledge, getKnowledgeContext, listKnowledgeCategories } from "./ingest-client.js";
 
 export function createServer(): Server {
   const server = new Server(
@@ -14,6 +14,11 @@ export function createServer(): Server {
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: [
+      {
+        name: "list_knowledge_categories",
+        description: "List the registered categories available for Knowledge Suite filtering.",
+        inputSchema: { type: "object", properties: {} },
+      },
       {
         name: "search_knowledge",
         description:
@@ -43,9 +48,9 @@ export function createServer(): Server {
               type: "string",
               description: "Filter by parser method (e.g. defuddle, selection)",
             },
-            owner: {
+            category: {
               type: "string",
-              description: "Filter by owner (master or xiaojing)",
+              description: "Filter by a registered knowledge category",
             },
             trace: {
               type: "boolean",
@@ -91,9 +96,9 @@ export function createServer(): Server {
               type: "string",
               description: "Filter by parser method",
             },
-            owner: {
+            category: {
               type: "string",
-              description: "Filter by owner (master or xiaojing)",
+              description: "Filter by a registered knowledge category",
             },
             trace: {
               type: "boolean",
@@ -110,6 +115,12 @@ export function createServer(): Server {
     const { name, arguments: args } = request.params;
 
     switch (name) {
+      case "list_knowledge_categories": {
+        const result = await listKnowledgeCategories();
+        return {
+          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+        };
+      }
       case "search_knowledge": {
         const result = await searchKnowledge(
           args as Record<string, unknown> as {
@@ -118,7 +129,7 @@ export function createServer(): Server {
             docId?: string;
             url?: string;
             parserMethod?: string;
-            owner?: string;
+            category?: string;
             trace?: boolean;
           },
         );
@@ -135,7 +146,7 @@ export function createServer(): Server {
             docId?: string;
             url?: string;
             parserMethod?: string;
-            owner?: string;
+            category?: string;
             trace?: boolean;
           },
         );

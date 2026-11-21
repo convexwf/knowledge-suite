@@ -2143,6 +2143,7 @@ describe("knowledge ingest server", () => {
       maxImportBytes: 1024 * 1024
     });
     const canonicalUrl = "https://x.com/alice/status/1234567890";
+
     const payload = {
       provider: "catbus",
       platform: "x",
@@ -2154,7 +2155,7 @@ describe("knowledge ingest server", () => {
       publishedAt: "2026-11-08T12:00:00+08:00",
       language: "en",
       tags: ["AI"],
-      owner: "xiaojing",
+      category: "bot",
       markdown: "# Agent memory notes\n\nLong-term memory should be explicit.\n\n- Keep notes small\n",
       comments: [
         {
@@ -2194,7 +2195,7 @@ describe("knowledge ingest server", () => {
       title: "Agent memory notes",
       creators: ["Alice"],
       language: "en",
-      owner: "xiaojing",
+      category: "bot",
       state: "parsed"
     });
     expect(saved.knowledgeItem.tags).toEqual(expect.arrayContaining(["AI", "platform:x"]));
@@ -2234,7 +2235,7 @@ describe("knowledge ingest server", () => {
 
     const listed = await app.inject({
       method: "GET",
-      url: "/api/items?owner=xiaojing&tag=platform:x",
+      url: "/api/items?category=bot&tag=platform:x",
       headers: { authorization: "Bearer test-token" }
     });
     expect(listed.statusCode).toBe(200);
@@ -2252,7 +2253,7 @@ describe("knowledge ingest server", () => {
     expect(reimported.json().markdown).toContain("Updated body.");
     const afterReimport = await app.inject({
       method: "GET",
-      url: "/api/items?owner=xiaojing&tag=platform:x",
+      url: "/api/items?category=bot&tag=platform:x",
       headers: { authorization: "Bearer test-token" }
     });
     expect(afterReimport.json().items).toHaveLength(1);

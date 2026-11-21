@@ -66,7 +66,7 @@ function captureItem(): KnowledgeItem {
     title: "Sync store fixture",
     creators: [],
     tags: ["sync"],
-    owner: "xiaojing",
+    category: "bot",
     state: "parsed",
     createdAt: "2026-11-01T00:00:00.000Z",
     updatedAt: "2026-11-08T08:00:00.000Z",
