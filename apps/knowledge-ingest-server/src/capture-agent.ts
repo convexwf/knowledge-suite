@@ -3,6 +3,7 @@ import { WebSocket } from "ws";
 
 export interface CaptureAgentResult {
   blocked: boolean;
+  reusedTab?: boolean;
   blockReasons?: string[];
   textSample?: string;
   snapshot?: PageSnapshot;
@@ -39,7 +40,7 @@ export class CaptureAgentHub {
     });
   }
 
-  async capture(url: string, options: { waitMs?: number; timeoutMs?: number } = {}): Promise<CaptureAgentResult> {
+  async capture(url: string, options: { waitMs?: number; timeoutMs?: number; tabId?: number } = {}): Promise<CaptureAgentResult> {
     return this.dispatch(url, options, "document");
   }
 
@@ -49,7 +50,7 @@ export class CaptureAgentHub {
 
   private async dispatch(
     url: string,
-    options: { waitMs?: number; timeoutMs?: number },
+    options: { waitMs?: number; timeoutMs?: number; tabId?: number },
     mode: "document" | "links"
   ): Promise<CaptureAgentResult> {
     const socket = this.socket;
@@ -64,7 +65,8 @@ export class CaptureAgentHub {
       taskId,
       url,
       mode,
-      waitMs: options.waitMs ?? 8000
+      waitMs: options.waitMs ?? 8000,
+      ...(options.tabId === undefined ? {} : { tabId: options.tabId })
     });
 
     return new Promise<CaptureAgentResult>((resolve, reject) => {
@@ -101,6 +103,7 @@ export class CaptureAgentHub {
     if (record.ok === true) {
       pending.resolve({
         blocked: record.blocked === true,
+        reusedTab: record.reusedTab === true,
         blockReasons: Array.isArray(record.blockReasons)
           ? record.blockReasons.filter((reason): reason is string => typeof reason === "string")
           : undefined,

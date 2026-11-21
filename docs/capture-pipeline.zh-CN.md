@@ -117,6 +117,26 @@ Invoke-RestMethod -Uri "http://127.0.0.1:18765/api/capture" -Method Post `
 
 正文页不滚动；列表页滚动只影响 discover，不影响正文抓取。
 
+## 采集 CDP 已准备好的标签页
+
+调用方可以先用 CDP 在 Relay 所连接的同一个 Chrome 中打开帖子、检查页面并按需展开评论，再将 Chrome 数字标签 ID 传给 `POST /api/capture`。Relay 会直接快照该标签的当前 DOM，交给 Suite 解析；不会再次导航、切换前台或关闭这个标签。CDP 与 Relay 必须连接同一个 Chrome 实例和用户配置，才能共享页面与登录态。
+
+```powershell
+$body = @{
+  url   = "https://www.xiaoheihe.cn/app/bbs/link/196383163"
+  mode  = "document"
+  tabId = 123
+  waitMs = 500
+  save  = $false
+} | ConvertTo-Json -Depth 4
+Invoke-RestMethod -Uri "http://127.0.0.1:18765/api/capture" -Method Post `
+  -Headers @{ Authorization = "Bearer $env:KNOWLEDGE_TOKEN" } `
+  -ContentType "application/json; charset=utf-8" `
+  -Body ([Text.Encoding]::UTF8.GetBytes($body))
+```
+
+`tabId` 是 Chrome `tabs` API 使用的正整数标签 ID，不是 CDP target ID。Relay 会确认标签仍位于白名单 HTTPS 主机，且路径与请求 URL 一致；不匹配时拒绝快照。复用现有标签只支持 `mode: "document"`，因为链接发现会点击分类并改变页面导航。此模式不会关闭标签，`keepOpen` 不改变这一点。登录身份检查和正文/评论加载判断由 CDP 调用方在交接前完成。
+
 ## Token 消耗
 
 | 场景 | 估算 |

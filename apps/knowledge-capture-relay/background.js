@@ -141,29 +141,70 @@ async function runCapture(task) {
   if (target.protocol !== "https:") throw new Error("only https URLs are allowed");
   if (!ALLOWED_HOSTS.has(target.hostname)) throw new Error("host not allowed: " + target.hostname);
 
+  if (task.tabId !== undefined) {
+    return runCaptureInExistingTab(task, target);
+  }
+
   const tab = await chrome.tabs.create({ url: target.href, active: false });
   const tabId = tab.id;
   if (typeof tabId !== "number") throw new Error("failed to open a capture tab");
 
   try {
-    await waitForLoad(tabId, Number(task.loadTimeoutMs) || 45000);
-    await waitForStable(tabId, Number(task.waitMs) || 8000);
-    if (task.mode === "links") {
-      const links = await requestLinks(tabId, 10);
-      return { blocked: false, links };
-    }
-    const snapshot = await requestSnapshot(tabId, 10);
-    const text = String(snapshot.text || "");
-    const compact = text.replace(/\s+/g, "");
-    if (compact.length < 60) {
-      return { blocked: true, blockReasons: ["empty-page"], textSample: text.slice(0, 300) };
-    }
-    if (BLOCKED_PATTERN.test(text) && compact.length < 500) {
-      return { blocked: true, blockReasons: ["blocked-text"], textSample: text.slice(0, 300) };
-    }
-    return { blocked: false, snapshot };
+    return await captureTab(tabId, task);
   } finally {
     if (!task.keepOpen) await chrome.tabs.remove(tabId).catch(() => {});
+  }
+}
+
+async function runCaptureInExistingTab(task, target) {
+  if (task.mode === "links") throw new Error("link discovery cannot reuse a prepared tab because it may navigate the page");
+  const tabId = Number(task.tabId);
+  if (!Number.isSafeInteger(tabId) || tabId <= 0) throw new Error("tabId must be a positive Chrome tab ID");
+
+  const tab = await chrome.tabs.get(tabId);
+  assertTabMatchesTarget(target, tab.url);
+  await waitForLoad(tabId, Number(task.loadTimeoutMs) || 45000);
+  await waitForStable(tabId, Number(task.waitMs) || 8000);
+
+  const currentTab = await chrome.tabs.get(tabId);
+  assertTabMatchesTarget(target, currentTab.url);
+  const result = await captureTab(tabId, task, true);
+  if (result.snapshot) assertTabMatchesTarget(target, result.snapshot.pageUrl);
+  return { ...result, reusedTab: true };
+}
+
+async function captureTab(tabId, task, ready = false) {
+  if (!ready) {
+    await waitForLoad(tabId, Number(task.loadTimeoutMs) || 45000);
+    await waitForStable(tabId, Number(task.waitMs) || 8000);
+  }
+  if (task.mode === "links") {
+    const links = await requestLinks(tabId, 10);
+    return { blocked: false, links };
+  }
+  const snapshot = await requestSnapshot(tabId, 10);
+  const text = String(snapshot.text || "");
+  const compact = text.replace(/\s+/g, "");
+  if (compact.length < 60) {
+    return { blocked: true, blockReasons: ["empty-page"], textSample: text.slice(0, 300) };
+  }
+  if (BLOCKED_PATTERN.test(text) && compact.length < 500) {
+    return { blocked: true, blockReasons: ["blocked-text"], textSample: text.slice(0, 300) };
+  }
+  return { blocked: false, snapshot };
+}
+
+function assertTabMatchesTarget(target, tabUrl) {
+  if (typeof tabUrl !== "string" || !tabUrl) throw new Error("Chrome tab has no capturable URL");
+  const current = new URL(tabUrl);
+  if (current.protocol !== "https:" || !ALLOWED_HOSTS.has(current.hostname)) {
+    throw new Error("existing tab is not on an allowed HTTPS capture host");
+  }
+  const targetHost = target.hostname.replace(/^www\./u, "");
+  const currentHost = current.hostname.replace(/^www\./u, "");
+  const normalizePath = (pathname) => pathname.length > 1 ? pathname.replace(/\/+$/u, "") : pathname;
+  if (targetHost !== currentHost || normalizePath(target.pathname) !== normalizePath(current.pathname)) {
+    throw new Error("existing tab URL does not match the requested capture URL");
   }
 }
 

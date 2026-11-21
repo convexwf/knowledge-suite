@@ -340,6 +340,7 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
     overwrite: z.boolean().optional(),
     owner: z.string().min(1).max(64).optional(),
     keepOpen: z.boolean().optional(),
+    tabId: z.number().int().positive().optional(),
     scope: z.object({
       sameOrigin: z.boolean().optional(),
       pathPrefix: z.string().optional(),
@@ -353,6 +354,12 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
 
   app.post("/api/capture", async (request, reply) => {
     const body = CaptureRequestSchema.parse(request.body);
+    if (body.tabId !== undefined && body.mode === "links") {
+      return reply.code(400).send({
+        error: "existing_tab_document_only",
+        message: "An existing tab can only be captured in document mode; link discovery can navigate the page."
+      });
+    }
     if (!captureHub.connected) {
       return reply.code(503).send({
         error: "agent_unavailable",
@@ -378,7 +385,10 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
       };
     }
 
-    const captured = await captureHub.capture(body.url, { waitMs: body.waitMs });
+    const captured = await captureHub.capture(body.url, {
+      waitMs: body.waitMs,
+      ...(body.tabId === undefined ? {} : { tabId: body.tabId })
+    });
     if (captured.blocked || !captured.snapshot) {
       return reply.code(422).send({
         error: "capture_blocked",
@@ -398,6 +408,7 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
       capture: {
         agent: "extension",
         waitedMs: Date.now() - startedAt,
+        reusedTab: captured.reusedTab === true,
         domLength: snapshot.diagnostics?.htmlLength ?? snapshot.html.length,
         textLength: snapshot.diagnostics?.textLength ?? snapshot.text?.length ?? 0
       }
