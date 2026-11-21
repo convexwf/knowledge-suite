@@ -165,12 +165,20 @@ async function runCaptureInExistingTab(task, target) {
   assertTabMatchesTarget(target, tab.url);
   await waitForLoad(tabId, Number(task.loadTimeoutMs) || 45000);
   await waitForStable(tabId, Number(task.waitMs) || 8000);
+  await injectContentScript(tabId);
 
   const currentTab = await chrome.tabs.get(tabId);
   assertTabMatchesTarget(target, currentTab.url);
   const result = await captureTab(tabId, task, true);
   if (result.snapshot) assertTabMatchesTarget(target, result.snapshot.pageUrl);
   return { ...result, reusedTab: true };
+}
+
+async function injectContentScript(tabId) {
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    files: ["content.js"]
+  });
 }
 
 async function captureTab(tabId, task, ready = false) {
