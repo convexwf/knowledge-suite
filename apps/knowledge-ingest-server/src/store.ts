@@ -723,6 +723,19 @@ export class KnowledgeStore {
     this.database!.prepare("ATTACH DATABASE ? AS legacy_store").run(sourcePath);
     this.database!.exec("BEGIN IMMEDIATE");
     try {
+      const copyFromLegacy = (table: string, where: string, values: string[] = []): void => {
+        const targetColumns = this.database!.prepare(`PRAGMA main.table_info(${table})`).all() as Array<{ name: string }>;
+        const sourceColumns = this.database!.prepare(`PRAGMA legacy_store.table_info(${table})`).all() as Array<{ name: string }>;
+        const sourceNames = new Set(sourceColumns.map((column) => column.name));
+        const columns = targetColumns.map((column) => column.name).filter((name) => sourceNames.has(name));
+        if (columns.length === 0) {
+          throw new Error(`Cannot migrate '${table}': source and target have no columns in common`);
+        }
+        const columnList = columns.map((name) => `"${name.replace(/"/g, '""')}"`).join(", ");
+        this.database!.prepare(
+          `INSERT INTO main.${table} (${columnList}) SELECT ${columnList} FROM legacy_store.${table} WHERE ${where}`
+        ).run(...values);
+      };
       const copyForCategory = [
         "items",
         "item_aliases",
@@ -738,30 +751,17 @@ export class KnowledgeStore {
           : table === "item_aliases" || table === "rawdocs" || table === "documents" || table === "epub_metadata" || table === "chunks"
             ? `item_id IN (SELECT item_id FROM legacy_store.items WHERE category = ?)`
             : `collection_item_id IN (SELECT item_id FROM legacy_store.items WHERE category = ?)`;
-        this.database!.prepare(`INSERT INTO main.${table} SELECT * FROM legacy_store.${table} WHERE ${itemFilter}`).run(category);
+        copyFromLegacy(table, itemFilter, [category]);
       }
 
-      this.database!.prepare(`
-        INSERT INTO main.batch_jobs
-        SELECT * FROM legacy_store.batch_jobs
-        WHERE collection_id IN (SELECT item_id FROM legacy_store.items WHERE category = ?)
-           OR (collection_id IS NULL AND ? = 'default')
-      `).run(category, category);
-      this.database!.exec(`
-        INSERT INTO main.batch_items
-        SELECT * FROM legacy_store.batch_items
-        WHERE job_id IN (SELECT job_id FROM main.batch_jobs)
-      `);
-      this.database!.exec(`
-        INSERT INTO main.chunk_embeddings
-        SELECT * FROM legacy_store.chunk_embeddings
-        WHERE chunk_id IN (SELECT chunk_id FROM main.chunks)
-      `);
-      this.database!.exec(`
-        INSERT INTO main.annotations
-        SELECT * FROM legacy_store.annotations
-        WHERE doc_id IN (SELECT doc_id FROM main.documents)
-      `);
+      copyFromLegacy(
+        "batch_jobs",
+        "collection_id IN (SELECT item_id FROM legacy_store.items WHERE category = ?) OR (collection_id IS NULL AND ? = 'default')",
+        [category, category]
+      );
+      copyFromLegacy("batch_items", "job_id IN (SELECT job_id FROM main.batch_jobs)");
+      copyFromLegacy("chunk_embeddings", "chunk_id IN (SELECT chunk_id FROM main.chunks)");
+      copyFromLegacy("annotations", "doc_id IN (SELECT doc_id FROM main.documents)");
       this.database!.exec("INSERT INTO chunks_fts(chunks_fts) VALUES('rebuild')");
       this.database!.exec("COMMIT");
     } catch (error) {
