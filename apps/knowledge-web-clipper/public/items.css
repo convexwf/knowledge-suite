@@ -262,6 +262,10 @@ select {
   padding-top: 14px;
 }
 
+.list-pagination[hidden] {
+  display: none;
+}
+
 .pagination-controls {
   align-items: center;
   display: flex;

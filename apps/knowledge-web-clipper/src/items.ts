@@ -113,6 +113,7 @@ let activeSourceFilter: SourceFilter = normalizeSourceFilter(query.get("source")
 let activeTagFilter = (query.get("tag") ?? "").trim();
 let activeSearchQuery = (query.get("q") ?? "").trim();
 let activePage = Math.max(Number.parseInt(query.get("page") ?? "1", 10) || 1, 1);
+const itemsPageSize = 20;
 let availableTags: Array<{ tag: string; count: number }> = [];
 let availableCategories = ["default"];
 const focusCollectionId = query.get("collectionId") || "";
@@ -656,7 +657,7 @@ async function refreshItems(): Promise<void> {
         sourceType: activeSourceFilter === "all" ? undefined : activeSourceFilter,
         tag: activeTagFilter || undefined,
         page: activePage,
-        pageSize: requestLimit
+        pageSize: itemsPageSize
       });
     const [result, tagsResult] = await Promise.all([
       listRequest,

@@ -432,18 +432,34 @@ function outlinePathFor(docId: string): string {
 }
 
 function initialOutlineFor(document: KnowledgeDocument): DocumentOutlineFile {
+  const titleHeading = leadingTitleHeading(document);
   const entries: DocumentOutlineEntry[] = [
     { title: document.meta.title, level: 1, target: "top" }
   ];
 
   for (const section of document.sections) {
     if (section.type !== "heading" || !section.section_id || !section.content?.trim()) continue;
+    if (titleHeading?.section_id && section.section_id === titleHeading.section_id) continue;
     const level = section.level ?? 2;
     if (!Number.isInteger(level) || level < 1 || level > 3) continue;
     entries.push({ title: section.content.trim(), level, target: section.section_id });
   }
 
   return { formatVersion: 1, docId: document.doc_id, entries };
+}
+
+function leadingTitleHeading(document: KnowledgeDocument): KnowledgeDocument["sections"][number] | undefined {
+  const title = normalizeOutlineTitle(document.meta.title);
+  if (!title) return undefined;
+  const firstHeading = document.sections.find(
+    (section) => section.type === "heading" && section.content?.trim(),
+  );
+  if (!firstHeading || normalizeOutlineTitle(firstHeading.content ?? "") !== title) return undefined;
+  return firstHeading;
+}
+
+function normalizeOutlineTitle(value: string): string {
+  return value.normalize("NFKC").replace(/\s+/gu, " ").trim();
 }
 
 function validateOutlineFile(value: unknown, docId: string): DocumentOutlineFile {
@@ -982,13 +998,14 @@ export class KnowledgeStore {
     pageSize?: number;
   } = {}): Promise<ReaderListPage> {
     await this.ensure();
-    const pageSize = Math.min(Math.max(Math.trunc(options.pageSize ?? 50) || 50, 1), 200);
+    const pageSize = Math.min(Math.max(Math.trunc(options.pageSize ?? 20) || 20, 1), 200);
     const requestedPage = Math.max(Math.trunc(options.page ?? 1) || 1, 1);
     const selects: string[] = [];
     const params: string[] = [];
 
     if (options.sourceType !== "collection") {
-      let documentQuery = `SELECT i.item_id, i.item_type, i.updated_at AS sort_at
+      let documentQuery = `SELECT i.item_id, i.item_type,
+          COALESCE(json_extract(i.reading_progress_json, '$.updatedAt'), i.updated_at) AS sort_at
         FROM items i
         WHERE i.item_type = 'document'
           AND NOT EXISTS (
@@ -1006,7 +1023,8 @@ export class KnowledgeStore {
     }
 
     if (!options.sourceType || options.sourceType === "collection") {
-      selects.push(`SELECT i.item_id, i.item_type, i.updated_at AS sort_at
+      selects.push(`SELECT i.item_id, i.item_type,
+        COALESCE(json_extract(i.reading_progress_json, '$.updatedAt'), i.updated_at) AS sort_at
         FROM items i WHERE i.item_type = 'collection'`);
     }
 
@@ -2376,13 +2394,25 @@ export class KnowledgeStore {
     if (!outline) return undefined;
     const sectionIds = new Set(document.sections.map((section) => section.section_id).filter(Boolean));
     const diagnostics: DocumentOutlineResponse["diagnostics"] = [];
-    const entries = outline.entries.map((entry, entryIndex) => {
-      const targetAvailable = entry.target === "top" || sectionIds.has(entry.target);
-      if (!targetAvailable) {
-        diagnostics.push({ entryIndex, code: "target_not_found", target: entry.target });
-      }
-      return { ...entry, targetAvailable };
-    });
+    const normalizedTitle = normalizeOutlineTitle(document.meta.title);
+    const hasTopTitle = outline.entries.some(
+      (entry) => entry.target === "top" && normalizeOutlineTitle(entry.title) === normalizedTitle,
+    );
+    const duplicateTitleTarget = hasTopTitle ? leadingTitleHeading(document)?.section_id : undefined;
+    const entries = outline.entries
+      .map((entry, entryIndex) => ({ entry, entryIndex }))
+      .filter(({ entry }) => !(
+        duplicateTitleTarget &&
+        entry.target === duplicateTitleTarget &&
+        normalizeOutlineTitle(entry.title) === normalizedTitle
+      ))
+      .map(({ entry, entryIndex }) => {
+        const targetAvailable = entry.target === "top" || sectionIds.has(entry.target);
+        if (!targetAvailable) {
+          diagnostics.push({ entryIndex, code: "target_not_found", target: entry.target });
+        }
+        return { ...entry, targetAvailable };
+      });
 
     return { formatVersion: 1, docId, entries, diagnostics };
   }

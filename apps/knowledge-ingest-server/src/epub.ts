@@ -114,10 +114,11 @@ export async function parseEpub(bytes: Buffer, options: ParseEpubOptions = {}): 
   const authors = firstNonEmptyList(calibre?.creators, metaStringList(ast.meta?.author));
   const language = normalizeLanguage(firstNonEmpty(calibre?.language, metaString(ast.meta?.lang), metaString(ast.meta?.language)));
   const tags = unique([...(options.tags ?? []), ...(calibre?.subjects ?? [])]);
-  const sections = pandocBlocksToSections(ast.blocks ?? [], tempDir);
+  let sections = pandocBlocksToSections(ast.blocks ?? [], tempDir);
   if (options.toc?.length) {
     applyTocLevels(sections, options.toc);
   }
+  sections = withoutLeadingTitleHeading(sections, title);
   if (options.cover?.bytes.length) {
     const coverPath = join(tempDir, `calibre-cover.${sanitizeExtension(extname(options.cover.filename ?? "")) || "jpg"}`);
     await writeFile(coverPath, options.cover.bytes);
@@ -196,6 +197,24 @@ export function pandocBlocksToSections(blocks: PandocBlock[], imageBaseDir?: str
     ...section,
     section_id: section.section_id ?? deterministicSectionId(section)
   }));
+}
+
+function withoutLeadingTitleHeading(
+  sections: DocumentSection[],
+  title: string,
+): DocumentSection[] {
+  const normalizedTitle = normalizeEpubTitle(title);
+  if (!normalizedTitle) return sections;
+
+  const firstHeading = sections.find((section) => section.type === "heading" && section.content?.trim());
+  if (!firstHeading || normalizeEpubTitle(firstHeading.content ?? "") !== normalizedTitle) {
+    return sections;
+  }
+  return sections.filter((section) => section !== firstHeading);
+}
+
+function normalizeEpubTitle(value: string): string {
+  return value.normalize("NFKC").replace(/\s+/gu, " ").trim();
 }
 
 function pandocBlocksToSectionsWithoutIds(blocks: PandocBlock[], imageBaseDir?: string): DocumentSection[] {

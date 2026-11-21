@@ -39,7 +39,9 @@ export async function renderDocument(
   context: ReaderRenderContext = {}
 ): Promise<void> {
   target.replaceChildren();
-  target.append(headingNode(1, documentModel.meta.title, 0));
+  if (!hasLeadingTitleHeading(documentModel)) {
+    target.append(headingNode(1, documentModel.meta.title, 0));
+  }
 
   let headingIndex = 1;
   for (const [sectionIndex, section] of documentModel.sections.entries()) {
@@ -57,6 +59,19 @@ export async function renderDocument(
       target.append(block);
     }
   }
+}
+
+function hasLeadingTitleHeading(documentModel: KnowledgeDocument): boolean {
+  const title = normalizeHeadingTitle(documentModel.meta.title);
+  if (!title) return false;
+  const firstHeading = documentModel.sections.find(
+    (section) => section.type === "heading" && section.content?.trim(),
+  );
+  return Boolean(firstHeading && normalizeHeadingTitle(firstHeading.content ?? "") === title);
+}
+
+function normalizeHeadingTitle(value: string): string {
+  return value.normalize("NFKC").replace(/\s+/gu, " ").trim();
 }
 
 async function renderSection(
