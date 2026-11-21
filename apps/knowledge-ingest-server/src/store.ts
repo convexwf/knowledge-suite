@@ -265,6 +265,9 @@ export interface StoreOptions {
   search?: SearchMode;
   embedder?: KnowledgeEmbedder;
   categories?: string[];
+  databasePath?: string;
+  databaseCategory?: string;
+  isAssetReferencedElsewhere?: (assetId: string, excludingDocId: string) => Promise<boolean>;
 }
 
 interface ChunkForEmbedding {
@@ -516,12 +519,16 @@ export class KnowledgeStore {
     if (!this.registeredCategories.includes(category)) {
       throw new Error(`Category '${category}' is not registered. Registered categories: ${this.registeredCategories.join(", ")}`);
     }
+    if (this.options.databaseCategory && category !== this.options.databaseCategory) {
+      throw new Error(`Category '${category}' cannot be written to the '${this.options.databaseCategory}' database`);
+    }
   }
 
   // ── lifecycle ──────────────────────────────────────────────────────────
 
   async ensure(): Promise<void> {
     await Promise.all([
+      mkdir(dirname(this.databasePath), { recursive: true }),
       mkdir(join(this.root, "rawdocs"), { recursive: true }),
       mkdir(join(this.root, "documents"), { recursive: true }),
       mkdir(join(this.root, "outlines"), { recursive: true }),
@@ -540,9 +547,13 @@ export class KnowledgeStore {
     this.database = undefined;
   }
 
+  private get databasePath(): string {
+    return this.options.databasePath ?? join(this.root, "index.sqlite3");
+  }
+
   private ensureDatabase(): void {
     if (this.database) return;
-    this.database = new DatabaseSync(join(this.root, "index.sqlite3"));
+    this.database = new DatabaseSync(this.databasePath);
     this.database.exec("PRAGMA foreign_keys = ON");
   }
 
@@ -683,9 +694,70 @@ export class KnowledgeStore {
     const rows = this.database!.prepare(
       "SELECT DISTINCT category FROM items WHERE category IS NOT NULL"
     ).all() as Array<{ category: string }>;
-    const unregistered = rows.map((row) => row.category).filter((category) => !this.registeredCategories.includes(category));
+    const unregistered = rows.map((row) => row.category).filter((category) =>
+      !this.registeredCategories.includes(category) ||
+      Boolean(this.options.databaseCategory && category !== this.options.databaseCategory)
+    );
     if (unregistered.length > 0) {
-      throw new Error(`Stored categories are not registered: ${unregistered.join(", ")}. Add them to KNOWLEDGE_CATEGORIES.`);
+      throw new Error(`Stored categories do not match this database: ${unregistered.join(", ")}. Check KNOWLEDGE_CATEGORIES and the category database layout.`);
+    }
+  }
+
+  async importCategoryPartition(sourcePath: string, category: string): Promise<void> {
+    await this.ensure();
+    this.assertRegisteredCategory(category);
+    const existing = (this.database!.prepare("SELECT COUNT(*) AS count FROM items").get() as { count: number }).count;
+    if (existing !== 0) throw new Error(`Category database '${category}' is not empty during migration`);
+
+    this.database!.prepare("ATTACH DATABASE ? AS legacy_store").run(sourcePath);
+    this.database!.exec("BEGIN IMMEDIATE");
+    try {
+      const copyForCategory = [
+        "items",
+        "item_aliases",
+        "rawdocs",
+        "documents",
+        "collection_memberships",
+        "epub_metadata",
+        "chunks"
+      ];
+      for (const table of copyForCategory) {
+        const itemFilter = table === "items"
+          ? "category = ?"
+          : table === "item_aliases" || table === "rawdocs" || table === "documents" || table === "epub_metadata" || table === "chunks"
+            ? `item_id IN (SELECT item_id FROM legacy_store.items WHERE category = ?)`
+            : `collection_item_id IN (SELECT item_id FROM legacy_store.items WHERE category = ?)`;
+        this.database!.prepare(`INSERT INTO main.${table} SELECT * FROM legacy_store.${table} WHERE ${itemFilter}`).run(category);
+      }
+
+      this.database!.prepare(`
+        INSERT INTO main.batch_jobs
+        SELECT * FROM legacy_store.batch_jobs
+        WHERE collection_id IN (SELECT item_id FROM legacy_store.items WHERE category = ?)
+           OR (collection_id IS NULL AND ? = 'default')
+      `).run(category, category);
+      this.database!.exec(`
+        INSERT INTO main.batch_items
+        SELECT * FROM legacy_store.batch_items
+        WHERE job_id IN (SELECT job_id FROM main.batch_jobs)
+      `);
+      this.database!.exec(`
+        INSERT INTO main.chunk_embeddings
+        SELECT * FROM legacy_store.chunk_embeddings
+        WHERE chunk_id IN (SELECT chunk_id FROM main.chunks)
+      `);
+      this.database!.exec(`
+        INSERT INTO main.annotations
+        SELECT * FROM legacy_store.annotations
+        WHERE doc_id IN (SELECT doc_id FROM main.documents)
+      `);
+      this.database!.exec("INSERT INTO chunks_fts(chunks_fts) VALUES('rebuild')");
+      this.database!.exec("COMMIT");
+    } catch (error) {
+      this.database!.exec("ROLLBACK");
+      throw error;
+    } finally {
+      this.database!.exec("DETACH DATABASE legacy_store");
     }
   }
 
@@ -948,6 +1020,14 @@ export class KnowledgeStore {
     return {
       items: rows.map((row) => this.buildKnowledgeItem(row))
     };
+  }
+
+  async listStoredItemIds(): Promise<Array<{ itemId: string; category: string }>> {
+    await this.ensure();
+    return this.database!.prepare("SELECT item_id AS itemId, category FROM items").all() as Array<{
+      itemId: string;
+      category: string;
+    }>;
   }
 
   async listTags(category?: string): Promise<Array<{ tag: string; count: number }>> {
@@ -1252,7 +1332,7 @@ export class KnowledgeStore {
     const hash = urlHash(normalized);
     const itemId = `url:sha256:${hash}`;
     const previous = this.findItemByAlias("normalized_url", normalized);
-    const category = params.category ?? previous?.category ?? "default";
+    const category = params.category ?? this.options.databaseCategory ?? "default";
     this.assertRegisteredCategory(category);
     const captureId = params.rawdoc.rawdoc_id; // keep rawdoc_id for file storage
     const docId = params.document.doc_id;
@@ -1462,7 +1542,7 @@ export class KnowledgeStore {
       ? undefined
       : Buffer.isBuffer(params.content) ? params.content : Buffer.from(params.content);
     const previous = this.database!.prepare("SELECT * FROM items WHERE item_id = ?").get(params.itemId) as unknown as ItemRow | undefined;
-    const category = params.category ?? previous?.category ?? "default";
+    const category = params.category ?? this.options.databaseCategory ?? "default";
     this.assertRegisteredCategory(category);
     const replacedDocId = previous?.active_doc_id && previous.active_doc_id !== docId
       ? previous.active_doc_id : undefined;
@@ -1668,6 +1748,8 @@ export class KnowledgeStore {
     const tags = params.tags ?? params.document.meta.tags ?? [];
     const authorsJson = JSON.stringify(creators);
     const previous = this.database!.prepare("SELECT * FROM items WHERE item_id = ?").get(params.itemId) as unknown as ItemRow | undefined;
+    const category = previous?.category ?? this.options.databaseCategory ?? "default";
+    this.assertRegisteredCategory(category);
     const replacedDocId = previous?.active_doc_id && previous.active_doc_id !== docId
       ? previous.active_doc_id : undefined;
     let chunksToEmbed: ChunkForEmbedding[] = [];
@@ -1688,8 +1770,8 @@ export class KnowledgeStore {
     this.database!.exec("BEGIN");
     try {
       this.database!.prepare(`
-        INSERT INTO items (item_id, item_type, source_type, identity_key, title, creators_json, language, tags_json, state, active_capture_id, active_doc_id, created_at, updated_at, parsed_at)
-        VALUES (?, 'document', ?, ?, ?, ?, ?, ?, 'parsed', ?, ?, ?, ?, ?)
+        INSERT INTO items (item_id, item_type, source_type, identity_key, title, creators_json, language, tags_json, category, state, active_capture_id, active_doc_id, created_at, updated_at, parsed_at)
+        VALUES (?, 'document', ?, ?, ?, ?, ?, ?, ?, 'parsed', ?, ?, ?, ?, ?)
         ON CONFLICT(item_id) DO UPDATE SET
           source_type = excluded.source_type,
           title = excluded.title,
@@ -1703,7 +1785,7 @@ export class KnowledgeStore {
           parsed_at = excluded.parsed_at
       `).run(
         params.itemId, params.sourceType, params.identityHash ?? null, params.pageTitle ?? params.document.meta.title,
-        authorsJson, language, JSON.stringify(tags),
+        authorsJson, language, JSON.stringify(tags), category,
         captureId, docId, previous?.created_at ?? now, now, now
       );
 
@@ -2034,6 +2116,8 @@ export class KnowledgeStore {
     const normalizedRootUrl = params.normalizedRootUrl
       ?? (params.rootUrl ? normalizeUrlForKnowledge(params.rootUrl) : undefined);
     const identityKey = normalizedRootUrl ? urlHash(normalizedRootUrl) : null;
+    const category = this.options.databaseCategory ?? "default";
+    this.assertRegisteredCategory(category);
 
     // Deduplicate by identity_key when creating a new collection — same source
     // page should map to the same collection, preventing duplicates from
@@ -2051,15 +2135,15 @@ export class KnowledgeStore {
       }
     }
 
-    const id = params.collectionId ?? (identityKey ? `col:sha256:${identityKey}` : makeId());
+    const id = params.collectionId ?? (identityKey ? `col:${category}:sha256:${identityKey}` : makeId());
     this.database!.prepare(`
-      INSERT INTO items (item_id, item_type, source_type, identity_key, title, creators_json, tags_json, state, member_visibility_mode, created_at, updated_at)
-      VALUES (?, 'collection', ?, ?, ?, '[]', '[]', 'active', 'show_members', ?, ?)
+      INSERT INTO items (item_id, item_type, source_type, identity_key, title, creators_json, tags_json, category, state, member_visibility_mode, created_at, updated_at)
+      VALUES (?, 'collection', ?, ?, ?, '[]', '[]', ?, 'active', 'show_members', ?, ?)
       ON CONFLICT(item_id) DO UPDATE SET
         title = excluded.title,
         identity_key = excluded.identity_key,
         updated_at = excluded.updated_at
-    `).run(id, params.sourceType ?? "virtual_collection", identityKey, params.title, now, now);
+    `).run(id, params.sourceType ?? "virtual_collection", identityKey, params.title, category, now, now);
     if (params.rootUrl) {
       this.upsertAlias(id, "root_url", params.rootUrl, true);
     }
@@ -2156,14 +2240,16 @@ export class KnowledgeStore {
   }>): Promise<CollectionItem[]> {
     await this.ensure();
     const now = new Date().toISOString();
+    const category = this.options.databaseCategory ?? "default";
+    this.assertRegisteredCategory(category);
     for (const item of items) {
       const hash = urlHash(item.normalizedUrl);
       const memberItemId = `url:sha256:${hash}`;
       this.database!.prepare(`
-        INSERT INTO items (item_id, item_type, source_type, identity_key, title, creators_json, tags_json, state, active_capture_id, active_doc_id, created_at, updated_at)
-        VALUES (?, 'document', 'url', ?, ?, '[]', '[]', 'captured', NULL, NULL, ?, ?)
+        INSERT INTO items (item_id, item_type, source_type, identity_key, title, creators_json, tags_json, category, state, active_capture_id, active_doc_id, created_at, updated_at)
+        VALUES (?, 'document', 'url', ?, ?, '[]', '[]', ?, 'captured', NULL, NULL, ?, ?)
         ON CONFLICT(item_id) DO NOTHING
-      `).run(memberItemId, hash, item.title ?? item.pageTitle ?? null, now, now);
+      `).run(memberItemId, hash, item.title ?? item.pageTitle ?? null, category, now, now);
       this.upsertAlias(memberItemId, "normalized_url", item.normalizedUrl, true);
     }
     const members = items.map((item, index) => ({
@@ -3608,7 +3694,7 @@ export class KnowledgeStore {
 
   async scanMaintenance(): Promise<StoreMaintenanceScan> {
     await this.ensure();
-    const databaseSize = (await stat(join(this.root, "index.sqlite3")).catch(() => ({ size: -1 }))).size;
+    const databaseSize = (await stat(this.databasePath).catch(() => ({ size: -1 }))).size;
     const rawdocFiles = await countFiles(join(this.root, "rawdocs"));
     const documentFiles = await countFiles(join(this.root, "documents"));
     const outlineFiles = await countFiles(join(this.root, "outlines"));
@@ -3635,7 +3721,7 @@ export class KnowledgeStore {
     return {
       storeRoot: this.root,
       scannedAt: new Date().toISOString(),
-      database: { exists: databaseSize >= 0, path: "index.sqlite3", sizeBytes: Math.max(databaseSize, 0) },
+      database: { exists: databaseSize >= 0, path: this.databasePath.slice(this.root.length + 1), sizeBytes: Math.max(databaseSize, 0) },
       tables,
       files: { rawdocs: rawdocFiles, documents: documentFiles, outlines: outlineFiles, markdown: markdownFiles, assets: assetFiles, totalContentFiles },
       totals: { rows, contentFiles: totalContentFiles },
@@ -3654,6 +3740,14 @@ export class KnowledgeStore {
   async clearAll(): Promise<StoreClearResponse> {
     await this.ensure();
     const before = await this.scanMaintenance();
+    await this.clearAllRows();
+    await this.removeAllContentFiles();
+    const after = await this.scanMaintenance();
+    return { cleared: true, mode: "all", before, after };
+  }
+
+  async clearAllRows(): Promise<void> {
+    await this.ensure();
     this.database!.exec("BEGIN");
     try {
       this.database!.exec(`
@@ -3674,19 +3768,28 @@ export class KnowledgeStore {
       this.database!.exec("ROLLBACK");
       throw error;
     }
+  }
+
+  async removeAllContentFiles(): Promise<void> {
     await rm(join(this.root, "rawdocs"), { recursive: true }).catch(ignoreMissing);
     await rm(join(this.root, "documents"), { recursive: true }).catch(ignoreMissing);
     await rm(join(this.root, "outlines"), { recursive: true }).catch(ignoreMissing);
     await rm(join(this.root, "markdown"), { recursive: true }).catch(ignoreMissing);
     await rm(join(this.root, "assets"), { recursive: true }).catch(ignoreMissing);
     await rm(join(this.root, "annotations"), { recursive: true }).catch(ignoreMissing);
-    const after = await this.scanMaintenance();
-    return { cleared: true, mode: "all", before, after };
   }
 
   async clearParsedResults(): Promise<StoreClearParsedResponse> {
     await this.ensure();
     const before = await this.scanMaintenance();
+    await this.clearParsedRows();
+    await this.removeParsedContentFiles();
+    const after = await this.scanMaintenance();
+    return { cleared: true, mode: "parsed", before, after };
+  }
+
+  async clearParsedRows(): Promise<void> {
+    await this.ensure();
     this.database!.exec("BEGIN");
     try {
       this.database!.exec(`
@@ -3701,13 +3804,14 @@ export class KnowledgeStore {
       this.database!.exec("ROLLBACK");
       throw error;
     }
+  }
+
+  async removeParsedContentFiles(): Promise<void> {
     await rm(join(this.root, "documents"), { recursive: true }).catch(ignoreMissing);
     await rm(join(this.root, "outlines"), { recursive: true }).catch(ignoreMissing);
     await rm(join(this.root, "markdown"), { recursive: true }).catch(ignoreMissing);
     await rm(join(this.root, "assets"), { recursive: true }).catch(ignoreMissing);
     await rm(join(this.root, "annotations"), { recursive: true }).catch(ignoreMissing);
-    const after = await this.scanMaintenance();
-    return { cleared: true, mode: "parsed", before, after };
   }
 
   async deleteDerivedArtifacts(docId: string): Promise<string[]> {
@@ -3740,6 +3844,7 @@ export class KnowledgeStore {
       for (const section of doc.sections) {
         for (const asset of section.assets ?? []) {
           if (asset.asset_id) {
+            if (await this.options.isAssetReferencedElsewhere?.(asset.asset_id, docId)) continue;
             const assetPath = resolveInsideRoot(this.root, `assets/${asset.asset_id}`);
             await unlink(assetPath).then(() => files.push(`assets/${asset.asset_id}`)).catch(ignoreMissing);
           }
@@ -3749,6 +3854,20 @@ export class KnowledgeStore {
       // document JSON might already be deleted — ignore
     }
     return files;
+  }
+
+  async hasAssetReference(assetId: string, excludingDocId: string): Promise<boolean> {
+    await this.ensure();
+    const rows = this.database!.prepare(
+      "SELECT doc_id FROM documents WHERE doc_id <> ?"
+    ).all(excludingDocId) as Array<{ doc_id: string }>;
+    for (const row of rows) {
+      const document = await this.readJson<KnowledgeDocument>(`documents/${row.doc_id}.json`).catch(() => undefined);
+      if (document?.sections.some((section) => section.assets?.some((asset) => asset.asset_id === assetId))) {
+        return true;
+      }
+    }
+    return false;
   }
 
   // ── internal helpers ───────────────────────────────────────────────────

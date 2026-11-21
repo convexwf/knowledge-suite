@@ -7,7 +7,7 @@ export interface StoreMaintenanceScan {
   scannedAt: string;
   database: {
     exists: boolean;
-    path: "index.sqlite3";
+    path: string;
     sizeBytes: number;
   };
   tables: {

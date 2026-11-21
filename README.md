@@ -119,11 +119,15 @@ curl -X POST -H "Authorization: Bearer dev-token" http://127.0.0.1:18765/api/sea
 curl -X POST -H "Authorization: Bearer dev-token" "http://127.0.0.1:18765/api/embeddings/reindex?force=true"
 ```
 
-Items carry one registered `category`. `KNOWLEDGE_CATEGORIES` configures the
-available values; `default` is required and `bot` is registered by default.
-New items use `default` unless a category is supplied, while re-saving an item
-without a category keeps its current one. `/api/categories` returns the registry;
-`/api/items`, `/api/search`, and `/api/tags` accept category filters.
+Each registered `category` has its own SQLite database under
+`<storeRoot>/index/categories/<category>.sqlite3`; raw captures, parsed documents,
+and assets remain in the shared content directories. `KNOWLEDGE_CATEGORIES`
+registers the available categories before startup; `default` is required and
+`bot` is registered by default. An omitted category uses only `default`. Item
+categories do not change after import, and category-specific API requests read
+or write one database at a time. `/api/categories` returns the registry; the
+Clipper Saved Items page defaults to `default` and lets the reader select one
+registered category from the control at the top right.
 
 ### Reader
 
@@ -192,7 +196,7 @@ Open the extension options page (`chrome://extensions` → **Details** →
 | `KNOWLEDGE_HOST` | `127.0.0.1` | Server bind address |
 | `KNOWLEDGE_PORT` | `18765` | Server port |
 | `KNOWLEDGE_TOKEN` | `dev-token` | Bearer token for API auth |
-| `KNOWLEDGE_CATEGORIES` | `default,bot` | Comma-separated registered item categories; `default` is required |
+| `KNOWLEDGE_CATEGORIES` | `default,bot` | Comma-separated registered database categories; `default` is required |
 | `KNOWLEDGE_SEARCH` | `fts` | Retrieval mode: `off`, `fts`, or `hybrid` |
 | `KNOWLEDGE_EMBEDDINGS` | `none` | Embedding provider: `none` or `ollama` (hybrid requires `ollama`) |
 | `KNOWLEDGE_EMBEDDING_BASE_URL` | `http://127.0.0.1:11434` | Ollama base URL |

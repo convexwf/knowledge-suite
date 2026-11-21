@@ -71,9 +71,9 @@ npm run capture -- "<url>" --save --quiet
 
 ## Category
 
-每条入库文档带一个 `category`，用于把同一个 Knowledge Store 中的资料分组。category 必须先在服务端 `KNOWLEDGE_CATEGORIES` 配置中注册；默认配置为 `default,bot`，其中 `default` 必须保留。服务启动时会检查已存条目使用的 category 是否都已注册。
+每个已注册的 `category` 对应独立 SQLite 文件：`<storeRoot>/index/categories/<category>.sqlite3`。原始抓取、解析文档和资源仍保存在共享的 `rawdocs/`、`documents/`、`outlines/`、`markdown/` 与 `assets/` 目录。category 必须先在服务端 `KNOWLEDGE_CATEGORIES` 配置中注册；默认配置为 `default,bot`，其中 `default` 必须保留。服务启动时会检查注册表和已有数据库。
 
-新条目未传 category 时使用 `default`；重新抓取或导入已有条目时未传 category 则沿用原值。传入未注册的值会被 API 拒绝。`GET /api/categories` 返回当前注册表，Clipper Saved 页按该列表生成筛选项。
+请求未传 category 时只访问 `default` 数据库。category 在条目创建时确定，后续请求不能把条目移到其他 category；同一条目不能重复存入另一类。传入未注册的值会被 API 拒绝。`GET /api/categories` 返回当前注册表，Clipper Saved Items 页默认显示 `default`，可从列表右上角切换到一个已注册 category。
 
 ```dotenv
 KNOWLEDGE_CATEGORIES=default,bot,research
@@ -83,9 +83,10 @@ KNOWLEDGE_CATEGORIES=default,bot,research
 npm run capture -- "<url>" --save --category bot
 ```
 
-- `POST /api/capture`、`POST /api/ingest/save` 和导入接口接受已注册的 `category`。
-- `GET /api/items?category=bot&tag=...`、`GET /api/search?category=bot` 和 `GET /api/tags?category=bot` 按 category 过滤。
-- 不传 category 的列表或搜索不做 category 过滤；Clipper 默认显示 `default`，也可以切换到单个 category 或 `All`。
+- `POST /api/capture`、`POST /api/ingest/save` 和导入接口可通过已注册的 `category` 指定目标数据库；未指定时写入 `default`。
+- `GET /api/items?category=bot&tag=...`、`GET /api/search?category=bot` 和 `GET /api/tags?category=bot` 只读取 `bot` 数据库。
+- 不传 category 的列表或搜索只访问 `default`；Clipper Saved Items 页一次只显示一个 category，不提供跨分类合集。
+- 旧版 `<storeRoot>/index.sqlite3` 会在首次启动时按条目 category 拆分到独立数据库，原库保留为 `index.sqlite3.pre-category-split`。若旧合集成员横跨多个 category，迁移会停止并报告合集 ID；先在旧库中拆分成员后再启动。
 
 ## 列表页 discover（不读正文）
 

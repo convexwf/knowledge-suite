@@ -20,11 +20,12 @@ import {
 } from "./remote.js";
 
 export interface SyncSourceClient {
-  catalog(): Promise<RemoteCatalogItem[]>;
-  itemMeta(itemId: string): Promise<RemoteItemMeta>;
-  itemPackage(itemId: string): Promise<Buffer>;
-  itemRawdoc(itemId: string): Promise<RemoteRawdoc>;
-  collections(): Promise<RemoteCollection[]>;
+  categories?(): Promise<string[]>;
+  catalog(category?: string): Promise<RemoteCatalogItem[]>;
+  itemMeta(itemId: string, category?: string): Promise<RemoteItemMeta>;
+  itemPackage(itemId: string, category?: string): Promise<Buffer>;
+  itemRawdoc(itemId: string, category?: string): Promise<RemoteRawdoc>;
+  collections(category?: string): Promise<RemoteCollection[]>;
 }
 
 export interface SyncRunResult {
@@ -53,6 +54,8 @@ export class SyncBusyError extends Error {
 interface SyncRunnerOptions {
   attempts?: number;
   retryDelayMs?: number;
+  categories?: string[];
+  withCategory?: <T>(category: string, operation: () => T) => T;
 }
 
 export class SyncRunner {
@@ -60,6 +63,8 @@ export class SyncRunner {
   private lastResult?: SyncRunResult;
   private readonly attempts: number;
   private readonly retryDelayMs: number;
+  private readonly categories: string[];
+  private readonly withCategory?: SyncRunnerOptions["withCategory"];
 
   constructor(
     private readonly store: KnowledgeStore,
@@ -68,6 +73,8 @@ export class SyncRunner {
   ) {
     this.attempts = Math.max(1, options.attempts ?? 3);
     this.retryDelayMs = Math.max(0, options.retryDelayMs ?? 250);
+    this.categories = options.categories?.length ? [...options.categories] : ["default"];
+    this.withCategory = options.withCategory;
   }
 
   status(): { running: boolean; lastResult?: SyncRunResult } {
@@ -76,7 +83,7 @@ export class SyncRunner {
 
   async run(): Promise<SyncRunResult> {
     if (this.active) throw new SyncBusyError();
-    const active = this.execute();
+    const active = this.executeAll();
     this.active = active;
     try {
       const result = await active;
@@ -87,7 +94,63 @@ export class SyncRunner {
     }
   }
 
-  private async execute(): Promise<SyncRunResult> {
+  private async executeAll(): Promise<SyncRunResult> {
+    const runs: SyncRunResult[] = [];
+    const errors: SyncRunResult["errors"] = [];
+    let categoriesToSync = this.categories;
+    if (this.source.categories) {
+      try {
+        const sourceCategories = await this.retry(() => this.source.categories!());
+        categoriesToSync = this.categories.filter((category) => sourceCategories.includes(category));
+        for (const category of sourceCategories) {
+          if (!this.categories.includes(category)) {
+            errors.push({
+              itemId: category,
+              stage: "category-registration",
+              message: `Source category '${category}' is not registered locally; add it to KNOWLEDGE_CATEGORIES.`
+            });
+          }
+        }
+      } catch (error) {
+        errors.push({ stage: "categories", message: errorMessage(error) });
+      }
+    }
+    for (const category of categoriesToSync) {
+      const execute = () => this.execute(category);
+      runs.push(await (this.withCategory ? this.withCategory(category, execute) : execute()));
+    }
+    const combined: SyncRunResult = {
+      startedAt: runs[0]?.startedAt ?? new Date().toISOString(),
+      finishedAt: runs.at(-1)?.finishedAt ?? new Date().toISOString(),
+      status: errors.length === 0 && runs.every((run) => run.status === "ok") ? "ok"
+        : runs.some((run) => run.status === "ok" || run.status === "partial") ? "partial" : "failed",
+      catalogItems: 0,
+      packagesUpdated: 0,
+      packagesUnchanged: 0,
+      placeholders: 0,
+      annotations: 0,
+      readingProgress: 0,
+      collections: 0,
+      collectionMembers: 0,
+      failedItems: 0,
+      errors: [...errors]
+    };
+    for (const run of runs) {
+      combined.catalogItems += run.catalogItems;
+      combined.packagesUpdated += run.packagesUpdated;
+      combined.packagesUnchanged += run.packagesUnchanged;
+      combined.placeholders += run.placeholders;
+      combined.annotations += run.annotations;
+      combined.readingProgress += run.readingProgress;
+      combined.collections += run.collections;
+      combined.collectionMembers += run.collectionMembers;
+      combined.failedItems += run.failedItems;
+      combined.errors.push(...run.errors);
+    }
+    return combined;
+  }
+
+  private async execute(category: string): Promise<SyncRunResult> {
     const startedAt = new Date().toISOString();
     const result: SyncRunResult = {
       startedAt,
@@ -107,7 +170,7 @@ export class SyncRunner {
 
     let catalog: RemoteCatalogItem[];
     try {
-      catalog = await this.retry(() => this.source.catalog());
+      catalog = await this.retry(() => this.source.catalog(category));
     } catch (error) {
       result.errors.push({ stage: "catalog", message: errorMessage(error) });
       result.finishedAt = new Date().toISOString();
@@ -117,7 +180,7 @@ export class SyncRunner {
 
     let collections: RemoteCollection[] = [];
     try {
-      collections = await this.retry(() => this.source.collections());
+      collections = await this.retry(() => this.source.collections(category));
     } catch (error) {
       result.errors.push({ stage: "collections", message: errorMessage(error) });
     }
@@ -146,7 +209,7 @@ export class SyncRunner {
       let itemFailed = false;
       let meta: RemoteItemMeta;
       try {
-        meta = await this.retry(() => this.source.itemMeta(remoteItem.itemId));
+        meta = await this.retry(() => this.source.itemMeta(remoteItem.itemId, category));
         await this.retry(() => this.store.importSyncItemMetadata(meta.item));
       } catch (error) {
         result.failedItems += 1;
@@ -160,7 +223,7 @@ export class SyncRunner {
           result.packagesUnchanged += 1;
         } else {
           try {
-            await this.retry(() => this.importPackage(remoteItem, meta));
+            await this.retry(() => this.importPackage(remoteItem, meta, category));
             result.packagesUpdated += 1;
             await this.retry(() => this.store.importSyncItemMetadata(meta.item));
           } catch (error) {
@@ -173,7 +236,7 @@ export class SyncRunner {
         const captureId = meta.item.activeRawdocId || meta.rawdoc?.rawdoc_id;
         if (captureId) {
           try {
-            const rawdoc = await this.retry(() => this.source.itemRawdoc(remoteItem.itemId)
+            const rawdoc = await this.retry(() => this.source.itemRawdoc(remoteItem.itemId, category)
               .catch((error: unknown) => {
                 if (error instanceof RemoteSuiteError && error.statusCode === 404) return undefined;
                 throw error;
@@ -256,10 +319,10 @@ export class SyncRunner {
     }
   }
 
-  private async importPackage(remoteItem: RemoteCatalogItem, meta: RemoteItemMeta): Promise<void> {
+  private async importPackage(remoteItem: RemoteCatalogItem, meta: RemoteItemMeta, category: string): Promise<void> {
     const [archive, rawdoc] = await Promise.all([
-      this.source.itemPackage(remoteItem.itemId),
-      this.source.itemRawdoc(remoteItem.itemId).catch((error: unknown) => {
+      this.source.itemPackage(remoteItem.itemId, category),
+      this.source.itemRawdoc(remoteItem.itemId, category).catch((error: unknown) => {
         if (error instanceof RemoteSuiteError && error.statusCode === 404) return undefined;
         throw error;
       })

@@ -159,10 +159,11 @@ export interface KnowledgeApiClient {
   cancelTask(taskId: string): Promise<{ cancelled: boolean; task_id: string; completed: number }>;
 }
 
-export function createKnowledgeApiClient(settings: ExtensionSettings): KnowledgeApiClient {
+export function createKnowledgeApiClient(settings: ExtensionSettings, category = "default"): KnowledgeApiClient {
   const baseUrl = settings.serverUrl.replace(/\/+$/, "");
   const options = {
-    timeoutMs: settings.requestTimeoutMs
+    timeoutMs: settings.requestTimeoutMs,
+    category
   };
 
   return {
@@ -621,7 +622,7 @@ async function request<T>(
   method: "DELETE" | "GET" | "POST" | "PUT",
   path: string,
   body?: unknown,
-  options?: { timeoutMs: number; signal?: AbortSignal }
+  options?: { timeoutMs: number; signal?: AbortSignal; category?: string }
 ): Promise<T> {
   const abortController = new AbortController();
   const timeout = globalThis.setTimeout(() => abortController.abort(), options?.timeoutMs ?? 15000);
@@ -638,7 +639,7 @@ async function request<T>(
 
   let response: Response;
   try {
-    response = await fetch(`${baseUrl}${path}`, {
+    response = await fetch(`${baseUrl}${categoryScopedPath(path, options?.category)}`, {
       method,
       headers: {
         ...(body ? { "content-type": "application/json" } : {}),
@@ -688,7 +689,7 @@ async function requestText(
   baseUrl: string,
   token: string,
   path: string,
-  options?: { timeoutMs: number }
+  options?: { timeoutMs: number; category?: string }
 ): Promise<string> {
   const response = await fetchWithTimeout(baseUrl, token, "GET", path, undefined, options);
   return response.text();
@@ -698,7 +699,7 @@ async function requestBlob(
   baseUrl: string,
   token: string,
   path: string,
-  options?: { timeoutMs: number }
+  options?: { timeoutMs: number; category?: string }
 ): Promise<Blob> {
   const response = await fetchWithTimeout(baseUrl, token, "GET", path, undefined, options);
   return response.blob();
@@ -709,7 +710,7 @@ async function requestForm<T>(
   token: string,
   path: string,
   body: FormData,
-  options?: { timeoutMs: number }
+  options?: { timeoutMs: number; category?: string }
 ): Promise<T> {
   const response = await fetchWithTimeout(baseUrl, token, "POST", path, body, options);
   return response.json() as Promise<T>;
@@ -721,13 +722,13 @@ async function fetchWithTimeout(
   method: "DELETE" | "GET" | "POST",
   path: string,
   body?: BodyInit,
-  options?: { timeoutMs: number }
+  options?: { timeoutMs: number; category?: string }
 ): Promise<Response> {
   const abortController = new AbortController();
   const timeout = globalThis.setTimeout(() => abortController.abort(), options?.timeoutMs ?? 15000);
   let response: Response;
   try {
-    response = await fetch(`${baseUrl}${path}`, {
+    response = await fetch(`${baseUrl}${categoryScopedPath(path, options?.category)}`, {
       method,
       headers: {
         authorization: `Bearer ${token}`
@@ -749,6 +750,17 @@ async function fetchWithTimeout(
   }
 
   return response;
+}
+
+function categoryScopedPath(path: string, category?: string): string {
+  if (!category || !path.startsWith("/api/")) return path;
+  if (path === "/api/health" || path === "/api/categories" || path.startsWith("/api/import/") ||
+      path === "/api/ingest/preview" || path === "/api/ingest/save" || path === "/api/capture") {
+    return path;
+  }
+  const url = new URL(path, "https://knowledge.invalid");
+  if (!url.searchParams.has("category")) url.searchParams.set("category", category);
+  return `${url.pathname}${url.search}${url.hash}`;
 }
 
 function defaultPathPrefix(pageUrl: string): string {

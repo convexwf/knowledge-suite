@@ -578,9 +578,10 @@ describe("KnowledgeStore", () => {
       { tag: "shared", count: 1 }
     ]);
 
-    // Re-saving without a category keeps the existing category.
+    // Omitting the category targets default.
     await store.save(botItem);
-    expect((await store.listItems(undefined, 50, { category: "bot" })).items).toHaveLength(1);
+    expect((await store.listItems(undefined, 50, { category: "bot" })).items).toHaveLength(0);
+    expect((await store.listItems(undefined, 50, { category: "default" })).items).toHaveLength(2);
     store.close();
   });
 

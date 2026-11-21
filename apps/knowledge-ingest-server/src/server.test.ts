@@ -138,7 +138,8 @@ describe("knowledge ingest server", () => {
       service: "knowledge-ingest-server",
       store: {
         type: "sqlite",
-        indexPath: "index.sqlite3"
+        indexPath: "index/categories/*.sqlite3",
+        categories: ["default", "bot"]
       },
       limits: {
         fetchTimeoutMs: 1000,
@@ -211,7 +212,7 @@ describe("knowledge ingest server", () => {
       hasDocument: true
     });
     expect(save.json().paths.markdownPath).toMatch(/\.md$/);
-    await expect(access(join(storeRoot, "index.sqlite3"))).resolves.toBeUndefined();
+    await expect(access(join(storeRoot, "index", "categories", "default.sqlite3"))).resolves.toBeUndefined();
 
     const itemId = save.json().status.itemId as string;
     const itemBeforeProgress = await app.inject({
@@ -963,7 +964,7 @@ describe("knowledge ingest server", () => {
       storeRoot,
       database: {
         exists: true,
-        path: "index.sqlite3"
+        path: "index/categories/*.sqlite3"
       },
       tables: {
         webItems: 1,
@@ -2223,7 +2224,7 @@ describe("knowledge ingest server", () => {
 
     const status = await app.inject({
       method: "GET",
-      url: `/api/ingest/status?url=${encodeURIComponent(canonicalUrl)}`,
+      url: `/api/ingest/status?url=${encodeURIComponent(canonicalUrl)}&category=bot`,
       headers: { authorization: "Bearer test-token" }
     });
     expect(status.statusCode).toBe(200);

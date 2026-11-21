@@ -54,7 +54,8 @@ import { documentToMarkdown } from "./markdown.js";
 import { parseMarkdown, type MarkdownAssetInput } from "./markdown-import.js";
 import { parsePage, type ParsedPage } from "./parser.js";
 import { buildPackageManifest, PACKAGE_SCHEMA_VERSION, sha256Buffer, sha256Text } from "./package.js";
-import { guessContentType, InvalidOutlineError, KnowledgeStore } from "./store.js";
+import { guessContentType, InvalidOutlineError, type KnowledgeStore } from "./store.js";
+import { CategoryItemConflictError, CategoryStoreRegistry } from "./category-store.js";
 import { RemoteSuiteClient } from "./sync/remote.js";
 import { DailySyncScheduler, SyncBusyError, SyncRunner } from "./sync/runner.js";
 import { buildZipArchive } from "./zip.js";
@@ -104,18 +105,10 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
   const embedder = createEmbedder(config.embeddings);
   const requestedSearch = config.search ?? "fts";
   const effectiveSearch = requestedSearch === "hybrid" && !embedder ? "fts" : requestedSearch;
-  const store = new KnowledgeStore(config.storeRoot, { search: effectiveSearch, embedder, categories });
+  const stores = new CategoryStoreRegistry(config.storeRoot, { search: effectiveSearch, embedder, categories });
+  const store = stores.store;
   if (requestedSearch === "hybrid" && !embedder) {
     app.log.warn("KNOWLEDGE_SEARCH=hybrid requires KNOWLEDGE_EMBEDDINGS=ollama; falling back to fts");
-  }
-  if (effectiveSearch === "hybrid") {
-    void store.indexPendingEmbeddings()
-      .then((result) => {
-        if (result.embedded > 0) {
-          app.log.info({ ...result, model: embedder?.model }, "embeddings indexed on startup");
-        }
-      })
-      .catch((error) => app.log.warn({ err: error }, "startup embedding index failed"));
   }
   const activeBatchRuns = new Set<Promise<void>>();
   const githubFetchCache = new Map<string, {
@@ -147,10 +140,19 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
     }
   };
   let shuttingDown = false;
-  await store.ensure();
+  await stores.ensureAll();
   const recovered = await store.recoverStaleJobs();
   if (recovered > 0) {
     app.log.info(`Recovered ${recovered} stale batch job(s) from previous session.`);
+  }
+  if (effectiveSearch === "hybrid") {
+    void store.indexPendingEmbeddings()
+      .then((result) => {
+        if (result.embedded > 0) {
+          app.log.info({ ...result, model: embedder?.model }, "embeddings indexed on startup");
+        }
+      })
+      .catch((error) => app.log.warn({ err: error }, "startup embedding index failed"));
   }
 
   let syncScheduler: DailySyncScheduler | undefined;
@@ -161,7 +163,10 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
       token: config.sync.sourceToken,
       timeoutMs: config.sync.timeoutMs
     });
-    syncRunner = new SyncRunner(store, syncClient);
+    syncRunner = new SyncRunner(store, syncClient, {
+      categories,
+      withCategory: (category, operation) => stores.withCategory(category, operation)
+    });
     syncScheduler = new DailySyncScheduler(
       config.sync.at,
       syncRunner,
@@ -188,7 +193,7 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
     shuttingDown = true;
     syncScheduler?.stop();
     await Promise.allSettled([...activeBatchRuns]);
-    store.close();
+    await stores.close();
   });
 
   await app.register(cors, {
@@ -198,6 +203,16 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
   });
 
   app.setErrorHandler(async (error, _request, reply) => {
+    if (error instanceof CategoryItemConflictError) {
+      await reply.code(error.statusCode).send({
+        error: error.code,
+        itemId: error.itemId,
+        existingCategory: error.existingCategory,
+        requestedCategory: error.requestedCategory,
+        message: error.message
+      });
+      return;
+    }
     if (error instanceof GitHubClientError) {
       await reply.code(error.statusCode).send({
         error: error.code,
@@ -227,16 +242,35 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
     });
   });
 
-  app.addHook("preHandler", async (request, reply) => {
+  app.addHook("preHandler", (request, reply, done) => {
     const path = request.url.split("?")[0];
     if (path === "/api/health" || path === "/agent") {
+      done();
       return;
     }
 
     const token = request.headers.authorization?.replace(/^Bearer\s+/i, "");
     if (token !== config.token) {
-      await reply.code(401).send({ error: "unauthorized" });
+      reply.code(401).send({ error: "unauthorized" });
+      done();
+      return;
     }
+
+    const queryCategory = (request.query as { category?: unknown } | undefined)?.category;
+    const bodyCategory = (request.body as { category?: unknown } | undefined)?.category;
+    const requestedCategory = typeof bodyCategory === "string"
+      ? bodyCategory
+      : typeof queryCategory === "string" ? queryCategory : "default";
+    if (!categories.includes(requestedCategory)) {
+      reply.code(400).send({
+        error: "category_not_registered",
+        category: requestedCategory,
+        registeredCategories: categories
+      });
+      done();
+      return;
+    }
+    stores.withCategory(requestedCategory, done);
   });
 
   app.get("/api/health", async () => ({
@@ -246,7 +280,8 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
     storeRoot: config.storeRoot,
     store: {
       type: "sqlite",
-      indexPath: "index.sqlite3"
+      indexPath: "index/categories/*.sqlite3",
+      categories
     },
     limits: {
       fetchTimeoutMs: config.fetchTimeoutMs,
@@ -1064,96 +1099,102 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
 
   app.post("/api/import/epub", async (request, reply) => {
     const input = parseEpubImportRequest(request.headers["content-type"], request.body);
-    if (input.category && !categories.includes(input.category)) {
-      return reply.code(400).send({ error: "category_not_registered", category: input.category, registeredCategories: categories });
+    const category = input.category ?? (request.query as { category?: string }).category;
+    if (category && !categories.includes(category)) {
+      return reply.code(400).send({ error: "category_not_registered", category, registeredCategories: categories });
     }
-    const parsed = await parseEpub(input.file, {
-      sourceUri: input.sourceUri,
-      titleHint: input.titleHint,
-      tags: input.tags,
-      metadataOpf: input.metadataOpf,
-      cover: input.cover,
-      pandocRunner: config.epubPandocRunner
-    });
-    try {
-      const documentWithAssets = await store.prepareDocumentAssets(parsed.document);
-      const markdown = documentToMarkdown(documentWithAssets);
-      const result = await store.saveImportItem({
-        itemId: parsed.itemId,
-        sourceType: "epub",
-        sourceUri: parsed.rawdoc.source_uri ?? input.file,
-        rawdocId: parsed.rawdoc.rawdoc_id,
-        rawdoc: parsed.rawdoc,
-        rawContentPath: input.file,
-        document: documentWithAssets,
-        markdown,
-        pageTitle: parsed.rawdoc.metadata?.pageTitle as string | undefined,
-        identityHash: parsed.identityHash,
-        content: input.file,
-        contentExt: "epub",
-        epubMetadata: parsed.epubMetadata,
-        category: input.category
+    return stores.withCategory(category, async () => {
+      const parsed = await parseEpub(input.file, {
+        sourceUri: input.sourceUri,
+        titleHint: input.titleHint,
+        tags: input.tags,
+        metadataOpf: input.metadataOpf,
+        cover: input.cover,
+        pandocRunner: config.epubPandocRunner
       });
-      return {
-        knowledgeItem: result.knowledgeItem,
-        rawdoc: parsed.rawdoc,
-        document: documentWithAssets,
-        markdown,
-        saved: true,
-        paths: result.paths
-      };
-    } finally {
-      await parsed.cleanup();
-    }
+      try {
+        const documentWithAssets = await store.prepareDocumentAssets(parsed.document);
+        const markdown = documentToMarkdown(documentWithAssets);
+        const result = await store.saveImportItem({
+          itemId: parsed.itemId,
+          sourceType: "epub",
+          sourceUri: parsed.rawdoc.source_uri ?? input.file,
+          rawdocId: parsed.rawdoc.rawdoc_id,
+          rawdoc: parsed.rawdoc,
+          rawContentPath: input.file,
+          document: documentWithAssets,
+          markdown,
+          pageTitle: parsed.rawdoc.metadata?.pageTitle as string | undefined,
+          identityHash: parsed.identityHash,
+          content: input.file,
+          contentExt: "epub",
+          epubMetadata: parsed.epubMetadata,
+          category
+        });
+        return {
+          knowledgeItem: result.knowledgeItem,
+          rawdoc: parsed.rawdoc,
+          document: documentWithAssets,
+          markdown,
+          saved: true,
+          paths: result.paths
+        };
+      } finally {
+        await parsed.cleanup();
+      }
+    });
   });
 
   app.post("/api/import/markdown", async (request, reply) => {
     const input = parseMarkdownImportRequest(request.headers["content-type"], request.body);
-    if (input.category && !categories.includes(input.category)) {
-      return reply.code(400).send({ error: "category_not_registered", category: input.category, registeredCategories: categories });
+    const category = input.category ?? (request.query as { category?: string }).category;
+    if (category && !categories.includes(category)) {
+      return reply.code(400).send({ error: "category_not_registered", category, registeredCategories: categories });
     }
-    if (input.assets.length > 0 && !input.relativePath) {
-      throw new Error("resource_root_markdown_required: relativePath is required when local assets are uploaded");
-    }
-    const parsed = await parseMarkdown(input.file, {
-      sourceUri: input.sourceUri ?? input.fileName,
-      relativePath: input.relativePath,
-      tags: input.tags,
-      assets: input.assets
-    });
-    try {
-      const documentWithAssets = await store.prepareDocumentAssets(parsed.document);
-      const markdown = documentToMarkdown(documentWithAssets);
-      const result = await store.saveImportItem({
-        itemId: parsed.itemId,
-        sourceType: "markdown",
-        sourceUri: parsed.rawdoc.source_uri,
-        rawdocId: parsed.rawdoc.rawdoc_id,
-        rawdoc: parsed.rawdoc,
-        rawContentPath: input.file,
-        document: documentWithAssets,
-        markdown,
-        pageTitle: documentWithAssets.meta.title,
-        language: documentWithAssets.meta.language,
-        creators: documentWithAssets.meta.authors,
-        tags: documentWithAssets.meta.tags,
-        identityHash: parsed.identityHash,
-        content: input.file,
-        contentExt: "md",
-        category: input.category
+    return stores.withCategory(category, async () => {
+      if (input.assets.length > 0 && !input.relativePath) {
+        throw new Error("resource_root_markdown_required: relativePath is required when local assets are uploaded");
+      }
+      const parsed = await parseMarkdown(input.file, {
+        sourceUri: input.sourceUri ?? input.fileName,
+        relativePath: input.relativePath,
+        tags: input.tags,
+        assets: input.assets
       });
-      return {
-        knowledgeItem: result.knowledgeItem,
-        rawdoc: parsed.rawdoc,
-        document: documentWithAssets,
-        markdown,
-        saved: true,
-        paths: result.paths,
-        ...(parsed.warnings.length ? { warnings: parsed.warnings } : {})
-      };
-    } finally {
-      await parsed.cleanup();
-    }
+      try {
+        const documentWithAssets = await store.prepareDocumentAssets(parsed.document);
+        const markdown = documentToMarkdown(documentWithAssets);
+        const result = await store.saveImportItem({
+          itemId: parsed.itemId,
+          sourceType: "markdown",
+          sourceUri: parsed.rawdoc.source_uri,
+          rawdocId: parsed.rawdoc.rawdoc_id,
+          rawdoc: parsed.rawdoc,
+          rawContentPath: input.file,
+          document: documentWithAssets,
+          markdown,
+          pageTitle: documentWithAssets.meta.title,
+          language: documentWithAssets.meta.language,
+          creators: documentWithAssets.meta.authors,
+          tags: documentWithAssets.meta.tags,
+          identityHash: parsed.identityHash,
+          content: input.file,
+          contentExt: "md",
+          category
+        });
+        return {
+          knowledgeItem: result.knowledgeItem,
+          rawdoc: parsed.rawdoc,
+          document: documentWithAssets,
+          markdown,
+          saved: true,
+          paths: result.paths,
+          ...(parsed.warnings.length ? { warnings: parsed.warnings } : {})
+        };
+      } finally {
+        await parsed.cleanup();
+      }
+    });
   });
 
   app.post("/api/import/structured", async (request, reply) => {

@@ -46,7 +46,6 @@ const statusOutput = mustGet<HTMLElement>("status-output");
 const openImportButton = mustGet<HTMLButtonElement>("open-import");
 const importDialog = mustGet<HTMLDialogElement>("import-dialog");
 const importSourceType = mustGet<HTMLSelectElement>("import-source-type");
-const importCategory = mustGet<HTMLSelectElement>("import-category");
 const epubImportConfig = mustGet<HTMLElement>("epub-import-config");
 const markdownImportConfig = mustGet<HTMLElement>("markdown-import-config");
 const githubMarkdownImportConfig = mustGet<HTMLElement>("github-markdown-import-config");
@@ -95,9 +94,16 @@ const overviewParsedDetail = mustGet<HTMLElement>("overview-parsed-detail");
 const overviewLatestDetail = mustGet<HTMLElement>("overview-latest-detail");
 
 let settings = await getSettings();
-let client = createKnowledgeApiClient(settings);
 bindThemeModePreference(settings.themeMode);
 const query = new URLSearchParams(globalThis.location.search);
+type CategoryFilter = string;
+
+function normalizeCategoryFilter(value: string | null | undefined): CategoryFilter {
+  return value || "default";
+}
+
+let activeCategoryFilter: CategoryFilter = normalizeCategoryFilter(query.get("category"));
+let client = createKnowledgeApiClient(settings, activeCategoryFilter);
 
 let currentItems: KnowledgeItem[] = [];
 let currentCollections: CollectionSummary[] = [];
@@ -106,7 +112,6 @@ let githubScan: GitHubMarkdownScanResult | undefined;
 let markdownFolderHandle: MarkdownDirectoryHandle | undefined;
 let markdownResourceFolderHandle: MarkdownDirectoryHandle | undefined;
 let activeSourceFilter: SourceFilter = normalizeSourceFilter(query.get("source") ?? (query.get("collectionId") ? "collection" : "all"));
-let activeCategoryFilter: CategoryFilter = normalizeCategoryFilter(query.get("category"));
 let activeTagFilter = (query.get("tag") ?? "").trim();
 let activeSearchQuery = (query.get("q") ?? "").trim();
 let availableTags: Array<{ tag: string; count: number }> = [];
@@ -282,7 +287,6 @@ async function importEpub(): Promise<void> {
       sourceUri: selected.sourceUri,
       titleHint: titleHintInput.value,
       tags: parseTags(tagsInput.value),
-      category: importCategory.value,
       metadataOpf: selected.metadataOpf,
       cover: selected.cover
     });
@@ -290,7 +294,7 @@ async function importEpub(): Promise<void> {
     importDialog.close();
     resetImportDialog();
     await refreshItems();
-    openReader(result.knowledgeItem.itemId);
+    openReader(result.knowledgeItem.itemId, "default");
   } catch (error) {
     setStatus(errorMessage(error));
   } finally {
@@ -457,7 +461,6 @@ async function importMarkdownFiles(): Promise<void> {
           sourceUri: document.sourceUri,
           relativePath: document.relativePath,
           tags,
-          category: importCategory.value,
           assets: document.assets
         });
         succeeded += 1;
@@ -474,7 +477,7 @@ async function importMarkdownFiles(): Promise<void> {
     resetImportDialog();
     await refreshItems();
     if (firstItemId && documents.length === 1 && failures.length === 0) {
-      openReader(firstItemId);
+      openReader(firstItemId, "default");
     }
   } finally {
     markdownImportButton.disabled = false;
@@ -530,7 +533,7 @@ async function importGitHubMarkdown(): Promise<void> {
     resetImportDialog();
     await refreshItems();
     if (firstItem?.knowledgeItem && result.results.length === 1 && failed === 0) {
-      openReader(firstItem.knowledgeItem.itemId);
+      openReader(firstItem.knowledgeItem.itemId, "default");
     }
   } catch (error) {
     githubScanOutput.textContent = errorMessage(error);
@@ -543,7 +546,7 @@ async function importGitHubMarkdown(): Promise<void> {
 function githubMarkdownRequest(): GitHubMarkdownRequest | undefined {
   const parsed = parseGitHubMarkdownUrl(githubUrlInput.value);
   if (!parsed) return undefined;
-  return { ...parsed, tags: parseTags(githubTagsInput.value), category: importCategory.value };
+  return { ...parsed, tags: parseTags(githubTagsInput.value) };
 }
 
 function invalidateGitHubScan(): void {
@@ -626,7 +629,7 @@ function webkitRelativePath(file: File | undefined): string | undefined {
 
 async function refreshItems(): Promise<void> {
   const generation = ++refreshGeneration;
-  const requestClient = client;
+  let requestClient = client;
   const requestLimit = settings.savedListLimit;
   refreshButton.disabled = true;
   itemList.replaceChildren(loadingNode());
@@ -635,17 +638,18 @@ async function refreshItems(): Promise<void> {
     const categoriesResult = await requestClient.categories();
     if (generation !== refreshGeneration) return;
     availableCategories = categoriesResult.categories;
-    if (activeCategoryFilter !== "all" && !availableCategories.includes(activeCategoryFilter)) {
+    if (!availableCategories.includes(activeCategoryFilter)) {
       activeCategoryFilter = categoriesResult.defaultCategory;
+      client = createKnowledgeApiClient(settings, activeCategoryFilter);
+      requestClient = client;
       const url = new URL(globalThis.location.href);
       url.searchParams.delete("category");
       globalThis.history.replaceState(null, "", url);
     }
-    renderImportCategoryOptions();
     const sourceType = activeSourceFilter !== "all" && activeSourceFilter !== "collection"
       ? activeSourceFilter as KnowledgeSourceType
       : undefined;
-    const categoryParam = activeCategoryFilter === "all" ? undefined : activeCategoryFilter;
+    const categoryParam = activeCategoryFilter;
     const listRequest = activeSearchQuery
       ? requestClient.search(activeSearchQuery, { limit: requestLimit, category: categoryParam })
       : requestClient.listItems(sourceType, requestLimit, {
@@ -775,7 +779,7 @@ async function reloadServerProfileInternal(): Promise<void> {
     ? `${previousProfile.id}\u0000${previousProfile.serverUrl}\u0000${previousProfile.token}`
     : "";
   settings = await getSettings();
-  client = createKnowledgeApiClient(settings);
+  client = createKnowledgeApiClient(settings, activeCategoryFilter);
   renderServerProfileOptions(serverProfileSelect, settings);
   const activeProfile = settings.profiles.find((profile) => profile.id === settings.activeProfileId);
   const nextSignature = activeProfile
@@ -864,59 +868,37 @@ function renderFilterBar(): void {
   renderTagFilterBar();
 }
 
-type CategoryFilter = string | "all";
-
-function normalizeCategoryFilter(value: string | null | undefined): CategoryFilter {
-  return value === "all" ? value : value || "default";
-}
-
 function categoryLabel(category: string): string {
   return category.split(/[-_]/).map((part) => part ? part.charAt(0).toUpperCase() + part.slice(1) : part).join(" ");
 }
 
-function renderImportCategoryOptions(): void {
-  const selected = availableCategories.includes(importCategory.value) ? importCategory.value : "default";
-  importCategory.replaceChildren(...availableCategories.map((category) => {
+function renderCategoryFilterBar(): void {
+  const label = document.createElement("label");
+  label.textContent = "Category";
+  const select = document.createElement("select");
+  select.setAttribute("aria-label", "Category filter");
+  for (const category of availableCategories) {
     const option = document.createElement("option");
     option.value = category;
     option.textContent = categoryLabel(category);
-    return option;
-  }));
-  importCategory.value = selected;
-}
-
-function renderCategoryFilterBar(): void {
-  const label = document.createElement("span");
-  label.className = "filter-chip-label";
-  label.textContent = "Category";
-  const rail = document.createElement("div");
-  rail.className = "filter-chip-rail";
-  const options: Array<{ value: CategoryFilter; label: string }> = [
-    ...availableCategories.map((category) => ({ value: category, label: categoryLabel(category) })),
-    { value: "all", label: "All" }
-  ];
-  for (const option of options) {
-    const chip = document.createElement("button");
-    chip.type = "button";
-    chip.className = "filter-chip";
-    chip.dataset.active = String(option.value === activeCategoryFilter);
-    chip.setAttribute("aria-pressed", String(option.value === activeCategoryFilter));
-    chip.textContent = option.label;
-    chip.addEventListener("click", () => {
-      activeCategoryFilter = option.value;
-      const url = new URL(globalThis.location.href);
-      if (activeCategoryFilter === "default") {
-        url.searchParams.delete("category");
-      } else {
-        url.searchParams.set("category", activeCategoryFilter);
-      }
-      globalThis.history.replaceState(null, "", url);
-      renderFilterBar();
-      void refreshItems();
-    });
-    rail.append(chip);
+    select.append(option);
   }
-  categoryFilterBar.replaceChildren(label, rail);
+  select.value = activeCategoryFilter;
+  select.addEventListener("change", () => {
+    activeCategoryFilter = select.value || "default";
+    client = createKnowledgeApiClient(settings, activeCategoryFilter);
+    const url = new URL(globalThis.location.href);
+    if (activeCategoryFilter === "default") {
+      url.searchParams.delete("category");
+    } else {
+      url.searchParams.set("category", activeCategoryFilter);
+    }
+    globalThis.history.replaceState(null, "", url);
+    renderFilterBar();
+    void refreshItems();
+  });
+  label.append(select);
+  categoryFilterBar.replaceChildren(label);
 }
 
 function renderTagFilterBar(): void {
@@ -1093,8 +1075,7 @@ function itemRow(item: KnowledgeItem, options?: { nested?: boolean; indexLabel?:
   kickerRow.append(
     badge(sourceBadgeLabel(item.sourceType), "source"),
     badge(item.state === "parsed" ? "Reader Ready" : "Captured", item.state),
-    item.activeDocId ? badge("Document", "doc") : badge("Raw Only", "raw"),
-    badge(categoryLabel(item.category), "category")
+    item.activeDocId ? badge("Document", "doc") : badge("Raw Only", "raw")
   );
   const title = marqueeTitle("h3", "item-title", displayTitle(item));
   const creator = document.createElement("div");
@@ -1467,8 +1448,10 @@ function loadCollectionDetail(collectionId: string): Promise<CollectionDetail> {
   return detail;
 }
 
-function openReader(itemId: string): void {
-  void openKnowledgePage(`reader.html?itemId=${encodeURIComponent(itemId)}`);
+function openReader(itemId: string, category = activeCategoryFilter): void {
+  const params = new URLSearchParams({ itemId });
+  if (category !== "default") params.set("category", category);
+  void openKnowledgePage(`reader.html?${params.toString()}`);
 }
 
 function parseTags(value: string): string[] {

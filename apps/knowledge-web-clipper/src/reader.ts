@@ -55,9 +55,10 @@ const nextInCollectionBtn = mustGet<HTMLButtonElement>("next-in-collection");
 const serverProfileSelect = mustGet<HTMLSelectElement>("server-profile");
 
 let settings = await getSettings();
-let client = createKnowledgeApiClient(settings);
 bindThemeModePreference(settings.themeMode);
 const query = new URLSearchParams(globalThis.location.search);
+const category = query.get("category") || "default";
+let client = createKnowledgeApiClient(settings, category);
 const itemId = query.get("itemId") || undefined;
 let currentItemId = itemId || "";
 let currentMarkdown = "";
@@ -97,11 +98,11 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
 });
 
 backButton.addEventListener("click", () => {
-  void openKnowledgePage("items.html");
+  void openKnowledgePage(itemsPagePath());
 });
 
 bottomBackButton.addEventListener("click", () => {
-  void openKnowledgePage("items.html");
+  void openKnowledgePage(itemsPagePath());
 });
 
 topButton.addEventListener("click", () => {
@@ -216,7 +217,7 @@ async function switchServerProfile(profileId: string): Promise<void> {
   serverProfileSelect.disabled = true;
   try {
     await setActiveServerProfile(profileId);
-    await openKnowledgePage("items.html");
+    await openKnowledgePage(itemsPagePath());
   } catch (error) {
     profileSwitchInProgress = false;
     renderServerProfileOptions(serverProfileSelect, settings);
@@ -228,13 +229,13 @@ async function switchServerProfile(profileId: string): Promise<void> {
 
 async function reloadServerProfile(): Promise<void> {
   settings = await getSettings();
-  client = createKnowledgeApiClient(settings);
+  client = createKnowledgeApiClient(settings, category);
   renderServerProfileOptions(serverProfileSelect, settings);
   if (profileSwitchInProgress) {
     profileSwitchInProgress = false;
     return;
   }
-  await openKnowledgePage("items.html");
+  await openKnowledgePage(itemsPagePath());
 }
 
 async function loadReader(): Promise<void> {
@@ -1581,7 +1582,9 @@ function renderCollectionLinks(collections: Array<{ collectionId: string; title:
   collections.forEach((collection, index) => {
     const link = document.createElement("a");
     link.className = "reader-collection-link";
-    link.href = chrome.runtime.getURL(`items.html?structure=collections&collectionId=${encodeURIComponent(collection.collectionId)}`);
+    const params = new URLSearchParams({ structure: "collections", collectionId: collection.collectionId });
+    if (category !== "default") params.set("category", category);
+    link.href = chrome.runtime.getURL(`items.html?${params.toString()}`);
     link.textContent = collection.title;
     readerCollectionOutput.append(link);
     if (index < collections.length - 1) {
@@ -1611,5 +1614,11 @@ function setCollectionNavigation(
 async function navigateInCollection(direction: "prev" | "next"): Promise<void> {
   const target = direction === "prev" ? collectionNavData.previous : collectionNavData.next;
   if (!target) return;
-  await openKnowledgePage(`reader.html?itemId=${encodeURIComponent(target.itemId)}`);
+  const params = new URLSearchParams({ itemId: target.itemId });
+  if (category !== "default") params.set("category", category);
+  await openKnowledgePage(`reader.html?${params.toString()}`);
+}
+
+function itemsPagePath(): string {
+  return category === "default" ? "items.html" : `items.html?category=${encodeURIComponent(category)}`;
 }

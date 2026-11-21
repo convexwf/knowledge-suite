@@ -78,22 +78,27 @@ export class RemoteSuiteClient {
     this.timeoutMs = options.timeoutMs ?? 30_000;
   }
 
-  async catalog(): Promise<RemoteCatalogItem[]> {
-    const body = await this.json<{ items: RemoteCatalogItem[] }>("/api/sync/catalog");
+  async categories(): Promise<string[]> {
+    const body = await this.json<{ categories: string[] }>("/api/categories");
+    return body.categories ?? [];
+  }
+
+  async catalog(category = "default"): Promise<RemoteCatalogItem[]> {
+    const body = await this.json<{ items: RemoteCatalogItem[] }>(this.categoryPath("/api/sync/catalog", category));
     return body.items ?? [];
   }
 
-  async itemMeta(itemId: string): Promise<RemoteItemMeta> {
-    return this.json<RemoteItemMeta>(`/api/sync/items/${encodeURIComponent(itemId)}/meta`);
+  async itemMeta(itemId: string, category = "default"): Promise<RemoteItemMeta> {
+    return this.json<RemoteItemMeta>(this.categoryPath(`/api/sync/items/${encodeURIComponent(itemId)}/meta`, category));
   }
 
-  async itemPackage(itemId: string): Promise<Buffer> {
-    const response = await this.request(`/api/items/${encodeURIComponent(itemId)}/package`);
+  async itemPackage(itemId: string, category = "default"): Promise<Buffer> {
+    const response = await this.request(this.categoryPath(`/api/items/${encodeURIComponent(itemId)}/package`, category));
     return Buffer.from(await response.arrayBuffer());
   }
 
-  async itemRawdoc(itemId: string): Promise<RemoteRawdoc> {
-    const response = await this.request(`/api/sync/items/${encodeURIComponent(itemId)}/rawdoc`);
+  async itemRawdoc(itemId: string, category = "default"): Promise<RemoteRawdoc> {
+    const response = await this.request(this.categoryPath(`/api/sync/items/${encodeURIComponent(itemId)}/rawdoc`, category));
     return {
       contentExt: response.headers.get("x-content-ext") ?? "html",
       contentType: response.headers.get("x-content-type"),
@@ -102,14 +107,18 @@ export class RemoteSuiteClient {
     };
   }
 
-  async collections(): Promise<RemoteCollection[]> {
-    const body = await this.json<{ collections: RemoteCollection[] }>("/api/sync/collections");
+  async collections(category = "default"): Promise<RemoteCollection[]> {
+    const body = await this.json<{ collections: RemoteCollection[] }>(this.categoryPath("/api/sync/collections", category));
     return body.collections ?? [];
   }
 
   private async json<T>(path: string): Promise<T> {
     const response = await this.request(path);
     return (await response.json()) as T;
+  }
+
+  private categoryPath(path: string, category: string): string {
+    return `${path}${path.includes("?") ? "&" : "?"}category=${encodeURIComponent(category)}`;
   }
 
   private async request(path: string): Promise<Response> {

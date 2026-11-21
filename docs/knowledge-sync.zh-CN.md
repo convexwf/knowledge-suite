@@ -10,7 +10,7 @@
 - 错过不补：服务在 19:00 未运行或已经错过时，不会在启动后补跑，只安排下一次。
 - 删除不传播：远端删除 item 后，本地保留已有 item、文件和标注，不做删除记账。
 - 云端不启用：vps 上不配置 `KNOWLEDGE_SYNC_*`，只作为只读源站。
-- 不改现有包接口：`/api/sync/catalog` 和 `/api/items/:itemId/package` 的契约保持不变。
+- 包接口保持相同响应结构；源站接口通过 `?category=<name>` 选择一个分类数据库。
 - 不新增数据库表，不改 `user_version`。增量判断复用现有 item 指纹。
 
 ## 同步内容
@@ -42,8 +42,9 @@
 
 - 值相同：不下载离线包。
 - 值不同或本地不存在：下载完整离线包。
-- 元数据每轮都会校准，因此只改 tags、category、标注或阅读进度时不需要重新下载包。
+- 元数据每轮都会校准，因此只改 tags、标注或阅读进度时不需要重新下载包。category 在 item 创建时确定，同步不会把 item 移入其他 category。
 - 同步目标的 `KNOWLEDGE_CATEGORIES` 必须注册源站当前使用的所有 category；否则该 item 会作为同步错误报告。
+- 同步按注册表逐个读取源站 category，并写入本地对应的 SQLite 文件；每轮请求只处理一个 category，不合并跨分类合集。
 
 导入后会再次计算本地指纹。若与远端 catalog 不一致，该 item 记为本轮失败，不会静默
 写入一个错误版本。
@@ -56,11 +57,11 @@
 
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
-| `GET` | `/api/sync/catalog` | 现有目录快照，返回 item 指纹 |
-| `GET` | `/api/items/:itemId/package` | 现有离线包下载 |
-| `GET` | `/api/sync/items/:itemId/meta` | item 行、documentId、rawdoc JSON、标注、阅读进度、合集 id |
-| `GET` | `/api/sync/items/:itemId/rawdoc` | rawdoc 原始字节；返回 `x-content-ext` 和 `x-content-type` |
-| `GET` | `/api/sync/collections` | 全部合集摘要和完整成员快照 |
+| `GET` | `/api/sync/catalog?category=<name>` | 指定 category 的目录快照和 item 指纹 |
+| `GET` | `/api/items/:itemId/package?category=<name>` | 指定 category 的离线包下载 |
+| `GET` | `/api/sync/items/:itemId/meta?category=<name>` | item 行、documentId、rawdoc JSON、标注、阅读进度、合集 id |
+| `GET` | `/api/sync/items/:itemId/rawdoc?category=<name>` | rawdoc 原始字节；返回 `x-content-ext` 和 `x-content-type` |
+| `GET` | `/api/sync/collections?category=<name>` | 指定 category 的合集摘要和成员快照 |
 
 ### 本地控制面
 
