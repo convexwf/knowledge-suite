@@ -735,8 +735,8 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
   app.post("/api/documents/:docId/annotations", async (request) => {
     const params = request.params as { docId: string };
     const annotation = AnnotationSchema.parse(request.body);
-    await store.saveAnnotation(params.docId, annotation);
-    return { saved: true, annotation_id: annotation.annotation_id };
+    const saved = await store.saveAnnotation(params.docId, annotation);
+    return { saved, annotation_id: annotation.annotation_id };
   });
 
   app.post("/api/items/:itemId/annotations", async (request) => {
@@ -745,8 +745,8 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
     const docId = detail.document?.doc_id ?? detail.item?.activeDocId;
     if (!docId) throw new Error("Item has no active document");
     const annotation = AnnotationSchema.parse(request.body);
-    await store.saveAnnotation(docId, annotation);
-    return { saved: true, annotation_id: annotation.annotation_id };
+    const saved = await store.saveAnnotation(docId, annotation);
+    return { saved, annotation_id: annotation.annotation_id };
   });
 
   app.delete("/api/documents/:docId/annotations/:annotationId", async (request) => {

@@ -4,6 +4,9 @@ const TOKEN = process.env.KNOWLEDGE_TOKEN ?? "dev-token";
 const TIMEOUT_MS = Number(
   process.env.KNOWLEDGE_REQUEST_TIMEOUT_MS ?? 30000,
 );
+const IMPORT_TIMEOUT_MS = Number(
+  process.env.KNOWLEDGE_IMPORT_TIMEOUT_MS ?? 300000,
+);
 
 export interface SearchParams {
   query: string;
@@ -26,6 +29,154 @@ export interface ContextParams {
   category?: string;
 }
 
+export interface KnowledgePageSnapshot {
+  pageUrl: string;
+  canonicalUrl?: string;
+  pageTitle?: string;
+  title?: string;
+  html: string;
+  text?: string;
+  diagnostics?: {
+    htmlLength: number;
+    textLength: number;
+    shadowRootCount: number;
+  };
+  capturedAt: string;
+  meta?: Record<string, string>;
+  selectionHtml?: string;
+}
+
+export type KnowledgePageInput =
+  | {
+      inputMode: "server_fetch";
+      url: string;
+      candidateId?: string;
+      overwrite?: boolean;
+      category?: string;
+    }
+  | {
+      inputMode: "browser_html";
+      snapshot: KnowledgePageSnapshot;
+      candidateId?: string;
+      overwrite?: boolean;
+      category?: string;
+    };
+
+export interface CaptureKnowledgePageParams {
+  url: string;
+  waitMs?: number;
+  candidateId?: string;
+  category?: string;
+  tabId?: number;
+  keepOpen?: boolean;
+}
+
+export interface DiscoverKnowledgeLinksParams {
+  url: string;
+  waitMs?: number;
+  keepOpen?: boolean;
+  scope?: {
+    sameOrigin?: boolean;
+    pathPrefix?: string;
+    maxItems?: number;
+  };
+}
+
+export interface BatchCandidateInput {
+  url: string;
+  text?: string;
+  titleHint?: string;
+  source?: string;
+  order?: number;
+  depth?: number;
+}
+
+export interface BatchDiscoverParams {
+  pageUrl: string;
+  candidates: BatchCandidateInput[];
+  scope?: {
+    sameOrigin?: boolean;
+    pathPrefix?: string;
+    maxItems?: number;
+  };
+}
+
+export interface BatchJobCreateParams {
+  sourcePageUrl: string;
+  category?: string;
+  mode?: "server_fetch";
+  collection: {
+    title: string;
+    rootUrl: string;
+    strategy?: "create" | "update";
+    collectionId?: string;
+  };
+  urls?: string[];
+  items?: BatchCandidateInput[];
+  options?: {
+    skipExisting?: boolean;
+    maxConcurrency?: number;
+  };
+}
+
+export interface EpubImportParams {
+  fileName: string;
+  fileBase64: string;
+  sourceUri?: string;
+  titleHint?: string;
+  tags?: string[];
+  category?: string;
+  metadataOpfBase64?: string;
+  coverBase64?: string;
+  coverFileName?: string;
+  coverMediaType?: string;
+}
+
+export interface MarkdownAssetImportParams {
+  relativePath: string;
+  fileBase64: string;
+  mediaType?: string;
+}
+
+export interface MarkdownImportParams {
+  fileName: string;
+  fileBase64: string;
+  sourceUri?: string;
+  relativePath?: string;
+  tags?: string[];
+  category?: string;
+  assets?: MarkdownAssetImportParams[];
+}
+
+export interface GitHubMarkdownParams {
+  owner: string;
+  repo: string;
+  ref: string;
+  path: string;
+  tags?: string[];
+  category?: string;
+}
+
+export interface StructuredImportParams {
+  provider: string;
+  platform: string;
+  itemId: string;
+  url: string;
+  canonicalUrl?: string;
+  title: string;
+  authors?: string[];
+  publishedAt?: string;
+  language?: string;
+  tags?: string[];
+  category?: string;
+  markdown: string;
+  comments?: Array<Record<string, unknown>>;
+  media?: Array<Record<string, unknown>>;
+  metadata?: Record<string, unknown>;
+  commentsMode?: "append" | "none";
+  overwrite?: boolean;
+}
+
 export interface CategoryListResponse {
   categories: string[];
   defaultCategory: "default";
@@ -40,6 +191,9 @@ export interface HighlightInput {
 
 export interface AddHighlightsParams {
   docId: string;
+  category?: string;
+  authorName: string;
+  authorColor?: string;
   highlights: HighlightInput[];
   dryRun?: boolean;
 }
@@ -70,6 +224,9 @@ export interface NoteAnnotationInput {
 
 export interface AddNotesParams {
   docId: string;
+  category?: string;
+  authorName: string;
+  authorColor?: string;
   annotations: NoteAnnotationInput[];
   dryRun?: boolean;
 }
@@ -121,6 +278,7 @@ interface ExistingAnnotation {
   type: string;
   text_ref?: string | null;
   note?: string | null;
+  created_by?: { name?: string };
 }
 
 interface SavedAnnotationResponse {
@@ -195,6 +353,123 @@ export async function getKnowledgeContext(
   return res.json() as Promise<IngestContextResponse>;
 }
 
+export async function getKnowledgeCaptureStatus(): Promise<unknown> {
+  return getJson<unknown>("/api/capture/status");
+}
+
+export async function previewKnowledgePage(input: KnowledgePageInput): Promise<unknown> {
+  return postJson<unknown>("/api/ingest/preview", input, IMPORT_TIMEOUT_MS);
+}
+
+export async function saveKnowledgePage(input: KnowledgePageInput): Promise<unknown> {
+  return postJson<unknown>("/api/ingest/save", input, IMPORT_TIMEOUT_MS);
+}
+
+export async function captureKnowledgePage(params: CaptureKnowledgePageParams): Promise<unknown> {
+  return postJson<unknown>("/api/capture", {
+    ...params,
+    mode: "document",
+    save: true,
+  }, IMPORT_TIMEOUT_MS);
+}
+
+export async function discoverKnowledgeLinks(params: DiscoverKnowledgeLinksParams): Promise<unknown> {
+  return postJson<unknown>("/api/capture", {
+    ...params,
+    mode: "links",
+    save: false,
+  }, IMPORT_TIMEOUT_MS);
+}
+
+export async function reparseKnowledgePage(url: string, category?: string): Promise<unknown> {
+  return postJson<unknown>("/api/ingest/reparse", { url, ...(category ? { category } : {}) }, IMPORT_TIMEOUT_MS);
+}
+
+export async function importEpubFile(params: EpubImportParams): Promise<unknown> {
+  const form = new FormData();
+  form.append("file", blobFromBase64(params.fileBase64, "application/epub+zip"), params.fileName);
+  form.append("sourceUri", params.sourceUri?.trim() || params.fileName);
+  if (params.titleHint?.trim()) form.append("titleHint", params.titleHint.trim());
+  if (params.tags?.length) form.append("tags", params.tags.join(","));
+  if (params.category) form.append("category", params.category);
+  if (params.metadataOpfBase64) {
+    form.append("metadataOpf", blobFromBase64(params.metadataOpfBase64, "application/xml"), "metadata.opf");
+  }
+  if (params.coverBase64) {
+    form.append(
+      "cover",
+      blobFromBase64(params.coverBase64, params.coverMediaType ?? "image/jpeg"),
+      params.coverFileName ?? "cover.jpg",
+    );
+  }
+  return postForm<unknown>("/api/import/epub", form, IMPORT_TIMEOUT_MS);
+}
+
+export async function importMarkdownFile(params: MarkdownImportParams): Promise<unknown> {
+  if (params.assets?.length && !params.relativePath?.trim()) {
+    throw new Error("relativePath is required when Markdown assets are supplied");
+  }
+  const form = new FormData();
+  form.append("file", blobFromBase64(params.fileBase64, "text/markdown"), params.fileName);
+  form.append("sourceUri", params.sourceUri?.trim() || params.fileName);
+  if (params.relativePath?.trim()) form.append("relativePath", params.relativePath.trim());
+  if (params.tags?.length) form.append("tags", params.tags.join(","));
+  if (params.category) form.append("category", params.category);
+  for (const asset of params.assets ?? []) {
+    form.append("assetPath", asset.relativePath);
+    form.append(
+      "asset",
+      blobFromBase64(asset.fileBase64, asset.mediaType ?? "application/octet-stream"),
+      asset.relativePath,
+    );
+  }
+  return postForm<unknown>("/api/import/markdown", form, IMPORT_TIMEOUT_MS);
+}
+
+export async function scanGitHubMarkdown(params: GitHubMarkdownParams): Promise<unknown> {
+  return postJson<unknown>("/api/import/github/markdown/scan", params, IMPORT_TIMEOUT_MS);
+}
+
+export async function importGitHubMarkdown(params: GitHubMarkdownParams): Promise<unknown> {
+  return postJson<unknown>("/api/import/github/markdown", params, IMPORT_TIMEOUT_MS);
+}
+
+export async function importStructuredContent(params: StructuredImportParams): Promise<unknown> {
+  return postJson<unknown>("/api/import/structured", params, IMPORT_TIMEOUT_MS);
+}
+
+export async function discoverKnowledgeBatch(params: BatchDiscoverParams): Promise<unknown> {
+  return postJson<unknown>("/api/batch/discover", params, IMPORT_TIMEOUT_MS);
+}
+
+export async function createKnowledgeBatchJob(params: BatchJobCreateParams): Promise<unknown> {
+  return postJson<unknown>("/api/batch/jobs", params, IMPORT_TIMEOUT_MS);
+}
+
+export async function getKnowledgeBatchJob(jobId: string, category?: string): Promise<unknown> {
+  return getJson<unknown>(withQuery(`/api/batch/jobs/${encodeURIComponent(jobId)}`, { category }));
+}
+
+export async function cancelKnowledgeBatchJob(jobId: string, category?: string): Promise<unknown> {
+  return postJson<unknown>(withQuery(`/api/batch/jobs/${encodeURIComponent(jobId)}/cancel`, { category }), {});
+}
+
+export async function retryKnowledgeBatchJob(jobId: string, category?: string): Promise<unknown> {
+  return postJson<unknown>(withQuery(`/api/batch/jobs/${encodeURIComponent(jobId)}/retry`, { category }), {}, IMPORT_TIMEOUT_MS);
+}
+
+export async function reparseKnowledgeFileItem(itemId: string, category?: string): Promise<unknown> {
+  return postJson<unknown>(withQuery(`/api/items/${encodeURIComponent(itemId)}/reparse`, { category }), {}, IMPORT_TIMEOUT_MS);
+}
+
+export async function checkGitHubMarkdownUpdate(itemId: string, category?: string): Promise<unknown> {
+  return getJson<unknown>(withQuery(`/api/items/${encodeURIComponent(itemId)}/update-status`, { category }));
+}
+
+export async function refreshGitHubMarkdownItem(itemId: string, category?: string): Promise<unknown> {
+  return postJson<unknown>(withQuery(`/api/items/${encodeURIComponent(itemId)}/refresh`, { category }), {}, IMPORT_TIMEOUT_MS);
+}
+
 export async function listKnowledgeItems(params: {
   sourceType?: string;
   category?: string;
@@ -209,33 +484,34 @@ export async function listKnowledgeItems(params: {
   }));
 }
 
-export async function getKnowledgeItem(itemId: string): Promise<unknown> {
-  return getJson<unknown>(`/api/items/${encodeURIComponent(itemId)}`);
+export async function getKnowledgeItem(itemId: string, category?: string): Promise<unknown> {
+  return getJson<unknown>(withQuery(`/api/items/${encodeURIComponent(itemId)}`, { category }));
 }
 
-export async function getKnowledgeDocument(docId: string): Promise<unknown> {
-  return getJson<unknown>(`/api/documents/${encodeURIComponent(docId)}`);
+export async function getKnowledgeDocument(docId: string, category?: string): Promise<unknown> {
+  return getJson<unknown>(withQuery(`/api/documents/${encodeURIComponent(docId)}`, { category }));
 }
 
-export async function getKnowledgeOutline(docId: string): Promise<unknown> {
-  return getJson<unknown>(`/api/documents/${encodeURIComponent(docId)}/outline`);
+export async function getKnowledgeOutline(docId: string, category?: string): Promise<unknown> {
+  return getJson<unknown>(withQuery(`/api/documents/${encodeURIComponent(docId)}/outline`, { category }));
 }
 
-export async function getKnowledgeAnnotations(itemId: string): Promise<unknown> {
-  return getJson<unknown>(`/api/items/${encodeURIComponent(itemId)}/annotations`);
+export async function getKnowledgeAnnotations(itemId: string, category?: string): Promise<unknown> {
+  return getJson<unknown>(withQuery(`/api/items/${encodeURIComponent(itemId)}/annotations`, { category }));
 }
 
-export async function getKnowledgeReadingProgress(itemId: string): Promise<unknown> {
-  return getJson<unknown>(`/api/items/${encodeURIComponent(itemId)}/reading-progress`);
+export async function getKnowledgeReadingProgress(itemId: string, category?: string): Promise<unknown> {
+  return getJson<unknown>(withQuery(`/api/items/${encodeURIComponent(itemId)}/reading-progress`, { category }));
 }
 
 export async function setKnowledgeReadingProgress(params: {
   itemId: string;
   sectionId: string | null;
   expectedRevision: number;
+  category?: string;
 }): Promise<unknown> {
   return putJson<unknown>(
-    `/api/items/${encodeURIComponent(params.itemId)}/reading-progress`,
+    withQuery(`/api/items/${encodeURIComponent(params.itemId)}/reading-progress`, { category: params.category }),
     { section_id: params.sectionId, expected_revision: params.expectedRevision },
   );
 }
@@ -244,8 +520,8 @@ export async function listKnowledgeTags(category?: string): Promise<unknown> {
   return getJson<unknown>(withQuery("/api/tags", { category }));
 }
 
-export async function listKnowledgeCollections(limit?: number): Promise<unknown> {
-  return getJson<unknown>(withQuery("/api/collections", { limit }));
+export async function listKnowledgeCollections(limit?: number, category?: string): Promise<unknown> {
+  return getJson<unknown>(withQuery("/api/collections", { limit, category }));
 }
 
 export async function addKnowledgeHighlights(
@@ -253,6 +529,8 @@ export async function addKnowledgeHighlights(
 ): Promise<AddHighlightsResponse> {
   const docId = params.docId.trim();
   if (!docId) throw new Error("docId is required");
+  const authorName = requireAuthorName(params.authorName);
+  const authorColor = resolveAuthorColor(authorName, params.authorColor);
   if (params.highlights.length === 0) {
     throw new Error("At least one highlight is required");
   }
@@ -261,13 +539,13 @@ export async function addKnowledgeHighlights(
   }
 
   const document = await getJson<HighlightableDocument>(
-    `/api/documents/${encodeURIComponent(docId)}`,
+    withQuery(`/api/documents/${encodeURIComponent(docId)}`, { category: params.category }),
   );
   if (document.doc_id !== docId) {
     throw new Error(`Document ${docId} was not found`);
   }
   const annotationFile = await getJson<{ annotations: ExistingAnnotation[] }>(
-    `/api/documents/${encodeURIComponent(docId)}/annotations`,
+    withQuery(`/api/documents/${encodeURIComponent(docId)}/annotations`, { category: params.category }),
   );
   const existing = new Set(
     annotationFile.annotations
@@ -335,18 +613,20 @@ export async function addKnowledgeHighlights(
         section_id: match.sectionId,
         type: "highlight",
         text_ref: match.textRef,
+        color: highlight.color ?? authorColor,
+        created_by: { name: authorName, source: "mcp", color: authorColor },
         ...(highlight.note ? { note: highlight.note } : {}),
-        ...(highlight.color ? { color: highlight.color } : {}),
         created_at: now,
         updated_at: now,
       };
 
       try {
-        await postJson<SavedAnnotationResponse>(
-          `/api/documents/${encodeURIComponent(docId)}/annotations`,
+        const saved = await postJson<SavedAnnotationResponse>(
+          withQuery(`/api/documents/${encodeURIComponent(docId)}/annotations`, { category: params.category }),
           annotation,
         );
         existing.add(key);
+        if (!saved.saved) continue;
         annotationIds.push(annotationId);
         addedThisExcerpt = true;
       } catch (error) {
@@ -382,6 +662,8 @@ export async function addKnowledgeNotes(
 ): Promise<AddNotesResponse> {
   const docId = params.docId.trim();
   if (!docId) throw new Error("docId is required");
+  const authorName = requireAuthorName(params.authorName);
+  const authorColor = resolveAuthorColor(authorName, params.authorColor);
   if (params.annotations.length === 0) {
     throw new Error("At least one annotation is required");
   }
@@ -390,18 +672,18 @@ export async function addKnowledgeNotes(
   }
 
   const document = await getJson<HighlightableDocument>(
-    `/api/documents/${encodeURIComponent(docId)}`,
+    withQuery(`/api/documents/${encodeURIComponent(docId)}`, { category: params.category }),
   );
   if (document.doc_id !== docId) {
     throw new Error(`Document ${docId} was not found`);
   }
   const annotationFile = await getJson<{ annotations: ExistingAnnotation[] }>(
-    `/api/documents/${encodeURIComponent(docId)}/annotations`,
+    withQuery(`/api/documents/${encodeURIComponent(docId)}/annotations`, { category: params.category }),
   );
   const existing = new Set(
     annotationFile.annotations
       .filter((annotation) => annotation.type === "note")
-      .map((annotation) => `${annotation.section_id}\u0000${annotation.text_ref ?? ""}\u0000${annotation.note ?? ""}`),
+      .map((annotation) => `${annotation.section_id}\u0000${annotation.text_ref ?? ""}\u0000${annotation.note ?? ""}\u0000${normalizeAuthorIdentity(annotation.created_by?.name ?? "convexwf")}`),
   );
 
   const results: AddNotesResponse["results"] = [];
@@ -446,7 +728,7 @@ export async function addKnowledgeNotes(
       continue;
     }
 
-    const key = `${sectionId}\u0000${textRef ?? ""}\u0000${note}`;
+    const key = `${sectionId}\u0000${textRef ?? ""}\u0000${note}\u0000${normalizeAuthorIdentity(authorName)}`;
     if (existing.has(key)) {
       alreadyPresent += 1;
       results.push({ index, status: "already_present", note, sectionId });
@@ -467,16 +749,23 @@ export async function addKnowledgeNotes(
       type: "note",
       note,
       ...(textRef ? { text_ref: textRef } : {}),
+      color: authorColor,
+      created_by: { name: authorName, source: "mcp", color: authorColor },
       created_at: now,
       updated_at: now,
     };
 
     try {
-      await postJson<SavedAnnotationResponse>(
-        `/api/documents/${encodeURIComponent(docId)}/annotations`,
+      const saved = await postJson<SavedAnnotationResponse>(
+        withQuery(`/api/documents/${encodeURIComponent(docId)}/annotations`, { category: params.category }),
         annotation,
       );
       existing.add(key);
+      if (!saved.saved) {
+        alreadyPresent += 1;
+        results.push({ index, status: "already_present", note, sectionId });
+        continue;
+      }
       added += 1;
       results.push({ index, status: "added", note, annotationId, sectionId });
     } catch (error) {
@@ -501,6 +790,34 @@ export async function addKnowledgeNotes(
   };
 }
 
+const AUTHOR_COLORS = ["#a5d8ff", "#b2f2bb", "#d0bfff", "#ffc9c9", "#ffec99", "#99e9f2"];
+
+function requireAuthorName(value: string): string {
+  const name = value?.trim();
+  if (!name) throw new Error("authorName is required");
+  if (name.length > 80) throw new Error("authorName must be 80 characters or fewer");
+  return name;
+}
+
+function resolveAuthorColor(authorName: string, value?: string): string {
+  if (value !== undefined) {
+    if (!/^#[0-9a-f]{6}$/i.test(value.trim())) {
+      throw new Error("authorColor must be a six-digit hex color such as #fff2a8");
+    }
+    return value.trim().toLowerCase();
+  }
+  if (normalizeAuthorIdentity(authorName) === "convexwf") return "#fff2a8";
+  let hash = 0;
+  for (const character of normalizeAuthorIdentity(authorName)) {
+    hash = (hash * 31 + character.charCodeAt(0)) >>> 0;
+  }
+  return AUTHOR_COLORS[hash % AUTHOR_COLORS.length];
+}
+
+function normalizeAuthorIdentity(name: string): string {
+  return name.trim().toLocaleLowerCase();
+}
+
 async function getJson<T>(path: string): Promise<T> {
   const res = await fetch(new URL(path, BASE_URL), {
     headers: { Authorization: `Bearer ${TOKEN}` },
@@ -521,7 +838,7 @@ function withQuery(path: string, values: Record<string, string | number | undefi
   return url.toString();
 }
 
-async function postJson<T>(path: string, body: unknown): Promise<T> {
+async function postJson<T>(path: string, body: unknown, timeoutMs = TIMEOUT_MS): Promise<T> {
   const res = await fetch(new URL(path, BASE_URL), {
     method: "POST",
     headers: {
@@ -529,13 +846,38 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
       "Content-Type": "application/json",
     },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(TIMEOUT_MS),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   if (!res.ok) {
     const responseBody = await res.text();
     throw new Error(`ingest server returned ${res.status}: ${responseBody}`);
   }
   return res.json() as Promise<T>;
+}
+
+async function postForm<T>(path: string, form: FormData, timeoutMs = TIMEOUT_MS): Promise<T> {
+  const res = await fetch(new URL(path, BASE_URL), {
+    method: "POST",
+    headers: { Authorization: "Bearer " + TOKEN },
+    body: form,
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  if (!res.ok) {
+    const responseBody = await res.text();
+    throw new Error(`ingest server returned ${res.status}: ${responseBody}`);
+  }
+  return res.json() as Promise<T>;
+}
+
+function blobFromBase64(encoded: string, mediaType: string): Blob {
+  const normalized = encoded.replace(/\s+/g, "");
+  if (!normalized || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(normalized)) {
+    throw new Error("fileBase64 must contain valid, non-empty base64 data");
+  }
+  const bytes = Buffer.from(normalized, "base64");
+  const arrayBuffer = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(arrayBuffer).set(bytes);
+  return new Blob([arrayBuffer], { type: mediaType });
 }
 
 async function putJson<T>(path: string, body: unknown): Promise<T> {

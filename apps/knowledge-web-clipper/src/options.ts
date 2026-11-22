@@ -55,6 +55,8 @@ const showParserInput = mustGet<HTMLInputElement>("show-parser-diagnostics");
 const savedListLimitInput = mustGet<HTMLInputElement>("saved-list-limit");
 const defaultPanelTabSelect = mustGet<HTMLSelectElement>("default-panel-tab");
 const themeModeSelect = mustGet<HTMLSelectElement>("theme-mode");
+const annotatorNameInput = mustGet<HTMLInputElement>("annotator-name");
+const annotatorColorInput = mustGet<HTMLInputElement>("annotator-color");
 const openItemsButton = mustGet<HTMLButtonElement>("open-items");
 const testButton = mustGet<HTMLButtonElement>("test-connection");
 const resetButton = mustGet<HTMLButtonElement>("reset-settings");
@@ -141,7 +143,9 @@ async function saveCurrentSettings(): Promise<void> {
     requestTimeoutMs: draft.requestTimeoutMs,
     showParserDiagnostics: draft.showParserDiagnostics,
     savedListLimit: draft.savedListLimit,
-    defaultPanelTab: draft.defaultPanelTab
+    defaultPanelTab: draft.defaultPanelTab,
+    annotatorName: draft.annotatorName,
+    annotatorColor: draft.annotatorColor
   });
   settings = await getSettings();
   renderSettings(settings);
@@ -271,6 +275,8 @@ function renderSettings(value: ExtensionSettings): void {
   showParserInput.checked = value.showParserDiagnostics;
   savedListLimitInput.value = String(value.savedListLimit);
   defaultPanelTabSelect.value = value.defaultPanelTab;
+  annotatorNameInput.value = value.annotatorName;
+  annotatorColorInput.value = value.annotatorColor;
   setStatus("Ready", JSON.stringify(sanitizeSettingsForDiagnostics(value), null, 2));
 }
 
@@ -284,7 +290,9 @@ function readSettingsFromForm(): ExtensionSettings {
     requestTimeoutMs: clampNumber(requestTimeoutInput.value, DEFAULT_SETTINGS.requestTimeoutMs, 3000, 60000),
     showParserDiagnostics: showParserInput.checked,
     savedListLimit: clampNumber(savedListLimitInput.value, DEFAULT_SETTINGS.savedListLimit, 10, 200),
-    defaultPanelTab: asPanelView(defaultPanelTabSelect.value)
+    defaultPanelTab: asPanelView(defaultPanelTabSelect.value),
+    annotatorName: annotatorNameInput.value.trim() || DEFAULT_SETTINGS.annotatorName,
+    annotatorColor: annotatorColorInput.value
   };
 }
 

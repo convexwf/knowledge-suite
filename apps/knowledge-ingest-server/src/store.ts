@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { Dirent } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { access, copyFile, link, mkdir, readFile, readdir, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { dirname, extname, isAbsolute, join } from "node:path";
@@ -303,7 +304,8 @@ interface CollectionItemDetail extends CollectionItem {
   language?: string;
 }
 
-const STORE_SCHEMA_VERSION = 18;
+const STORE_SCHEMA_VERSION = 19;
+const LEGACY_ANNOTATION_CREATOR = { name: "convexwf", source: "legacy" as const, color: "#fff2a8" };
 
 export class InvalidOutlineError extends Error {
   constructor(message: string) {
@@ -441,7 +443,7 @@ function initialOutlineFor(document: KnowledgeDocument): DocumentOutlineFile {
     if (section.type !== "heading" || !section.section_id || !section.content?.trim()) continue;
     if (titleHeading?.section_id && section.section_id === titleHeading.section_id) continue;
     const level = section.level ?? 2;
-    if (!Number.isInteger(level) || level < 1 || level > 3) continue;
+    if (!Number.isInteger(level) || level < 1 || level > 6) continue;
     entries.push({ title: section.content.trim(), level, target: section.section_id });
   }
 
@@ -562,6 +564,7 @@ export class KnowledgeStore {
     this.ensureRegisteredCategories();
     this.ensureFtsTokenizer();
     this.ensureIndexes();
+    await this.backfillAnnotationCreators();
   }
 
   async close(): Promise<void> {
@@ -606,7 +609,66 @@ export class KnowledgeStore {
       CREATE INDEX IF NOT EXISTS idx_chunk_embeddings_model ON chunk_embeddings(model);
       CREATE INDEX IF NOT EXISTS idx_chunks_doc ON chunks(doc_id);
       CREATE INDEX IF NOT EXISTS idx_chunks_item ON chunks(item_id);
+      CREATE TABLE IF NOT EXISTS store_migrations (
+        migration_key TEXT PRIMARY KEY,
+        completed_at TEXT NOT NULL
+      );
     `);
+  }
+
+  private async backfillAnnotationCreators(): Promise<void> {
+    const migrationKey = "annotation-creators-convexwf-v1";
+    const completed = this.database!.prepare(
+      "SELECT 1 FROM store_migrations WHERE migration_key = ?"
+    ).get(migrationKey);
+    if (completed) return;
+
+    this.database!.prepare(`
+      UPDATE annotations
+      SET author_name = 'convexwf', author_source = 'legacy',
+          author_color = COALESCE(author_color, '#fff2a8')
+      WHERE author_name IS NULL OR TRIM(author_name) = ''
+    `).run();
+
+    const annotationsDir = resolveInsideRoot(this.root, "annotations");
+    let entries: Dirent[];
+    try {
+      entries = await readdir(annotationsDir, { withFileTypes: true });
+    } catch (error) {
+      if (!isMissingFile(error)) throw error;
+      entries = [];
+    }
+    for (const entry of entries) {
+      if (!entry.isFile() || extname(entry.name).toLowerCase() !== ".json") continue;
+      const path = join(annotationsDir, entry.name);
+      let raw: Record<string, unknown>;
+      try {
+        const parsed: unknown = JSON.parse(await readFile(path, "utf-8"));
+        if (!isObjectRecord(parsed) || !Array.isArray(parsed.annotations)) continue;
+        raw = parsed;
+      } catch (error) {
+        console.warn(`[knowledge-store] Skipping unreadable annotation file during author backfill: ${entry.name}`, error);
+        continue;
+      }
+
+      let changed = false;
+      for (const candidate of raw.annotations as unknown[]) {
+        if (!isObjectRecord(candidate)) continue;
+        const creator = candidate.created_by;
+        if (isObjectRecord(creator) && typeof creator.name === "string" && creator.name.trim()) continue;
+        const color = typeof candidate.color === "string" ? candidate.color : LEGACY_ANNOTATION_CREATOR.color;
+        candidate.created_by = { ...LEGACY_ANNOTATION_CREATOR, color };
+        if (candidate.type === "note" && typeof candidate.color !== "string") {
+          candidate.color = color;
+        }
+        changed = true;
+      }
+      if (changed) await writeFile(path, JSON.stringify(raw, null, 2), "utf-8");
+    }
+
+    this.database!.prepare(
+      "INSERT OR REPLACE INTO store_migrations (migration_key, completed_at) VALUES (?, ?)"
+    ).run(migrationKey, new Date().toISOString());
   }
 
   // ── schema migration ───────────────────────────────────────────────────
@@ -707,6 +769,12 @@ export class KnowledgeStore {
         this.database!.exec("ROLLBACK");
         throw error;
       }
+    }
+
+    if (currentVersion < 19) {
+      this.addColumnIfMissing("annotations", "author_name", "TEXT NOT NULL DEFAULT 'convexwf'");
+      this.addColumnIfMissing("annotations", "author_source", "TEXT NOT NULL DEFAULT 'legacy'");
+      this.addColumnIfMissing("annotations", "author_color", "TEXT DEFAULT '#fff2a8'");
     }
 
     this.database!.exec(`PRAGMA user_version = ${STORE_SCHEMA_VERSION}`);
@@ -948,6 +1016,9 @@ export class KnowledgeStore {
         label TEXT,
         ai_model TEXT,
         summary_level TEXT,
+        author_name TEXT NOT NULL DEFAULT 'convexwf',
+        author_source TEXT NOT NULL DEFAULT 'legacy',
+        author_color TEXT DEFAULT '#fff2a8',
         orphaned INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
@@ -3562,12 +3633,29 @@ export class KnowledgeStore {
     await this.ensure();
     const rows = this.database!.prepare(
       "SELECT * FROM annotations WHERE doc_id = ? AND orphaned = 0 ORDER BY created_at ASC"
-    ).all(docId) as unknown as Annotation[];
-    return rows;
+    ).all(docId) as unknown as Array<Annotation & {
+      author_name: string | null;
+      author_source: string | null;
+      author_color: string | null;
+    }>;
+    return rows.map((row) => {
+      const { author_name, author_source, author_color, ...annotation } = row;
+      const source = author_source === "extension" || author_source === "mcp" || author_source === "system"
+        ? author_source
+        : "legacy";
+      return {
+        ...annotation,
+        created_by: {
+          name: author_name?.trim() || "convexwf",
+          source,
+          ...(author_color ? { color: author_color } : {})
+        }
+      } as Annotation;
+    });
   }
 
-  async saveAnnotation(docId: string, annotation: Annotation): Promise<void> {
-    await this.persistAnnotation(docId, annotation, false);
+  async saveAnnotation(docId: string, annotation: Annotation): Promise<boolean> {
+    return this.persistAnnotation(docId, annotation, false);
   }
 
   async importAnnotation(docId: string, annotation: Annotation): Promise<boolean> {
@@ -3580,6 +3668,31 @@ export class KnowledgeStore {
     preserveTimestamps: boolean
   ): Promise<boolean> {
     await this.ensure();
+    if (annotation.type === "highlight") {
+      const duplicate = this.database!.prepare(`
+        SELECT annotation_id FROM annotations
+        WHERE doc_id = ? AND section_id = ? AND type = 'highlight' AND text_ref = ?
+        LIMIT 1
+      `).get(docId, annotation.section_id, annotation.text_ref) as { annotation_id: string } | undefined;
+      if (duplicate && duplicate.annotation_id !== annotation.annotation_id) return false;
+    }
+    if (annotation.type === "note") {
+      const duplicate = this.database!.prepare(`
+        SELECT annotation_id FROM annotations
+        WHERE doc_id = ? AND section_id = ? AND type = 'note'
+          AND COALESCE(text_ref, '') = COALESCE(?, '')
+          AND COALESCE(note, '') = COALESCE(?, '')
+          AND lower(trim(author_name)) = lower(trim(?))
+        LIMIT 1
+      `).get(
+        docId,
+        annotation.section_id,
+        annotation.text_ref ?? null,
+        annotation.note,
+        annotation.created_by?.name ?? "convexwf"
+      ) as { annotation_id: string } | undefined;
+      if (duplicate && duplicate.annotation_id !== annotation.annotation_id) return false;
+    }
     const now = new Date().toISOString();
     const target = resolveInsideRoot(this.root, `annotations/${docId}.json`);
     await mkdir(dirname(target), { recursive: true });
@@ -3596,9 +3709,18 @@ export class KnowledgeStore {
         Date.parse(existing.updated_at) > Date.parse(annotation.updated_at)) {
       return false;
     }
+    const defaultCreator = annotation.type === "summary"
+      ? { ...LEGACY_ANNOTATION_CREATOR, source: "system" as const }
+      : LEGACY_ANNOTATION_CREATOR;
     const nextAnnotation = preserveTimestamps
-      ? { ...annotation, doc_id: docId }
-      : { ...annotation, updated_at: now, ...(!annotation.created_at ? { created_at: now } : {}) };
+      ? { ...annotation, doc_id: docId, created_by: annotation.created_by ?? defaultCreator }
+      : {
+          ...annotation,
+          doc_id: docId,
+          created_by: annotation.created_by ?? defaultCreator,
+          updated_at: now,
+          ...(!annotation.created_at ? { created_at: now } : {})
+        };
     if (existingIdx >= 0) {
       file.annotations[existingIdx] = nextAnnotation;
     } else {
@@ -3619,13 +3741,16 @@ export class KnowledgeStore {
       label: getLabel(nextAnnotation),
       ai_model: getAiModel(nextAnnotation),
       summary_level: getSummaryLevel(nextAnnotation),
+      author_name: nextAnnotation.created_by?.name ?? "convexwf",
+      author_source: nextAnnotation.created_by?.source ?? "legacy",
+      author_color: nextAnnotation.created_by?.color ?? getColor(nextAnnotation),
       orphaned: nextAnnotation.orphaned ? 1 : 0,
       created_at: nextAnnotation.created_at,
       updated_at: nextAnnotation.updated_at
     };
     this.database!.prepare(`
-      INSERT INTO annotations (annotation_id, doc_id, section_id, type, text_ref, note, color, label, ai_model, summary_level, orphaned, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO annotations (annotation_id, doc_id, section_id, type, text_ref, note, color, label, ai_model, summary_level, author_name, author_source, author_color, orphaned, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(annotation_id) DO UPDATE SET
         section_id = excluded.section_id,
         type = excluded.type,
@@ -3635,12 +3760,16 @@ export class KnowledgeStore {
         label = excluded.label,
         ai_model = excluded.ai_model,
         summary_level = excluded.summary_level,
+        author_name = excluded.author_name,
+        author_source = excluded.author_source,
+        author_color = excluded.author_color,
         orphaned = excluded.orphaned,
         updated_at = excluded.updated_at
     `).run(
       dbAnnotation.annotation_id, dbAnnotation.doc_id, dbAnnotation.section_id,
       dbAnnotation.type, dbAnnotation.text_ref, dbAnnotation.note, dbAnnotation.color,
       dbAnnotation.label, dbAnnotation.ai_model, dbAnnotation.summary_level,
+      dbAnnotation.author_name, dbAnnotation.author_source, dbAnnotation.author_color,
       dbAnnotation.orphaned, dbAnnotation.created_at, dbAnnotation.updated_at
     );
     return true;
@@ -4232,7 +4361,7 @@ function getNote(annotation: Annotation): string | null {
 }
 
 function getColor(annotation: Annotation): string | null {
-  return annotation.type === "highlight" ? (annotation.color ?? null) : null;
+  return annotation.type === "highlight" || annotation.type === "note" ? (annotation.color ?? null) : null;
 }
 
 function getLabel(annotation: Annotation): string | null {

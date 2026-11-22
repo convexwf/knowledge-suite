@@ -33,7 +33,9 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
   showParserDiagnostics: true,
   savedListLimit: 50,
   defaultPanelTab: "preview",
-  themeMode: "system"
+  themeMode: "system",
+  annotatorName: "convexwf",
+  annotatorColor: "#fff2a8"
 };
 
 export async function getSettings(): Promise<ExtensionSettings> {
@@ -57,7 +59,9 @@ export async function resetSettings(): Promise<ExtensionSettings> {
     showParserDiagnostics: DEFAULT_SETTINGS.showParserDiagnostics,
     savedListLimit: DEFAULT_SETTINGS.savedListLimit,
     defaultPanelTab: DEFAULT_SETTINGS.defaultPanelTab,
-    themeMode: DEFAULT_SETTINGS.themeMode
+    themeMode: DEFAULT_SETTINGS.themeMode,
+    annotatorName: DEFAULT_SETTINGS.annotatorName,
+    annotatorColor: DEFAULT_SETTINGS.annotatorColor
   });
   return DEFAULT_SETTINGS;
 }
@@ -85,8 +89,16 @@ export function normalizeSettings(stored: Record<string, unknown> | null | undef
     showParserDiagnostics: source.showParserDiagnostics !== false,
     savedListLimit,
     defaultPanelTab: asPanelView(source.defaultPanelTab, DEFAULT_SETTINGS.defaultPanelTab),
-    themeMode: normalizeThemeMode(source.themeMode)
+    themeMode: normalizeThemeMode(source.themeMode),
+    annotatorName: stringValue(source.annotatorName) ?? DEFAULT_SETTINGS.annotatorName,
+    annotatorColor: normalizeHexColor(source.annotatorColor, DEFAULT_SETTINGS.annotatorColor)
   };
+}
+
+function normalizeHexColor(value: unknown, fallback: string): string {
+  return typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value.trim())
+    ? value.trim().toLowerCase()
+    : fallback;
 }
 
 export function normalizeThemeMode(value: unknown): ThemeMode {

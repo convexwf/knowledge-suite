@@ -4,6 +4,12 @@ import { z } from "zod";
 
 export type AnnotationType = "highlight" | "note" | "summary" | "tag" | "bookmark";
 
+export interface AnnotationCreator {
+  name: string;
+  source: "extension" | "mcp" | "legacy" | "system";
+  color?: string;
+}
+
 export interface AnnotationBase {
   annotation_id: string;
   doc_id: string;
@@ -12,6 +18,7 @@ export interface AnnotationBase {
   updated_at: string;
   orphaned?: boolean;
   orphaned_at?: string;
+  created_by?: AnnotationCreator;
 }
 
 export interface HighlightAnnotation extends AnnotationBase {
@@ -25,6 +32,7 @@ export interface NoteAnnotation extends AnnotationBase {
   type: "note";
   note: string;
   text_ref?: string;
+  color?: string;
 }
 
 export interface SummaryAnnotation extends AnnotationBase {
@@ -78,6 +86,11 @@ export const AnnotationBaseSchema = z.object({
   updated_at: z.string(),
   orphaned: z.boolean().optional(),
   orphaned_at: z.string().optional(),
+  created_by: z.object({
+    name: z.string().trim().min(1),
+    source: z.enum(["extension", "mcp", "legacy", "system"]),
+    color: z.string().optional(),
+  }).optional(),
 });
 
 export const HighlightAnnotationSchema = AnnotationBaseSchema.extend({
@@ -91,6 +104,7 @@ export const NoteAnnotationSchema = AnnotationBaseSchema.extend({
   type: z.literal("note"),
   note: z.string(),
   text_ref: z.string().optional(),
+  color: z.string().optional(),
 });
 
 export const SummaryAnnotationSchema = AnnotationBaseSchema.extend({

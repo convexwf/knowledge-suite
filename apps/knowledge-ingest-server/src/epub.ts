@@ -1,10 +1,13 @@
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
+import { createRequire } from "node:module";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { extname, isAbsolute, join } from "node:path";
+import { extname, isAbsolute, join, posix } from "node:path";
 import { promisify } from "node:util";
+import { DOMParser } from "linkedom";
 import {
+  assignDeterministicSectionIds,
   deterministicSectionId,
   DocumentSection,
   KnowledgeDocument,
@@ -14,7 +17,12 @@ import {
 } from "@uknowledge/knowledge-schema";
 
 const execFileAsync = promisify(execFile);
-const PARSER_VERSION = "knowledge-ingest-server/epub-0.1:pandoc_epub";
+const require = createRequire(import.meta.url);
+const AdmZip = require("adm-zip") as new (input: Buffer) => {
+  getEntries(): Array<{ entryName: string; isDirectory: boolean; getData(): Buffer }>;
+  getEntry(entryName: string): { getData(): Buffer } | null;
+};
+const PARSER_VERSION = "knowledge-ingest-server/epub-0.2:pandoc_epub";
 
 export interface ParsedEpub {
   itemId: string;
@@ -115,9 +123,9 @@ export async function parseEpub(bytes: Buffer, options: ParseEpubOptions = {}): 
   const language = normalizeLanguage(firstNonEmpty(calibre?.language, metaString(ast.meta?.lang), metaString(ast.meta?.language)));
   const tags = unique([...(options.tags ?? []), ...(calibre?.subjects ?? [])]);
   let sections = pandocBlocksToSections(ast.blocks ?? [], tempDir);
-  if (options.toc?.length) {
-    applyTocLevels(sections, options.toc);
-  }
+  const embeddedToc = extractEpubToc(bytes);
+  const toc = embeddedToc.length > 0 ? embeddedToc : normalizeTocEntries(options.toc ?? []);
+  if (toc.length > 0) applyTocEntries(sections, toc, title);
   sections = withoutLeadingTitleHeading(sections, title);
   if (options.cover?.bytes.length) {
     const coverPath = join(tempDir, `calibre-cover.${sanitizeExtension(extname(options.cover.filename ?? "")) || "jpg"}`);
@@ -145,6 +153,8 @@ export async function parseEpub(bytes: Buffer, options: ParseEpubOptions = {}): 
       pandocWarnings: run.warnings ?? [],
       blockCount: ast.blocks?.length ?? 0,
       headingCount: sections.filter((section) => section.type === "heading").length,
+      tocCount: toc.length,
+      tocSource: embeddedToc.length > 0 ? "epub_navigation" : options.toc?.length ? "toc_sidecar" : undefined,
       tags,
       importMode: calibre ? "calibre_directory" : "epub_file",
       epubHash: identityHash,
@@ -193,10 +203,12 @@ export async function parseEpub(bytes: Buffer, options: ParseEpubOptions = {}): 
 
 export function pandocBlocksToSections(blocks: PandocBlock[], imageBaseDir?: string): DocumentSection[] {
   const sections = pandocBlocksToSectionsWithoutIds(blocks, imageBaseDir);
-  return sections.map((section, index) => ({
+  const withIds = sections.map((section) => ({
     ...section,
     section_id: section.section_id ?? deterministicSectionId(section)
   }));
+  assignDeterministicSectionIds(withIds);
+  return withIds;
 }
 
 function withoutLeadingTitleHeading(
@@ -776,29 +788,265 @@ function stderrWarnings(stderr: string): string[] {
   return stderr.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
 }
 
-function applyTocLevels(sections: DocumentSection[], toc: TocEntry[]): void {
-  if (toc.length === 0) return;
+function normalizeTocEntries(entries: TocEntry[]): TocEntry[] {
+  return entries.flatMap((entry) => {
+    if (!entry || typeof entry.title !== "string" || !entry.title.trim()) return [];
+    const level = Number.isInteger(entry.level) ? Math.max(1, Math.min(entry.level, 5)) : 1;
+    return [{ title: entry.title.replace(/\s+/g, " ").trim(), level, ...(entry.src ? { src: entry.src } : {}) }];
+  });
+}
 
-  const headings = sections.filter((s) => s.type === "heading" && s.content);
-  let tocIdx = 0;
+function extractEpubToc(bytes: Buffer): TocEntry[] {
+  try {
+    const archive = new AdmZip(bytes);
+    const entries = archive.getEntries().filter((entry) => !entry.isDirectory);
+    const entriesByPath = new Map(entries.map((entry) => [normalizeArchivePath(entry.entryName).toLowerCase(), entry]));
+    const readEntry = (path: string): string | undefined => {
+      const entry = entriesByPath.get(normalizeArchivePath(path).toLowerCase());
+      return entry?.getData().toString("utf8");
+    };
+    const container = readEntry("META-INF/container.xml");
+    if (!container) return [];
 
-  for (const heading of headings) {
-    if (tocIdx >= toc.length) break;
-    const headingText = heading.content!.trim().toLowerCase();
-    const tocText = toc[tocIdx].title.trim().toLowerCase();
+    const containerDocument = parseXmlDocument(container);
+    const rootfile = allXmlElements(containerDocument).find((element) => xmlTagName(element) === "rootfile");
+    const packagePath = rootfile && xmlAttribute(rootfile, "full-path");
+    if (!packagePath) return [];
 
-    if (headingText === tocText || headingText.includes(tocText) || tocText.includes(headingText)) {
-      heading.level = Math.max(1, Math.min(toc[tocIdx].level, 6));
-      tocIdx++;
-    } else if (tocIdx + 1 < toc.length) {
-      const nextTocText = toc[tocIdx + 1].title.trim().toLowerCase();
-      if (headingText === nextTocText || headingText.includes(nextTocText) || nextTocText.includes(headingText)) {
-        tocIdx++;
-        heading.level = Math.max(1, Math.min(toc[tocIdx].level, 6));
-        tocIdx++;
+    const packageDocument = parseXmlDocument(readEntry(packagePath) ?? "");
+    const manifest = allXmlElements(packageDocument).filter((element) => xmlTagName(element) === "item");
+    const navItem = manifest.find((element) => xmlAttribute(element, "properties")?.split(/\s+/).includes("nav"));
+    if (navItem) {
+      const navHref = xmlAttribute(navItem, "href");
+      const navPath = navHref ? resolveEpubHref(packagePath, navHref) : undefined;
+      const navMarkup = navPath ? readEntry(navPath) : undefined;
+      if (navMarkup) {
+        const toc = extractEpub3Navigation(navMarkup);
+        if (toc.length > 0) return toc;
       }
     }
+
+    const ncxItem = manifest.find((element) => xmlAttribute(element, "media-type")?.toLowerCase() === "application/x-dtbncx+xml");
+    const ncxHref = ncxItem && xmlAttribute(ncxItem, "href");
+    const fallbackNcx = entries.find((entry) => entry.entryName.toLowerCase().endsWith(".ncx"));
+    const ncxPath = ncxHref ? resolveEpubHref(packagePath, ncxHref) : fallbackNcx?.entryName;
+    const ncxMarkup = ncxPath ? readEntry(ncxPath) : undefined;
+    return ncxMarkup ? extractNcxNavigation(ncxMarkup) : [];
+  } catch {
+    // Invalid or unsupported EPUB navigation must not prevent importing its content.
+    return [];
   }
+}
+
+function extractEpub3Navigation(markup: string): TocEntry[] {
+  const document = parseXmlDocument(markup);
+  const navElements = allXmlElements(document).filter((element) => xmlTagName(element) === "nav");
+  const nav = navElements.find((element) => {
+    const epubType = xmlAttribute(element, "epub:type") ?? xmlAttribute(element, "type") ?? "";
+    const role = xmlAttribute(element, "role") ?? "";
+    return epubType.split(/\s+/).includes("toc") || role.split(/\s+/).includes("doc-toc");
+  }) ?? navElements.find((element) =>
+    !xmlAttribute(element, "epub:type") && !xmlAttribute(element, "type") && !xmlAttribute(element, "role")
+  );
+  if (!nav) return [];
+
+  const rootList = directXmlChildren(nav).find((element) => xmlTagName(element) === "ol") ??
+    allXmlElements(nav).find((element) => xmlTagName(element) === "ol");
+  if (!rootList) return [];
+
+  const toc: TocEntry[] = [];
+  const walkList = (list: Element, level: number): void => {
+    for (const listItem of directXmlChildren(list).filter((element) => xmlTagName(element) === "li")) {
+      const children = directXmlChildren(listItem);
+      const link = children.find((element) => xmlTagName(element) === "a") ??
+        allXmlElements(listItem).find((element) => xmlTagName(element) === "a");
+      if (link) {
+        const title = normalizeXmlText(link.textContent ?? "");
+        if (title) {
+          const src = xmlAttribute(link, "href");
+          toc.push({ title, level, ...(src ? { src } : {}) });
+        }
+      }
+      for (const child of children.filter((element) => xmlTagName(element) === "ol")) {
+        walkList(child, level + 1);
+      }
+    }
+  };
+  walkList(rootList, 1);
+  return toc;
+}
+
+function extractNcxNavigation(markup: string): TocEntry[] {
+  const document = parseXmlDocument(markup);
+  const navMap = allXmlElements(document).find((element) => xmlTagName(element) === "navmap");
+  if (!navMap) return [];
+
+  const toc: TocEntry[] = [];
+  const walkPoints = (parent: Element, level: number): void => {
+    for (const point of directXmlChildren(parent).filter((element) => xmlTagName(element) === "navpoint")) {
+      const children = directXmlChildren(point);
+      const navLabel = children.find((element) => xmlTagName(element) === "navlabel");
+      const label = navLabel && allXmlElements(navLabel).find((element) => xmlTagName(element) === "text");
+      const content = children.find((element) => xmlTagName(element) === "content");
+      const title = normalizeXmlText(label?.textContent ?? "");
+      if (title) {
+        const src = content && xmlAttribute(content, "src");
+        toc.push({ title, level, ...(src ? { src } : {}) });
+      }
+      walkPoints(point, level + 1);
+    }
+  };
+  walkPoints(navMap, 1);
+  return toc;
+}
+
+function parseXmlDocument(markup: string): Document {
+  return new DOMParser().parseFromString(markup, "text/xml") as unknown as Document;
+}
+
+function allXmlElements(parent: ParentNode): Element[] {
+  return Array.from(parent.querySelectorAll("*"));
+}
+
+function directXmlChildren(parent: Element): Element[] {
+  return Array.from(parent.children).filter((child): child is Element => child.nodeType === 1);
+}
+
+function xmlTagName(element: Element): string {
+  return (element.localName || element.tagName.split(":").at(-1) || "").toLowerCase();
+}
+
+function xmlAttribute(element: Element, name: string): string | undefined {
+  const exact = element.getAttribute(name);
+  if (exact !== null) return exact;
+  const wanted = name.toLowerCase();
+  return Array.from(element.attributes).find((attribute) =>
+    attribute.name.toLowerCase() === wanted || attribute.localName?.toLowerCase() === wanted.split(":").at(-1)
+  )?.value;
+}
+
+function normalizeXmlText(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function normalizeArchivePath(path: string): string {
+  return posix.normalize(path.replace(/\\/g, "/")).replace(/^\.\//, "").replace(/^\/+/, "");
+}
+
+function resolveEpubHref(packagePath: string, href: string): string {
+  const file = href.split(/[?#]/, 1)[0].replace(/\\/g, "/");
+  let decoded = file;
+  try {
+    decoded = decodeURIComponent(file);
+  } catch {
+    // Keep the literal archive path when href encoding is malformed.
+  }
+  return normalizeArchivePath(posix.join(posix.dirname(normalizeArchivePath(packagePath)), decoded));
+}
+
+function applyTocEntries(sections: DocumentSection[], toc: TocEntry[], documentTitle: string): void {
+  if (toc.length === 0) return;
+  const listingSections = findTocListingSections(sections, toc);
+  const documentTitleKey = normalizeOutlineText(documentTitle);
+  const firstTocTitle = toc.find((entry) => normalizeOutlineText(entry.title))?.title;
+  const tocLevelOffset = firstTocTitle && normalizeOutlineText(firstTocTitle) === documentTitleKey ? 0 : 1;
+  let previousSectionIndex = -1;
+
+  for (const entry of toc) {
+    const titleKey = normalizeOutlineText(entry.title);
+    if (!titleKey || titleKey === documentTitleKey) continue;
+    const canMatch = (section: DocumentSection, index: number): boolean =>
+      index > previousSectionIndex &&
+      !listingSections.has(index) &&
+      (section.type === "heading" || section.type === "paragraph") &&
+      normalizeOutlineText(section.content ?? "") === titleKey;
+    const headingIndex = sections.findIndex((section, index) => section.type === "heading" && canMatch(section, index));
+    const sectionIndex = headingIndex >= 0
+      ? headingIndex
+      : sections.findIndex((section, index) => section.type === "paragraph" && canMatch(section, index));
+    if (sectionIndex < 0) continue;
+
+    const heading = sections[sectionIndex];
+    heading.type = "heading";
+    heading.level = Math.max(2, Math.min(entry.level + tocLevelOffset, 6));
+    previousSectionIndex = sectionIndex;
+  }
+}
+
+function findTocListingSections(sections: DocumentSection[], toc: TocEntry[]): Set<number> {
+  const titleKeys = new Set(toc.map((entry) => normalizeOutlineText(entry.title)).filter(Boolean));
+  const excluded = new Set<number>();
+  const markers = new Set(["目录", "目次", "目錄", "contents", "tableofcontents", "toc"]);
+  const markerIndices = sections.flatMap((section, index) =>
+    markers.has(normalizeOutlineText(section.content ?? "")) ? [index] : []
+  );
+
+  for (const markerIndex of markerIndices) {
+    const matches: number[] = [];
+    let misses = 0;
+    const scanLimit = Math.min(sections.length, markerIndex + Math.max(toc.length * 2, 32));
+    for (let index = markerIndex + 1; index < scanLimit; index += 1) {
+      if (sections[index].type === "paragraph" && titleKeys.has(normalizeOutlineText(sections[index].content ?? ""))) {
+        matches.push(index);
+        misses = 0;
+      } else if (matches.length > 0) {
+        misses += 1;
+        if (misses > 2) break;
+      } else if (index - markerIndex > 8) {
+        break;
+      }
+    }
+    if (matches.length >= 3) matches.forEach((index) => excluded.add(index));
+  }
+
+  const tocPositions = new Map<string, number[]>();
+  toc.forEach((entry, index) => {
+    const key = normalizeOutlineText(entry.title);
+    if (!key) return;
+    const positions = tocPositions.get(key) ?? [];
+    positions.push(index);
+    tocPositions.set(key, positions);
+  });
+
+  let cluster: number[] = [];
+  let previousSectionIndex = -1;
+  let previousTocIndex = -1;
+  const saveCluster = (): void => {
+    if (cluster.length >= 3) cluster.forEach((index) => excluded.add(index));
+    cluster = [];
+    previousSectionIndex = -1;
+    previousTocIndex = -1;
+  };
+  for (const [sectionIndex, section] of sections.entries()) {
+    if (section.type !== "paragraph") {
+      if (cluster.length > 0 && sectionIndex - previousSectionIndex > 2) saveCluster();
+      continue;
+    }
+    const key = normalizeOutlineText(section.content ?? "");
+    const positions = tocPositions.get(key);
+    if (!positions) {
+      if (cluster.length > 0 && sectionIndex - previousSectionIndex > 2) saveCluster();
+      continue;
+    }
+    const tocIndex = positions.find((position) => position > previousTocIndex);
+    if (cluster.length > 0 && sectionIndex - previousSectionIndex <= 3 && tocIndex !== undefined) {
+      cluster.push(sectionIndex);
+      previousSectionIndex = sectionIndex;
+      previousTocIndex = tocIndex;
+    } else {
+      saveCluster();
+      const firstPosition = positions[0];
+      cluster = [sectionIndex];
+      previousSectionIndex = sectionIndex;
+      previousTocIndex = firstPosition;
+    }
+  }
+  saveCluster();
+  return excluded;
+}
+
+function normalizeOutlineText(value: string): string {
+  return value.normalize("NFKC").toLowerCase().replace(/[\s\p{P}\p{S}_]+/gu, "");
 }
 
 function firstNonEmpty(...values: Array<string | undefined>): string {

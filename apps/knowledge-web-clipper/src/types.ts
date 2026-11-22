@@ -41,6 +41,8 @@ export interface ExtensionSettings {
   savedListLimit: number;
   defaultPanelTab: PanelView;
   themeMode: ThemeMode;
+  annotatorName: string;
+  annotatorColor: string;
 }
 
 export type ThemeMode = "system" | "light" | "dark";
@@ -484,7 +486,17 @@ export interface StoreClearParsedResult {
 
 export type AnnotationType = "highlight" | "note" | "summary" | "tag" | "bookmark";
 
-export interface HighlightAnnotation {
+export interface AnnotationCreator {
+  name: string;
+  source: "extension" | "mcp" | "legacy" | "system";
+  color?: string;
+}
+
+interface AnnotationBase {
+  created_by?: AnnotationCreator;
+}
+
+export interface HighlightAnnotation extends AnnotationBase {
   type: "highlight";
   annotation_id: string;
   doc_id: string;
@@ -498,20 +510,21 @@ export interface HighlightAnnotation {
   orphaned_at?: string;
 }
 
-export interface NoteAnnotation {
+export interface NoteAnnotation extends AnnotationBase {
   type: "note";
   annotation_id: string;
   doc_id: string;
   section_id: string;
   note: string;
   text_ref?: string;
+  color?: string;
   created_at: string;
   updated_at: string;
   orphaned?: boolean;
   orphaned_at?: string;
 }
 
-export interface SummaryAnnotation {
+export interface SummaryAnnotation extends AnnotationBase {
   type: "summary";
   annotation_id: string;
   doc_id: string;
@@ -524,7 +537,7 @@ export interface SummaryAnnotation {
   orphaned_at?: string;
 }
 
-export interface TagAnnotation {
+export interface TagAnnotation extends AnnotationBase {
   type: "tag";
   annotation_id: string;
   doc_id: string;
@@ -536,7 +549,7 @@ export interface TagAnnotation {
   orphaned_at?: string;
 }
 
-export interface BookmarkAnnotation {
+export interface BookmarkAnnotation extends AnnotationBase {
   type: "bookmark";
   annotation_id: string;
   doc_id: string;

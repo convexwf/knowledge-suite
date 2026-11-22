@@ -1011,33 +1011,85 @@ function updateHeadingStatus(state: import("./types.js").TaskState): void {
 }
 
 function applyHighlightOverlays(container: HTMLElement, annotations: Annotation[]): void {
+  clearHighlightOverlays(container);
   for (const anno of annotations) {
     if (anno.type !== "highlight" && anno.type !== "note") continue;
     const textRef = anno.type === "highlight" ? anno.text_ref : (anno as Annotation & { text_ref?: string }).text_ref;
     if (!textRef) continue;
     const elements = Array.from(container.querySelectorAll(`[data-section-id="${anno.section_id}"]`));
     for (const element of elements) {
-      const text = element.textContent ?? "";
-      const offset = text.indexOf(textRef);
-      if (offset === -1) continue;
-      wrapTextInElement(
+      const applied = wrapTextInSection(
         element as HTMLElement, textRef, anno.annotation_id,
-        anno.type === "highlight" ? (anno as Annotation & { color?: string }).color ?? null : null
+        anno.type === "highlight"
+          ? (anno as Annotation & { color?: string }).color ?? anno.created_by?.color ?? null
+          : null
       );
-      break;
+      if (applied) break;
     }
   }
+}
+
+function clearHighlightOverlays(container: HTMLElement): void {
+  for (const mark of Array.from(container.querySelectorAll("mark.annotation-highlight"))) {
+    const parent = mark.parentNode;
+    if (!parent) continue;
+    while (mark.firstChild) parent.insertBefore(mark.firstChild, mark);
+    mark.remove();
+  }
+}
+
+function wrapTextInSection(
+  element: HTMLElement,
+  searchText: string,
+  annotationId: string,
+  color: string | null
+): boolean {
+  if (wrapTextInElement(element, searchText, annotationId, color)) {
+    return true;
+  }
+
+  const parts = searchText.split(/\r?\n/).map((part) => part.trim()).filter(Boolean);
+  const listItems = Array.from(element.querySelectorAll("li")) as HTMLElement[];
+  if (parts.length < 2 || listItems.length === 0) {
+    return false;
+  }
+
+  const matches: Array<{ element: HTMLElement; text: string; offset: number }> = [];
+  let itemIndex = 0;
+  let itemOffset = 0;
+  for (const part of parts) {
+    let found = false;
+    for (let index = itemIndex; index < listItems.length; index += 1) {
+      const item = listItems[index];
+      const text = item.textContent ?? "";
+      const offset = text.indexOf(part, index === itemIndex ? itemOffset : 0);
+      if (offset === -1) continue;
+      matches.push({ element: item, text: part, offset });
+      itemIndex = index;
+      itemOffset = offset + part.length;
+      found = true;
+      break;
+    }
+    if (!found) {
+      return false;
+    }
+  }
+
+  return matches.every((match) =>
+    wrapTextInElement(match.element, match.text, annotationId, color, match.offset)
+  );
 }
 
 function wrapTextInElement(
   element: HTMLElement,
   searchText: string,
   annotationId: string,
-  color: string | null
-): void {
+  color: string | null,
+  searchStartOffset = 0
+): boolean {
   const fullText = element.textContent ?? "";
-  const offset = fullText.indexOf(searchText);
-  if (offset === -1) return;
+  const offset = fullText.indexOf(searchText, searchStartOffset);
+  if (offset === -1) return false;
 
   const range = document.createRange();
   const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
@@ -1062,13 +1114,13 @@ function wrapTextInElement(
     walkOffset += len;
   }
 
-  if (!startNode || !endNode) return;
+  if (!startNode || !endNode) return false;
 
   try {
     range.setStart(startNode, startNodeOffset);
     range.setEnd(endNode, endNodeOffset);
   } catch {
-    return;
+    return false;
   }
 
   const mark = document.createElement("mark");
@@ -1087,6 +1139,7 @@ function wrapTextInElement(
     mark.append(fragment);
     range.insertNode(mark);
   }
+  return true;
 }
 
 function showAnnotationPopup(annotationId: string, anchor: HTMLElement): void {
@@ -1103,12 +1156,12 @@ function showAnnotationPopup(annotationId: string, anchor: HTMLElement): void {
   popup.className = "annotation-popup";
   popup.dataset.annotationId = annotationId;
   const noteText = anno.type === "highlight" ? anno.note : anno.type === "note" || anno.type === "summary" ? anno.note : "";
-  const colorLabel = anno.type === "highlight" ? anno.color ?? null : null;
+  const colorLabel = safeAnnotationColor(annotationColor(anno));
+  const authorName = anno.created_by?.name ?? "convexwf";
   const typeLabel = capitalizeLabel(anno.type);
   const textRef = anno.type === "highlight" ? anno.text_ref : (anno as Annotation & { text_ref?: string }).text_ref;
-  const sectionLabel = formatSectionLabel(anno.section_id);
   const updatedAt = formatShortTimestamp(anno.updated_at);
-  const mainBody = noteText || textRef || "(empty)";
+  const mainBody = noteText || (textRef && anno.type !== "highlight" ? textRef : "");
 
   popup.innerHTML = `
     <div class="annotation-popup-header">
@@ -1117,12 +1170,12 @@ function showAnnotationPopup(annotationId: string, anchor: HTMLElement): void {
           ${colorLabel ? `<span class="annotation-popup-swatch" style="background:${colorLabel}"></span>` : ""}
           ${escapeHtml(typeLabel)}
         </span>
-        <span class="annotation-popup-section">${escapeHtml(sectionLabel)} · ${escapeHtml(updatedAt)}</span>
+        <span class="annotation-popup-section">${escapeHtml(authorName)} · ${escapeHtml(updatedAt)}</span>
       </div>
       <button class="annotation-popup-close" aria-label="Close annotation">&times;</button>
     </div>
     ${textRef ? `<div class="annotation-popup-ref">${escapeHtml(textRef)}</div>` : ""}
-    <div class="annotation-popup-body">${escapeHtml(mainBody)}</div>
+    ${mainBody ? `<div class="annotation-popup-body">${escapeHtml(mainBody)}</div>` : ""}
     <div class="annotation-popup-actions">
       ${anno.orphaned ? '<span class="annotation-popup-badge">Orphaned</span>' : ""}
       <button class="annotation-popup-delete" data-id="${anno.annotation_id}">Delete</button>
@@ -1295,18 +1348,13 @@ function renderAnnotationSidebar(): void {
   });
 
   const sectionLevels = new Map<string, number>();
-  const sectionLabels = new Map<string, string>();
   if (currentDocument) {
     for (const s of currentDocument.sections) {
       if (s.type === "heading") {
         const sid = s.section_id as string | undefined;
         const lv = s.level as number | undefined;
-        const headingText = typeof s.text === "string" ? s.text.trim() : "";
         if (sid && typeof lv === "number") {
           sectionLevels.set(sid, lv);
-        }
-        if (sid && headingText) {
-          sectionLabels.set(sid, headingText);
         }
       }
     }
@@ -1325,13 +1373,13 @@ function renderAnnotationSidebar(): void {
 
     const typeIcons: Record<string, string> = {"highlight":"◆","note":"✎","summary":"◈","tag":"#","bookmark":"★"};
     const typeIcon = typeIcons[anno.type] ?? "•";
-    const color = anno.type === "highlight" ? (anno as Annotation & { color?: string }).color : null;
+    const color = safeAnnotationColor(annotationColor(anno));
+    const authorName = anno.created_by?.name ?? "convexwf";
 
     const textRef = anno.type === "highlight" ? anno.text_ref : (anno as Annotation & { text_ref?: string }).text_ref;
     const note = anno.type === "highlight" ? anno.note : anno.type === "note" || anno.type === "summary" ? anno.note : "";
     const body = note || textRef || "(empty)";
     const ref = textRef && note ? textRef : "";
-    const sectionLabel = sectionLabels.get(anno.section_id) ?? formatSectionLabel(anno.section_id);
     const timeLabel = formatShortTimestamp(anno.updated_at);
 
     item.title = body || "Click to scroll";
@@ -1346,7 +1394,7 @@ function renderAnnotationSidebar(): void {
           <span class="anno-icon"${color ? ` style="color:${color}"` : ""}>${typeIcon}</span>
           <strong>${escapeHtml(capitalizeLabel(anno.type))}</strong>
         </span>
-        <span class="anno-item-section">${escapeHtml(sectionLabel)}</span>
+        <span class="anno-item-section">${escapeHtml(authorName)}</span>
       </div>
       ${ref ? `<div class="anno-item-ref">${escapeHtml(ref)}</div>` : ""}
       <div class="anno-item-body">${escapeHtml(body)}</div>
@@ -1371,6 +1419,17 @@ function escapeHtml(value: string): string {
   return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
+function safeAnnotationColor(value: string | undefined): string | null {
+  return value && /^#[0-9a-f]{6}$/i.test(value) ? value : null;
+}
+
+function annotationColor(annotation: Annotation): string | undefined {
+  if (annotation.type === "highlight" || annotation.type === "note") {
+    return annotation.color ?? annotation.created_by?.color;
+  }
+  return annotation.created_by?.color;
+}
+
 function countByType(annotations: Annotation[]): { highlight: number; note: number; summary: number } {
   return annotations.reduce(
     (acc, annotation) => {
@@ -1385,10 +1444,6 @@ function countByType(annotations: Annotation[]): { highlight: number; note: numb
 
 function capitalizeLabel(value: string): string {
   return value.charAt(0).toUpperCase() + value.slice(1);
-}
-
-function formatSectionLabel(sectionId: string): string {
-  return sectionId.replace(/^sec-/, "Section ");
 }
 
 function formatShortTimestamp(value: string): string {
@@ -1485,6 +1540,8 @@ async function createAnnotationFromSelection(
       section_id: sectionId,
       note: note.trim(),
       text_ref: text.slice(0, 200),
+      color: settings.annotatorColor,
+      created_by: { name: settings.annotatorName, source: "extension", color: settings.annotatorColor },
       created_at: now,
       updated_at: now
     };
@@ -1495,6 +1552,8 @@ async function createAnnotationFromSelection(
       doc_id: currentDocId,
       section_id: sectionId,
       text_ref: text.slice(0, 500),
+      color: settings.annotatorColor,
+      created_by: { name: settings.annotatorName, source: "extension", color: settings.annotatorColor },
       created_at: now,
       updated_at: now
     };
