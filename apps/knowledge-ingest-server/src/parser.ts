@@ -1405,6 +1405,21 @@ function extractSections(root: Element, title: string): KnowledgeDocument["secti
       continue;
     }
 
+    if (tagName === "p" && hasMedia) {
+      if (!text) {
+        const section = figureSectionFromNode(node);
+        if (section) {
+          sections.push(section);
+        }
+      } else {
+        sections.push({
+          type: "paragraph",
+          content: inlineToMarkdown(node)
+        });
+      }
+      continue;
+    }
+
     if (tagName === "figure" || tagName === "img" || isMediaContainer(node)) {
       const section = figureSectionFromNode(node);
       if (section) {
@@ -1465,12 +1480,14 @@ function isInsideMediaContainer(node: Element, root: Element): boolean {
 
 function isInsideMediaTag(node: Element): boolean {
   const tagName = node.tagName.toLowerCase();
-  // Skip img elements that are already inside a <figure> or another <img> container
-  if (tagName === "img") {
-    const parent = node.parentElement;
-    if (parent && (parent.tagName.toLowerCase() === "figure" || parent.tagName.toLowerCase() === "picture")) {
+  let parent = node.parentElement;
+  while (parent) {
+    const parentTag = parent.tagName.toLowerCase();
+    // The enclosing figure or paragraph already owns this image.
+    if (parentTag === "figure" || parentTag === "picture" || (tagName === "img" && parentTag === "p")) {
       return true;
     }
+    parent = parent.parentElement;
   }
   return false;
 }
