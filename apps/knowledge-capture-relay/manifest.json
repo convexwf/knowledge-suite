@@ -10,6 +10,7 @@
     "https://www.reddit.com/*",
     "https://reddit.com/*",
     "https://old.reddit.com/*",
+    "https://developers.openai.com/*",
     "http://127.0.0.1/*"
   ],
   "background": { "service_worker": "background.js", "type": "module" },
@@ -20,7 +21,8 @@
         "https://xiaoheihe.cn/*",
         "https://www.reddit.com/*",
         "https://reddit.com/*",
-        "https://old.reddit.com/*"
+        "https://old.reddit.com/*",
+        "https://developers.openai.com/*"
       ],
       "js": ["content.js"],
       "run_at": "document_idle"

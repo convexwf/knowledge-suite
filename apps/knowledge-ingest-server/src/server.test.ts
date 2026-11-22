@@ -2306,6 +2306,98 @@ describe("knowledge ingest server", () => {
     expect(response.statusCode).toBe(413);
     await app.close();
   });
+
+  it("saves browser snapshots directly as collection members", async () => {
+    const app = await buildServer({
+      host: "127.0.0.1",
+      port: 0,
+      token: "test-token",
+      storeRoot,
+      fetchTimeoutMs: 1000,
+      maxHtmlBytes: 1024 * 1024
+    });
+    const payload = {
+      inputMode: "browser_html",
+      snapshot: {
+        pageUrl: "https://example.com/collection/article?lang=zh",
+        canonicalUrl: "https://example.com/collection/article",
+        pageTitle: "Collection Article | Example",
+        html,
+        capturedAt: "2026-11-22T03:00:00.000Z",
+        meta: {}
+      },
+      collection: {
+        title: "Example Collection",
+        rootUrl: "https://example.com/collection",
+        orderIndex: 0,
+        source: "test"
+      }
+    };
+
+    const saved = await app.inject({
+      method: "POST",
+      url: "/api/collections/pages",
+      headers: { authorization: "Bearer test-token" },
+      payload
+    });
+    expect(saved.statusCode).toBe(200);
+    expect(saved.json()).toMatchObject({
+      saved: true,
+      status: { state: "parsed", hasRawdoc: true, hasDocument: true },
+      collection: { title: "Example Collection", itemCount: 1 }
+    });
+
+    const collectionId = saved.json().collection.collectionId as string;
+    const detail = await app.inject({
+      method: "GET",
+      url: `/api/collections/${encodeURIComponent(collectionId)}`,
+      headers: { authorization: "Bearer test-token" }
+    });
+    expect(detail.statusCode).toBe(200);
+    expect(detail.json().items).toHaveLength(1);
+    expect(detail.json().items[0]).toMatchObject({
+      normalizedUrl: "https://example.com/collection/article",
+      docId: saved.json().document.doc_id,
+      rawdocId: saved.json().rawdoc.rawdoc_id,
+      orderIndex: 0
+    });
+
+    const readerList = await app.inject({
+      method: "GET",
+      url: "/api/reader-list?page=1&pageSize=200",
+      headers: { authorization: "Bearer test-token" }
+    });
+    expect(readerList.statusCode).toBe(200);
+    expect(readerList.json().entries).toEqual([
+      expect.objectContaining({ kind: "collection", collection: expect.objectContaining({ collectionId }) })
+    ]);
+
+    const linkedAgain = await app.inject({
+      method: "POST",
+      url: "/api/collections/pages",
+      headers: { authorization: "Bearer test-token" },
+      payload
+    });
+    expect(linkedAgain.statusCode).toBe(200);
+    expect(linkedAgain.json()).toMatchObject({
+      saved: false,
+      reusedExisting: true,
+      collection: { itemCount: 1 }
+    });
+
+    const items = await app.inject({
+      method: "GET",
+      url: "/api/items?sourceType=url",
+      headers: { authorization: "Bearer test-token" }
+    });
+    expect(items.json().items).toHaveLength(1);
+    expect(items.json().items[0]).toMatchObject({
+      state: "parsed",
+      activeDocId: saved.json().document.doc_id,
+      activeRawdocId: saved.json().rawdoc.rawdoc_id
+    });
+    await app.close();
+  });
 });
 
 async function waitForBatchJob(app: FastifyInstance, jobId: string): Promise<{

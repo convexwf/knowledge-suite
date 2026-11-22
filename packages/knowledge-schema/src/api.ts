@@ -44,10 +44,22 @@ export type KnowledgeCaptureInput = z.infer<typeof KnowledgeCaptureInputSchema>;
 export const KnowledgeCapturePreviewRequestSchema = KnowledgeCaptureInputSchema;
 export type KnowledgeCapturePreviewRequest = z.infer<typeof KnowledgeCapturePreviewRequestSchema>;
 
+export const KnowledgeCollectionTargetSchema = z.object({
+  title: z.string().min(1).max(500),
+  rootUrl: z.string().url(),
+  strategy: z.enum(["create", "update"]).optional(),
+  collectionId: z.string().optional(),
+  orderIndex: z.number().int().nonnegative().optional(),
+  depth: z.number().int().nonnegative().optional(),
+  source: z.string().max(500).optional()
+});
+export type KnowledgeCollectionTarget = z.infer<typeof KnowledgeCollectionTargetSchema>;
+
 const KnowledgeCaptureSaveOptionsSchema = z.object({
   candidateId: z.string().optional(),
   overwrite: z.boolean().optional(),
-  category: z.string().min(1).max(64).optional()
+  category: z.string().min(1).max(64).optional(),
+  collection: KnowledgeCollectionTargetSchema.optional()
 });
 
 export const KnowledgeCaptureSaveRequestSchema = z.discriminatedUnion("inputMode", [
@@ -55,6 +67,12 @@ export const KnowledgeCaptureSaveRequestSchema = z.discriminatedUnion("inputMode
   ServerFetchInputSchema.merge(KnowledgeCaptureSaveOptionsSchema)
 ]);
 export type KnowledgeCaptureSaveRequest = z.infer<typeof KnowledgeCaptureSaveRequestSchema>;
+
+export const CollectionPageSaveRequestSchema = KnowledgeCaptureSaveRequestSchema.refine(
+  (input) => Boolean(input.collection),
+  { message: "collection is required when saving a collection page" }
+);
+export type CollectionPageSaveRequest = z.infer<typeof CollectionPageSaveRequestSchema>;
 
 export const KnowledgeCaptureReparseRequestSchema = z.object({
   url: z.string().min(1)

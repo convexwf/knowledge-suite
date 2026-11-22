@@ -1436,6 +1436,12 @@ export class KnowledgeStore {
     document: KnowledgeDocument;
     markdown: string;
     category?: string;
+    collectionMember?: {
+      collectionId: string;
+      orderIndex?: number;
+      depth?: number;
+      source?: string;
+    };
   }): Promise<ReturnType<typeof pathsFor>> {
     await this.ensure();
     const normalized = normalizeUrlForKnowledge(params.normalizedUrl);
@@ -1572,6 +1578,14 @@ export class KnowledgeStore {
       // chunks
       if (this.searchEnabled) {
         chunksToEmbed = this.replaceChunks(params.document, params.rawdoc, itemId, captureId, parserInfo, nowIso);
+      }
+
+      if (params.collectionMember) {
+        this.upsertCollectionMembershipWithinTransaction(
+          params.collectionMember,
+          itemId,
+          nowIso
+        );
       }
 
       // Cleanup replaced versions
@@ -2033,6 +2047,85 @@ export class KnowledgeStore {
   }
 
   // ── collection membership ──────────────────────────────────────────────
+
+  private upsertCollectionMembershipWithinTransaction(
+    params: {
+      collectionId: string;
+      orderIndex?: number;
+      depth?: number;
+      source?: string;
+    },
+    memberItemId: string,
+    now: string
+  ): void {
+    const collection = this.database!.prepare(
+      "SELECT item_type FROM items WHERE item_id = ?"
+    ).get(params.collectionId) as { item_type: string } | undefined;
+    if (collection?.item_type !== "collection") {
+      throw new Error(`Collection not found: ${params.collectionId}`);
+    }
+
+    const prior = this.database!.prepare(`
+      SELECT order_index, depth FROM collection_memberships
+      WHERE collection_item_id = ? AND member_item_id = ?
+    `).get(params.collectionId, memberItemId) as { order_index: number; depth: number } | undefined;
+    if (!prior && params.orderIndex !== undefined) {
+      this.database!.prepare(`
+        UPDATE collection_memberships
+        SET order_index = order_index + 1, updated_at = ?
+        WHERE collection_item_id = ? AND order_index >= ?
+      `).run(now, params.collectionId, params.orderIndex);
+    }
+    const nextOrder = this.database!.prepare(`
+      SELECT COALESCE(MAX(order_index), -1) + 1 AS value
+      FROM collection_memberships WHERE collection_item_id = ?
+    `).get(params.collectionId) as { value: number };
+    const orderIndex = params.orderIndex ?? prior?.order_index ?? nextOrder.value;
+    const depth = params.depth ?? prior?.depth ?? 0;
+
+    this.database!.prepare(`
+      INSERT INTO collection_memberships (
+        membership_id, collection_item_id, member_item_id, order_index, depth,
+        inclusion_mode, inclusion_reason, source_rule_id, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, 'manual', ?, NULL, ?, ?)
+      ON CONFLICT(collection_item_id, member_item_id) DO UPDATE SET
+        order_index = excluded.order_index,
+        depth = excluded.depth,
+        inclusion_reason = COALESCE(excluded.inclusion_reason, collection_memberships.inclusion_reason),
+        updated_at = excluded.updated_at
+    `).run(makeId(), params.collectionId, memberItemId, orderIndex, depth, params.source ?? null, now, now);
+    this.database!.prepare(
+      "UPDATE items SET state = 'active', updated_at = ? WHERE item_id = ? AND item_type = 'collection'"
+    ).run(now, params.collectionId);
+  }
+
+  async addExistingCollectionMember(params: {
+    collectionId: string;
+    normalizedUrl: string;
+    orderIndex?: number;
+    depth?: number;
+    source?: string;
+  }): Promise<void> {
+    await this.ensure();
+    const normalizedUrl = normalizeUrlForKnowledge(params.normalizedUrl);
+    const memberItemId = `url:sha256:${urlHash(normalizedUrl)}`;
+    const item = this.database!.prepare(
+      "SELECT active_doc_id FROM items WHERE item_id = ? AND item_type = 'document'"
+    ).get(memberItemId) as { active_doc_id: string | null } | undefined;
+    if (!item?.active_doc_id) {
+      throw new Error(`A parsed document is required before adding a collection member: ${normalizedUrl}`);
+    }
+
+    this.database!.exec("BEGIN IMMEDIATE");
+    try {
+      this.upsertAlias(memberItemId, "normalized_url", normalizedUrl, true);
+      this.upsertCollectionMembershipWithinTransaction(params, memberItemId, new Date().toISOString());
+      this.database!.exec("COMMIT");
+    } catch (error) {
+      this.database!.exec("ROLLBACK");
+      throw error;
+    }
+  }
 
   async replaceCollectionMembers(collectionItemId: string, members: Array<{
     memberItemId: string;

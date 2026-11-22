@@ -13,6 +13,7 @@ import {
   createKnowledgeBatchJob,
   discoverKnowledgeBatch,
   discoverKnowledgeLinks,
+  deleteKnowledgeItem,
   getKnowledgeAnnotations,
   getKnowledgeBatchJob,
   getKnowledgeCaptureStatus,
@@ -36,6 +37,7 @@ import {
   importStructuredContent,
   previewKnowledgePage,
   saveKnowledgePage,
+  saveKnowledgePageToCollection,
   scanGitHubMarkdown,
   setKnowledgeReadingProgress,
   type CaptureKnowledgePageParams,
@@ -45,6 +47,7 @@ import {
   type EpubImportParams,
   type GitHubMarkdownParams,
   type KnowledgePageInput,
+  type KnowledgeCollectionTarget,
   type MarkdownImportParams,
   type StructuredImportParams,
 } from "./ingest-client.js";
@@ -83,6 +86,19 @@ const knowledgePageInputSchema = {
     candidateId: { type: "string" },
     overwrite: { type: "boolean" },
     category: { type: "string" },
+    collection: {
+      type: "object",
+      properties: {
+        title: { type: "string", minLength: 1, maxLength: 500 },
+        rootUrl: { type: "string", format: "uri" },
+        strategy: { type: "string", enum: ["create", "update"] },
+        collectionId: { type: "string" },
+        orderIndex: { type: "integer", minimum: 0 },
+        depth: { type: "integer", minimum: 0 },
+        source: { type: "string", maxLength: 500 },
+      },
+      required: ["title", "rootUrl"],
+    },
   },
   required: ["inputMode"],
 };
@@ -145,8 +161,17 @@ export function createServer(): Server {
         inputSchema: knowledgePageInputSchema,
       },
       {
+        name: "save_knowledge_page_to_collection",
+        description: "Save or link a webpage directly into a Knowledge Suite collection. The page is attached to the collection as part of the save operation.",
+        inputSchema: {
+          ...knowledgePageInputSchema,
+          anyOf: [{ required: ["url"] }, { required: ["snapshot"] }],
+          required: ["inputMode", "collection"],
+        },
+      },
+      {
         name: "capture_knowledge_page",
-        description: "Capture a URL through the connected Knowledge Capture Relay extension and save it to Knowledge Suite.",
+        description: "Capture a URL through the connected Knowledge Capture Relay extension and save it to Knowledge Suite, optionally linking it directly into a collection.",
         inputSchema: {
           type: "object",
           properties: {
@@ -154,6 +179,7 @@ export function createServer(): Server {
             waitMs: { type: "integer", minimum: 500, maximum: 60000 },
             candidateId: { type: "string" },
             category: { type: "string" },
+            collection: knowledgePageInputSchema.properties.collection,
             tabId: { type: "integer", minimum: 1 },
             keepOpen: { type: "boolean" },
           },
@@ -412,6 +438,19 @@ export function createServer(): Server {
           type: "object",
           properties: {
             itemId: { type: "string", description: "Knowledge item ID" },
+            category: { type: "string", description: "Registered category containing the item; defaults to default" },
+          },
+          required: ["itemId"],
+        },
+      },
+      {
+        name: "delete_knowledge_item",
+        description: "Remove an item from Knowledge Suite. Use purge to permanently delete the item and its stored source and parsed document data.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            itemId: { type: "string", description: "Knowledge item ID" },
+            mode: { type: "string", enum: ["remove", "purge"], description: "remove detaches the item; purge permanently deletes its stored data" },
             category: { type: "string", description: "Registered category containing the item; defaults to default" },
           },
           required: ["itemId"],
@@ -728,6 +767,12 @@ export function createServer(): Server {
         const result = await saveKnowledgePage(args as unknown as KnowledgePageInput);
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       }
+      case "save_knowledge_page_to_collection": {
+        const result = await saveKnowledgePageToCollection(
+          args as unknown as KnowledgePageInput & { collection: KnowledgeCollectionTarget }
+        );
+        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+      }
       case "capture_knowledge_page": {
         const result = await captureKnowledgePage(args as unknown as CaptureKnowledgePageParams);
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
@@ -819,6 +864,11 @@ export function createServer(): Server {
       case "get_knowledge_item": {
         const input = args as { itemId: string; category?: string };
         const result = await getKnowledgeItem(input.itemId, input.category);
+        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+      }
+      case "delete_knowledge_item": {
+        const input = args as { itemId: string; mode?: "remove" | "purge"; category?: string };
+        const result = await deleteKnowledgeItem(input);
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       }
       case "get_knowledge_document": {

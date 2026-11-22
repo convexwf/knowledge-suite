@@ -46,6 +46,16 @@ export interface KnowledgePageSnapshot {
   selectionHtml?: string;
 }
 
+export interface KnowledgeCollectionTarget {
+  title: string;
+  rootUrl: string;
+  strategy?: "create" | "update";
+  collectionId?: string;
+  orderIndex?: number;
+  depth?: number;
+  source?: string;
+}
+
 export type KnowledgePageInput =
   | {
       inputMode: "server_fetch";
@@ -53,6 +63,7 @@ export type KnowledgePageInput =
       candidateId?: string;
       overwrite?: boolean;
       category?: string;
+      collection?: KnowledgeCollectionTarget;
     }
   | {
       inputMode: "browser_html";
@@ -60,6 +71,7 @@ export type KnowledgePageInput =
       candidateId?: string;
       overwrite?: boolean;
       category?: string;
+      collection?: KnowledgeCollectionTarget;
     };
 
 export interface CaptureKnowledgePageParams {
@@ -67,6 +79,7 @@ export interface CaptureKnowledgePageParams {
   waitMs?: number;
   candidateId?: string;
   category?: string;
+  collection?: KnowledgeCollectionTarget;
   tabId?: number;
   keepOpen?: boolean;
 }
@@ -365,6 +378,12 @@ export async function saveKnowledgePage(input: KnowledgePageInput): Promise<unkn
   return postJson<unknown>("/api/ingest/save", input, IMPORT_TIMEOUT_MS);
 }
 
+export async function saveKnowledgePageToCollection(
+  input: KnowledgePageInput & { collection: KnowledgeCollectionTarget }
+): Promise<unknown> {
+  return postJson<unknown>("/api/collections/pages", input, IMPORT_TIMEOUT_MS);
+}
+
 export async function captureKnowledgePage(params: CaptureKnowledgePageParams): Promise<unknown> {
   return postJson<unknown>("/api/capture", {
     ...params,
@@ -486,6 +505,17 @@ export async function listKnowledgeItems(params: {
 
 export async function getKnowledgeItem(itemId: string, category?: string): Promise<unknown> {
   return getJson<unknown>(withQuery(`/api/items/${encodeURIComponent(itemId)}`, { category }));
+}
+
+export async function deleteKnowledgeItem(params: {
+  itemId: string;
+  mode?: "remove" | "purge";
+  category?: string;
+}): Promise<unknown> {
+  return deleteJson<unknown>(withQuery(`/api/items/${encodeURIComponent(params.itemId)}`, {
+    mode: params.mode,
+    category: params.category,
+  }));
 }
 
 export async function getKnowledgeDocument(docId: string, category?: string): Promise<unknown> {
@@ -888,6 +918,19 @@ async function putJson<T>(path: string, body: unknown): Promise<T> {
       "Content-Type": "application/json",
     },
     body: JSON.stringify(body),
+    signal: AbortSignal.timeout(TIMEOUT_MS),
+  });
+  if (!res.ok) {
+    const responseBody = await res.text();
+    throw new Error(`ingest server returned ${res.status}: ${responseBody}`);
+  }
+  return res.json() as Promise<T>;
+}
+
+async function deleteJson<T>(path: string): Promise<T> {
+  const res = await fetch(new URL(path, BASE_URL), {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${TOKEN}` },
     signal: AbortSignal.timeout(TIMEOUT_MS),
   });
   if (!res.ok) {

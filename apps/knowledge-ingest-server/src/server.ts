@@ -7,6 +7,7 @@ import {
   AnnotationSchema,
   BatchDiscoverRequestSchema,
   BatchJobCreateRequestSchema,
+  CollectionPageSaveRequestSchema,
   BatchJobItem,
   GitHubMarkdownImportResponse,
   GitHubMarkdownRefreshResponse,
@@ -16,6 +17,7 @@ import {
   KnowledgeCaptureReparseRequestSchema,
   KnowledgeCaptureSaveRequestSchema,
   KnowledgeCaptureSaveRequest,
+  KnowledgeCollectionTargetSchema,
   KnowledgeDocument,
   KnowledgeItem,
   MarkdownImportResponse,
@@ -345,19 +347,77 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
   }
 
   async function runSave(input: KnowledgeCaptureSaveRequest) {
+    const collectionTarget = input.collection;
+    const lookupUrl = input.inputMode === "server_fetch"
+      ? input.url
+      : input.snapshot.canonicalUrl ?? input.snapshot.pageUrl;
+    if (collectionTarget && !input.overwrite) {
+      const existing = await store.status(lookupUrl);
+      if (existing?.activeDocId) {
+        const collection = await store.upsertCollection({
+          collectionId: collectionTarget.strategy === "update" ? collectionTarget.collectionId : undefined,
+          title: collectionTarget.title,
+          rootUrl: collectionTarget.rootUrl,
+          normalizedRootUrl: normalizeUrlForKnowledge(collectionTarget.rootUrl),
+          sourceType: "manual_section"
+        });
+        const normalizedUrl = existing.normalizedUrl || lookupUrl;
+        await store.addExistingCollectionMember({
+          collectionId: collection.collectionId,
+          normalizedUrl,
+          orderIndex: collectionTarget.orderIndex,
+          depth: collectionTarget.depth,
+          source: collectionTarget.source
+        });
+        const collectionDetail = await store.loadCollection(collection.collectionId);
+        return {
+          status: itemStatus(existing, normalizedUrl),
+          saved: false,
+          reusedExisting: true,
+          collection: collectionDetail.collection
+        };
+      }
+    }
+
     const resolved = await resolveKnowledgeCaptureInput(input, effectiveConfig);
     const parsed = await parsePage(resolved, { selectedCandidateId: input.candidateId });
     const markdown = documentToMarkdown(parsed.document);
+    const collection = collectionTarget
+      ? await store.upsertCollection({
+        collectionId: collectionTarget.strategy === "update" ? collectionTarget.collectionId : undefined,
+        title: collectionTarget.title,
+        rootUrl: collectionTarget.rootUrl,
+        normalizedRootUrl: normalizeUrlForKnowledge(collectionTarget.rootUrl),
+        sourceType: "manual_section"
+      })
+      : undefined;
     const paths = await store.save({
       normalizedUrl: resolved.normalizedUrl,
       html: resolved.html,
       rawdoc: parsed.rawdoc,
       document: parsed.document,
       markdown,
-      category: input.category
+      category: input.category,
+      ...(collection ? {
+        collectionMember: {
+          collectionId: collection.collectionId,
+          orderIndex: collectionTarget?.orderIndex,
+          depth: collectionTarget?.depth,
+          source: collectionTarget?.source
+        }
+      } : {})
     });
     const status = itemStatus(await store.status(resolved.normalizedUrl), resolved.normalizedUrl);
-    return { ...previewPayload(parsed), status, saved: true, paths };
+    const collectionDetail = collection
+      ? await store.loadCollection(collection.collectionId)
+      : undefined;
+    return {
+      ...previewPayload(parsed),
+      status,
+      saved: true,
+      paths,
+      ...(collectionDetail ? { collection: collectionDetail.collection } : {})
+    };
   }
 
   app.post("/api/ingest/preview", { bodyLimit: config.maxHtmlBytes }, async (request) => {
@@ -366,6 +426,14 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
 
   app.post("/api/ingest/save", { bodyLimit: config.maxHtmlBytes }, async (request, reply) => {
     const input = KnowledgeCaptureSaveRequestSchema.parse(request.body);
+    if (input.category && !categories.includes(input.category)) {
+      return reply.code(400).send({ error: "category_not_registered", category: input.category, registeredCategories: categories });
+    }
+    return runSave(input);
+  });
+
+  app.post("/api/collections/pages", { bodyLimit: config.maxHtmlBytes }, async (request, reply) => {
+    const input = CollectionPageSaveRequestSchema.parse(request.body);
     if (input.category && !categories.includes(input.category)) {
       return reply.code(400).send({ error: "category_not_registered", category: input.category, registeredCategories: categories });
     }
@@ -382,6 +450,7 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
     category: z.string().min(1).max(64).optional(),
     keepOpen: z.boolean().optional(),
     tabId: z.number().int().positive().optional(),
+    collection: KnowledgeCollectionTargetSchema.optional(),
     scope: z.object({
       sameOrigin: z.boolean().optional(),
       pathPrefix: z.string().optional(),
@@ -444,7 +513,13 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
     const snapshot = captured.snapshot;
     const input = { inputMode: "browser_html" as const, snapshot };
     const result = body.save
-      ? await runSave({ ...input, candidateId: body.candidateId, overwrite: body.overwrite, category: body.category })
+      ? await runSave({
+        ...input,
+        candidateId: body.candidateId,
+        overwrite: body.overwrite,
+        category: body.category,
+        collection: body.collection
+      })
       : await runPreview(input);
 
     return {

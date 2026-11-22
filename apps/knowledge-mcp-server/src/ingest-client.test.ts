@@ -139,3 +139,32 @@ describe("getKnowledgeContext", () => {
     expect(calledUrl.searchParams.get("trace")).toBeNull();
   });
 });
+
+describe("saveKnowledgePageToCollection", () => {
+  it("uses the collection endpoint and sends the collection target with the page", async () => {
+    const body = { saved: true, collection: { collectionId: "collection-1", itemCount: 1 } };
+    mockFetch.mockResolvedValueOnce(mockResponse(200, body));
+
+    const result = await client.saveKnowledgePageToCollection({
+      inputMode: "browser_html",
+      snapshot: {
+        pageUrl: "https://example.com/article",
+        html: "<article>Article content</article>",
+        capturedAt: "2026-11-22T03:00:00.000Z",
+      },
+      collection: {
+        title: "Example Collection",
+        rootUrl: "https://example.com/blog",
+        orderIndex: 0,
+      },
+    });
+
+    const calledUrl = mockFetch.mock.calls[0][0] as URL;
+    expect(calledUrl.pathname).toBe("/api/collections/pages");
+    expect(JSON.parse(mockFetch.mock.calls[0][1]?.body as string)).toMatchObject({
+      inputMode: "browser_html",
+      collection: { title: "Example Collection", orderIndex: 0 },
+    });
+    expect(result).toEqual(body);
+  });
+});
