@@ -706,7 +706,7 @@ h2 {
 /* ---- Annotation Highlight ---- */
 
 .annotation-highlight {
-  background-color: #ffe066;
+  background-color: var(--annotation-highlight-color, var(--annotation-highlight));
   border-radius: 2px;
   cursor: pointer;
   padding: 0 1px;
@@ -1596,7 +1596,11 @@ h2 {
 }
 
 :root[data-theme="dark"] .annotation-highlight {
-  background-color: var(--annotation-highlight);
+  background-color: color-mix(
+    in srgb,
+    var(--annotation-highlight-color, var(--annotation-highlight)) 30%,
+    var(--bg-panel)
+  );
   color: #fff4c4;
 }
 

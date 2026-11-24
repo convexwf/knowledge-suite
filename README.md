@@ -119,15 +119,22 @@ curl -X POST -H "Authorization: Bearer dev-token" http://127.0.0.1:18765/api/sea
 curl -X POST -H "Authorization: Bearer dev-token" "http://127.0.0.1:18765/api/embeddings/reindex?force=true"
 ```
 
-Each registered `category` has its own SQLite database under
-`<storeRoot>/index/categories/<category>.sqlite3`; raw captures, parsed documents,
-and assets remain in the shared content directories. `KNOWLEDGE_CATEGORIES`
-registers the available categories before startup; `default` is required and
-`bot` is registered by default. An omitted category uses only `default`. Item
-categories do not change after import, and category-specific API requests read
-or write one database at a time. `/api/categories` returns the registry; the
-Clipper Saved Items page defaults to `default` and lets the reader select one
-registered category from the control at the top right.
+Each registered `category` has a main SQLite database and ten item-routed search
+shards directly under `<storeRoot>/index/<category>/`. For example,
+`index/default/default.main.sqlite3` stores Reader metadata and
+`index/default/default.search.000100.sqlite3` stores one search shard. The adjacent
+`search-shards.json` maps item hash ranges to shard files. Raw captures, parsed
+documents, annotations, and assets remain in the shared content directories.
+See [SQLite storage layout and sharding](docs/sqlite-storage-layout.zh-CN.md)
+for the table ownership, routing, and schema handling details.
+
+`KNOWLEDGE_CATEGORIES` registers the available categories before startup;
+`default` is required and `bot` is registered by default. An omitted category
+uses only `default`. Item categories do not change after import, and
+category-specific API requests read or write one category at a time.
+`/api/categories` returns the registry; the Clipper Saved Items page defaults
+to `default` and lets the reader select one registered category from the
+control at the top right.
 
 ### Reader
 
@@ -214,7 +221,6 @@ Open the extension options page (`chrome://extensions` → **Details** →
 | `KNOWLEDGE_FETCH_TIMEOUT_MS` | `15000` | Server fetch timeout |
 | `KNOWLEDGE_MAX_HTML_BYTES` | `10485760` | Max HTML payload size |
 | `KNOWLEDGE_GITHUB_TOKEN` | unset | Optional runtime-injected GitHub token for private repository Markdown |
-| `GITHUB_TOKEN` | unset | Legacy alias for `KNOWLEDGE_GITHUB_TOKEN` |
 | `GITHUB_API_URL` | `https://api.github.com` | GitHub API base URL |
 | `KNOWLEDGE_MAX_GITHUB_FILES` | `100` | Max Markdown files in one GitHub import |
 | `KNOWLEDGE_MAX_GITHUB_MARKDOWN_BYTES` | `5242880` | Max Markdown bytes in one GitHub import |

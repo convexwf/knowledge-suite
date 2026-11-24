@@ -138,7 +138,7 @@ describe("knowledge ingest server", () => {
       service: "knowledge-ingest-server",
       store: {
         type: "sqlite",
-        indexPath: "index/categories/*.sqlite3",
+        indexPath: "index/{category}/*.sqlite3",
         categories: ["default", "bot"]
       },
       limits: {
@@ -212,7 +212,7 @@ describe("knowledge ingest server", () => {
       hasDocument: true
     });
     expect(save.json().paths.markdownPath).toMatch(/\.md$/);
-    await expect(access(join(storeRoot, "index", "categories", "default.sqlite3"))).resolves.toBeUndefined();
+    await expect(access(join(storeRoot, "index", "default", "default.main.sqlite3"))).resolves.toBeUndefined();
 
     const itemId = save.json().status.itemId as string;
     const itemBeforeProgress = await app.inject({
@@ -964,7 +964,7 @@ describe("knowledge ingest server", () => {
       storeRoot,
       database: {
         exists: true,
-        path: "index/categories/*.sqlite3"
+        path: "index/{category}/*.sqlite3"
       },
       tables: {
         webItems: 1,

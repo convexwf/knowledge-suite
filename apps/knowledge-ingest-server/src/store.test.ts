@@ -1,5 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { readdirSync } from "node:fs";
+import { access, copyFile, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -120,27 +121,75 @@ describe("KnowledgeStore", () => {
     store.close();
   });
 
-  it("renames and converts the reading progress column when migrating schema version 13", async () => {
+  it("reopens the main database after its file is atomically replaced", async () => {
+    const store = new KnowledgeStore(storeRoot);
+    const saved = fixture("13131313-1313-4131-8131-131313131313", "cdcdcdcd-cdcd-4cdc-8dcd-cdcdcdcdcdcd", "Replacement title");
+    await store.save(saved);
+    const itemId = (await store.status(saved.normalizedUrl)).itemId;
+
+    const databasePath = join(storeRoot, "index.sqlite3");
+    const replacementPath = `${databasePath}.replacement`;
+    await copyFile(databasePath, replacementPath);
+    await rename(replacementPath, databasePath);
+
+    await expect(store.updateReadingProgress(itemId, "section-after-replace", 0)).resolves.toMatchObject({
+      status: "updated",
+      progress: { sectionId: "section-after-replace", revision: 1 }
+    });
+    await expect(store.loadReadingProgress(itemId)).resolves.toMatchObject({
+      progress: { sectionId: "section-after-replace", revision: 1 }
+    });
+    await store.close();
+  });
+
+  it("rejects an older schema without applying an automatic migration", async () => {
     const initial = new KnowledgeStore(storeRoot);
     await initial.list();
     initial.close();
 
     const database = new DatabaseSync(join(storeRoot, "index.sqlite3"));
-    database.exec("ALTER TABLE items DROP COLUMN reading_progress_json; PRAGMA user_version = 13;");
+    database.exec("PRAGMA user_version = 13;");
     database.close();
 
-    const migrated = new KnowledgeStore(storeRoot);
-    await migrated.list();
-    migrated.close();
+    const outdated = new KnowledgeStore(storeRoot);
+    await expect(outdated.list()).rejects.toThrow(
+      "Unsupported store schema version 13; expected 20"
+    );
+    await outdated.close();
 
-    const migratedDatabase = new DatabaseSync(join(storeRoot, "index.sqlite3"));
+    const unchangedDatabase = new DatabaseSync(join(storeRoot, "index.sqlite3"));
     try {
-      const columns = migratedDatabase.prepare("PRAGMA table_info(items)").all() as Array<{ name: string }>;
+      const columns = unchangedDatabase.prepare("PRAGMA table_info(items)").all() as Array<{ name: string }>;
       expect(columns.map((column) => column.name)).toContain("reading_progress_json");
       expect(columns.map((column) => column.name)).not.toContain("reading_section_id");
-      expect((migratedDatabase.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(18);
+      expect((unchangedDatabase.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(13);
     } finally {
-      migratedDatabase.close();
+      unchangedDatabase.close();
+    }
+  });
+
+  it("rejects an unsupported search shard schema instead of rebuilding it", async () => {
+    const initial = new KnowledgeStore(storeRoot);
+    await initial.list();
+    await initial.close();
+
+    const shardPath = searchShardPaths(storeRoot)[0];
+    expect(shardPath).toBeDefined();
+    const shard = new DatabaseSync(shardPath!);
+    shard.exec("PRAGMA user_version = 2;");
+    shard.close();
+
+    const outdated = new KnowledgeStore(storeRoot);
+    await expect(outdated.list()).rejects.toThrow(
+      "Unsupported search shard schema version 2; expected 1"
+    );
+    await outdated.close();
+
+    const unchangedShard = new DatabaseSync(shardPath!);
+    try {
+      expect((unchangedShard.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(2);
+    } finally {
+      unchangedShard.close();
     }
   });
 
@@ -748,9 +797,6 @@ function expectStoreSchema(root: string): void {
       "annotations",
       "batch_items",
       "batch_jobs",
-      "chunk_embeddings",
-      "chunks",
-      "chunks_fts",
       "collection_memberships",
       "documents",
       "epub_metadata",
@@ -835,27 +881,6 @@ function expectStoreSchema(root: string): void {
       "fetched_at",
       "created_at"
     ]));
-    expect(columnsByTable.chunks).toEqual(expect.arrayContaining([
-      "chunk_id",
-      "doc_id",
-      "item_id",
-      "capture_id",
-      "chunk_index",
-      "title",
-      "page_title",
-      "source_url",
-      "heading_path",
-      "section_ids_json",
-      "text",
-      "token_estimate",
-      "char_count",
-      "parser_version",
-      "parser_method",
-      "parser_profile",
-      "content_hash",
-      "created_at",
-      "updated_at"
-    ]));
     expect(columnsByTable.collection_memberships).toEqual(expect.arrayContaining([
       "membership_id",
       "collection_item_id",
@@ -929,7 +954,7 @@ function expectStoreSchema(root: string): void {
     ]));
 
     const userVersion = database.prepare("PRAGMA user_version").get() as { user_version: number };
-    expect(userVersion.user_version).toBe(17);
+    expect(userVersion.user_version).toBe(20);
 
     for (const [table, columns] of Object.entries(columnsByTable)) {
       expect(columns.filter((column) => column.endsWith("_path") && column !== "heading_path"))
@@ -938,9 +963,38 @@ function expectStoreSchema(root: string): void {
   } finally {
     database.close();
   }
+
+  const shardPath = searchShardPaths(root)[0];
+  expect(shardPath).toBeDefined();
+  const shard = new DatabaseSync(shardPath);
+  try {
+    const tables = shard.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all()
+      .map((row) => (row as { name: string }).name);
+    expect(tables).toEqual(expect.arrayContaining(["chunks", "chunks_fts", "chunk_embeddings"]));
+    const columns = shard.prepare("PRAGMA table_info(chunks)").all()
+      .map((column) => (column as { name: string }).name);
+    expect(columns).toEqual(expect.arrayContaining([
+      "chunk_id", "doc_id", "item_id", "capture_id", "chunk_index", "title", "page_title",
+      "source_url", "normalized_url", "source_type", "category", "heading_path", "section_ids_json",
+      "text", "token_estimate", "char_count", "parser_version", "parser_method", "parser_profile",
+      "content_hash", "created_at", "updated_at"
+    ]));
+  } finally {
+    shard.close();
+  }
 }
 
 function tableCount(root: string, table: string): number {
+  if (table === "chunks" || table === "chunk_embeddings") {
+    return searchShardPaths(root).reduce((sum, path) => {
+      const shard = new DatabaseSync(path);
+      try {
+        return sum + (shard.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get() as { count: number }).count;
+      } finally {
+        shard.close();
+      }
+    }, 0);
+  }
   const database = new DatabaseSync(join(root, "index.sqlite3"));
   try {
     return (database.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get() as { count: number }).count;
@@ -950,17 +1004,25 @@ function tableCount(root: string, table: string): number {
 }
 
 function orphanEmbeddingCount(root: string): number {
-  const database = new DatabaseSync(join(root, "index.sqlite3"));
-  try {
-    const row = database.prepare(`
-      SELECT COUNT(*) AS count
-      FROM chunk_embeddings e
-      WHERE NOT EXISTS (SELECT 1 FROM chunks c WHERE c.chunk_id = e.chunk_id)
-    `).get() as { count: number };
-    return row.count;
-  } finally {
-    database.close();
-  }
+  return searchShardPaths(root).reduce((sum, path) => {
+    const database = new DatabaseSync(path);
+    try {
+      const row = database.prepare(`
+        SELECT COUNT(*) AS count
+        FROM chunk_embeddings e
+        WHERE NOT EXISTS (SELECT 1 FROM chunks c WHERE c.chunk_id = e.chunk_id)
+      `).get() as { count: number };
+      return sum + row.count;
+    } finally {
+      database.close();
+    }
+  }, 0);
+}
+
+function searchShardPaths(root: string): string[] {
+  return readdirSync(root)
+    .filter((name) => /^[a-z][a-z0-9_-]*\.search\.\d{6}\.sqlite3$/.test(name))
+    .map((name) => join(root, name));
 }
 
 function fixture(

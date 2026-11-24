@@ -1126,7 +1126,7 @@ function wrapTextInElement(
   const mark = document.createElement("mark");
   mark.className = "annotation-highlight";
   mark.dataset.annotationId = annotationId;
-  if (color) mark.style.backgroundColor = color;
+  if (color) mark.style.setProperty("--annotation-highlight-color", color);
   mark.addEventListener("click", (e) => {
     e.stopPropagation();
     showAnnotationPopup(annotationId, mark);

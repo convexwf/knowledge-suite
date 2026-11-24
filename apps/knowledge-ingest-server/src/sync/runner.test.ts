@@ -6,7 +6,7 @@ import type { FastifyInstance } from "fastify";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { KnowledgeDocument, RawDoc } from "@uknowledge/knowledge-schema";
 import { buildServer } from "../server.js";
-import { KnowledgeStore } from "../store.js";
+import { CategoryStoreRegistry } from "../category-store.js";
 
 const TOKEN = "sync-test-token";
 const ITEM_URL = "https://example.com/synced-article";
@@ -78,12 +78,12 @@ describe("knowledge store sync runner", () => {
 
     const sourceCatalog = await sourceApp.inject({
       method: "GET",
-      url: "/api/sync/catalog",
+      url: "/api/sync/catalog?category=bot",
       headers: { authorization: `Bearer ${TOKEN}` }
     });
     const destinationCatalog = await destinationApp.inject({
       method: "GET",
-      url: "/api/sync/catalog",
+      url: "/api/sync/catalog?category=bot",
       headers: { authorization: `Bearer ${TOKEN}` }
     });
     expect(destinationCatalog.json().items[0].contentHash)
@@ -91,7 +91,7 @@ describe("knowledge store sync runner", () => {
 
     const detail = await destinationApp.inject({
       method: "GET",
-      url: `/api/items/${encodeURIComponent(seeded.itemId)}`,
+      url: `/api/items/${encodeURIComponent(seeded.itemId)}?category=bot`,
       headers: { authorization: `Bearer ${TOKEN}` }
     });
     expect(detail.json()).toMatchObject({
@@ -108,7 +108,7 @@ describe("knowledge store sync runner", () => {
 
     const annotations = await destinationApp.inject({
       method: "GET",
-      url: `/api/items/${encodeURIComponent(seeded.itemId)}/annotations`,
+      url: `/api/items/${encodeURIComponent(seeded.itemId)}/annotations?category=bot`,
       headers: { authorization: `Bearer ${TOKEN}` }
     });
     expect(annotations.json().annotations).toEqual([
@@ -121,14 +121,14 @@ describe("knowledge store sync runner", () => {
 
     const progress = await destinationApp.inject({
       method: "GET",
-      url: `/api/items/${encodeURIComponent(seeded.itemId)}/reading-progress`,
+      url: `/api/items/${encodeURIComponent(seeded.itemId)}/reading-progress?category=bot`,
       headers: { authorization: `Bearer ${TOKEN}` }
     });
     expect(progress.json().progress).toMatchObject({ sectionId: "para-2", revision: 1 });
 
     const collection = await destinationApp.inject({
       method: "GET",
-      url: `/api/collections/${encodeURIComponent(seeded.collectionId)}`,
+      url: `/api/collections/${encodeURIComponent(seeded.collectionId)}?category=bot`,
       headers: { authorization: `Bearer ${TOKEN}` }
     });
     expect(collection.json()).toMatchObject({
@@ -138,7 +138,7 @@ describe("knowledge store sync runner", () => {
 
     const rawdoc = await destinationApp.inject({
       method: "GET",
-      url: `/api/sync/items/${encodeURIComponent(seeded.itemId)}/rawdoc`,
+      url: `/api/sync/items/${encodeURIComponent(seeded.itemId)}/rawdoc?category=bot`,
       headers: { authorization: `Bearer ${TOKEN}` }
     });
     expect(rawdoc.statusCode).toBe(200);
@@ -164,7 +164,8 @@ async function seedSource(root: string): Promise<{
   rawdocId: string;
   collectionId: string;
 }> {
-  const store = new KnowledgeStore(root);
+  const stores = new CategoryStoreRegistry(root, { categories: ["default", "bot"] });
+  const store = stores.getStore("bot");
   const docId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
   const rawdocId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
   const collectionId = "col:sha256:sync-fixture";
@@ -228,6 +229,6 @@ async function seedSource(root: string): Promise<{
     inclusionMode: "manual",
     inclusionReason: "fixture"
   }]);
-  store.close();
+  await stores.close();
   return { itemId: item.itemId, docId, rawdocId, collectionId };
 }

@@ -107,7 +107,25 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
   const embedder = createEmbedder(config.embeddings);
   const requestedSearch = config.search ?? "fts";
   const effectiveSearch = requestedSearch === "hybrid" && !embedder ? "fts" : requestedSearch;
-  const stores = new CategoryStoreRegistry(config.storeRoot, { search: effectiveSearch, embedder, categories });
+  let shuttingDown = false;
+  const stores = new CategoryStoreRegistry(config.storeRoot, {
+    search: effectiveSearch,
+    embedder,
+    categories,
+    onStoreInitialized: (_category, initializedStore) => {
+      if (effectiveSearch !== "hybrid") return;
+      setImmediate(() => {
+        if (shuttingDown) return;
+        void initializedStore.indexPendingEmbeddings()
+          .then((result) => {
+            if (result.embedded > 0) {
+              app.log.info({ ...result, model: embedder?.model }, "embeddings indexed after first store access");
+            }
+          })
+          .catch((error) => app.log.warn({ err: error }, "deferred embedding index failed"));
+      });
+    }
+  });
   const store = stores.store;
   if (requestedSearch === "hybrid" && !embedder) {
     app.log.warn("KNOWLEDGE_SEARCH=hybrid requires KNOWLEDGE_EMBEDDINGS=ollama; falling back to fts");
@@ -141,22 +159,6 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
       throw error;
     }
   };
-  let shuttingDown = false;
-  await stores.ensureAll();
-  const recovered = await store.recoverStaleJobs();
-  if (recovered > 0) {
-    app.log.info(`Recovered ${recovered} stale batch job(s) from previous session.`);
-  }
-  if (effectiveSearch === "hybrid") {
-    void store.indexPendingEmbeddings()
-      .then((result) => {
-        if (result.embedded > 0) {
-          app.log.info({ ...result, model: embedder?.model }, "embeddings indexed on startup");
-        }
-      })
-      .catch((error) => app.log.warn({ err: error }, "startup embedding index failed"));
-  }
-
   let syncScheduler: DailySyncScheduler | undefined;
   let syncRunner: SyncRunner | undefined;
   if (config.sync?.enabled && config.sync.sourceUrl && config.sync.sourceToken) {
@@ -282,7 +284,7 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
     storeRoot: config.storeRoot,
     store: {
       type: "sqlite",
-      indexPath: "index/categories/*.sqlite3",
+      indexPath: "index/{category}/*.sqlite3",
       categories
     },
     limits: {

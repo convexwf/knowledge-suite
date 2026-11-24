@@ -1,10 +1,14 @@
-import { mkdir, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { StoreClearParsedResponse, StoreClearResponse, StoreMaintenanceScan } from "@uknowledge/knowledge-schema";
 import { KnowledgeStore, type StoreOptions } from "./store.js";
 
-const CATEGORY_DATABASE_DIR = join("index", "categories");
+const INDEX_DATABASE_DIR = "index";
+
+interface CategoryStoreRegistryOptions extends StoreOptions {
+  categories: string[];
+  onStoreInitialized?: (category: string, store: KnowledgeStore) => void;
+}
 
 export class CategoryItemConflictError extends Error {
   readonly statusCode = 409;
@@ -24,10 +28,16 @@ export class CategoryStoreRegistry {
   private readonly categories: string[];
   private readonly root: string;
   private readonly options: StoreOptions;
+  private readonly onStoreInitialized?: CategoryStoreRegistryOptions["onStoreInitialized"];
+  private readonly notifiedCategories = new Set<string>();
+  private readonly initializationPromises = new Map<string, Promise<void>>();
+  private readonly recoveryPromises = new Map<string, Promise<number>>();
 
-  constructor(root: string, options: StoreOptions & { categories: string[] }) {
+  constructor(root: string, options: CategoryStoreRegistryOptions) {
+    const { categories, onStoreInitialized, ...storeOptions } = options;
     this.root = root;
-    this.categories = [...new Set(options.categories)];
+    this.categories = [...new Set(categories)];
+    this.onStoreInitialized = onStoreInitialized;
     if (!this.categories.includes("default")) {
       throw new Error("The registered category list must include 'default'");
     }
@@ -38,7 +48,7 @@ export class CategoryStoreRegistry {
     }
     this.categories.splice(this.categories.indexOf("default"), 1);
     this.categories.unshift("default");
-    this.options = { ...options, categories: [...this.categories] };
+    this.options = { ...storeOptions, categories: [...this.categories] };
 
     this.store = new Proxy({} as KnowledgeStore, {
       get: (_target, property) => {
@@ -83,10 +93,13 @@ export class CategoryStoreRegistry {
     }
     let store = this.stores.get(category);
     if (!store) {
-      const databasePath = join(this.root, CATEGORY_DATABASE_DIR, `${category}.sqlite3`);
+      const categoryDirectory = join(this.root, INDEX_DATABASE_DIR, category);
+      const databasePath = join(categoryDirectory, `${category}.main.sqlite3`);
       store = new KnowledgeStore(this.root, {
         ...this.options,
         databasePath,
+        searchDirectory: categoryDirectory,
+        searchFilePrefix: category,
         databaseCategory: category,
         isAssetReferencedElsewhere: (assetId, excludingDocId) =>
           this.isAssetReferencedElsewhere(assetId, excludingDocId)
@@ -96,22 +109,19 @@ export class CategoryStoreRegistry {
     return store;
   }
 
-  async ensureAll(): Promise<void> {
-    await mkdir(join(this.root, CATEGORY_DATABASE_DIR), { recursive: true });
-    await this.assertRegisteredDatabaseFiles();
-    for (const category of this.categories) {
-      await this.withCategory(category, () => this.getStore(category).ensure());
-    }
-    await this.assertUniqueItems();
-  }
-
   async recoverStaleJobs(): Promise<number> {
-    const results = await this.forEachStore((store) => store.recoverStaleJobs());
+    const results = await this.forEachStore(
+      (store) => store.recoverStaleJobs(),
+      { recoverStaleJobs: false, notify: false }
+    );
     return results.reduce((total, count) => total + count, 0);
   }
 
   async indexPendingEmbeddings(options: { force?: boolean } = {}): Promise<{ embedded: number; pending: number }> {
-    const results = await this.forEachStore((store) => store.indexPendingEmbeddings(options));
+    const results = await this.forEachStore(
+      (store) => store.indexPendingEmbeddings(options),
+      { notify: false }
+    );
     return results.reduce((total, result) => ({
       embedded: total.embedded + result.embedded,
       pending: total.pending + result.pending
@@ -163,7 +173,7 @@ export class CategoryStoreRegistry {
       scannedAt: new Date().toISOString(),
       database: {
         exists: scans.every((scan) => scan.database.exists),
-        path: `${CATEGORY_DATABASE_DIR.replaceAll("\\", "/")}/*.sqlite3`,
+        path: `${INDEX_DATABASE_DIR}/{category}/*.sqlite3`,
         sizeBytes: databaseSize
       },
       tables,
@@ -193,6 +203,9 @@ export class CategoryStoreRegistry {
 
   async close(): Promise<void> {
     await Promise.all([...this.stores.values()].map((store) => store.close()));
+    this.initializationPromises.clear();
+    this.recoveryPromises.clear();
+    this.notifiedCategories.clear();
   }
 
   private async invoke(
@@ -202,6 +215,7 @@ export class CategoryStoreRegistry {
     args: unknown[]
   ): Promise<unknown> {
     const name = String(property);
+    await this.ensureCategory(category, { notify: name !== "indexPendingEmbeddings" });
     if (["save", "saveImportItem", "importSyncItemMetadata", "upsertCollection", "replaceCollectionItems"].includes(name)) {
       return this.withUniquenessLock(async () => {
         if (name === "save") {
@@ -239,6 +253,7 @@ export class CategoryStoreRegistry {
   private async assertNoDuplicateUrl(category: string, url: string): Promise<void> {
     for (const otherCategory of this.categories) {
       if (otherCategory === category) continue;
+      await this.ensureCategory(otherCategory);
       const existing = await this.withCategory(otherCategory, () => this.getStore(otherCategory).status(url));
       if (existing) throw new CategoryItemConflictError(existing.itemId, otherCategory, category);
     }
@@ -247,27 +262,15 @@ export class CategoryStoreRegistry {
   private async assertNoDuplicateItemId(category: string, itemId: string): Promise<void> {
     for (const otherCategory of this.categories) {
       if (otherCategory === category) continue;
+      await this.ensureCategory(otherCategory);
       const existing = await this.withCategory(otherCategory, () => this.getStore(otherCategory).loadItem(itemId));
       if (existing) throw new CategoryItemConflictError(itemId, otherCategory, category);
     }
   }
 
-  private async assertUniqueItems(): Promise<void> {
-    const ownerByItemId = new Map<string, string>();
-    for (const category of this.categories) {
-      const items = await this.withCategory(category, () => this.getStore(category).listStoredItemIds());
-      for (const item of items) {
-        const existingCategory = ownerByItemId.get(item.itemId);
-        if (existingCategory && existingCategory !== category) {
-          throw new CategoryItemConflictError(item.itemId, existingCategory, category);
-        }
-        ownerByItemId.set(item.itemId, category);
-      }
-    }
-  }
-
   private async isAssetReferencedElsewhere(assetId: string, excludingDocId: string): Promise<boolean> {
     for (const category of this.categories) {
+      await this.ensureCategory(category);
       const referenced = await this.withCategory(category, () =>
         this.getStore(category).hasAssetReference(assetId, excludingDocId)
       );
@@ -276,23 +279,53 @@ export class CategoryStoreRegistry {
     return false;
   }
 
-  private async forEachStore<T>(operation: (store: KnowledgeStore) => Promise<T>): Promise<T[]> {
+  private async forEachStore<T>(
+    operation: (store: KnowledgeStore) => Promise<T>,
+    options: { recoverStaleJobs?: boolean; notify?: boolean } = {}
+  ): Promise<T[]> {
     const results: T[] = [];
     for (const category of this.categories) {
+      await this.ensureCategory(category, options);
       results.push(await this.withCategory(category, () => operation(this.getStore(category))));
     }
     return results;
   }
 
-  private async assertRegisteredDatabaseFiles(): Promise<void> {
-    const directory = join(this.root, CATEGORY_DATABASE_DIR);
-    const entries = await readdir(directory);
-    const databaseCategories = entries
-      .filter((entry) => entry.endsWith(".sqlite3"))
-      .map((entry) => entry.slice(0, -".sqlite3".length));
-    const unregistered = databaseCategories.filter((category) => !this.categories.includes(category));
-    if (unregistered.length > 0) {
-      throw new Error(`Stored categories are not registered: ${unregistered.join(", ")}. Add them to KNOWLEDGE_CATEGORIES.`);
+  private async ensureCategory(
+    category: string,
+    options: { recoverStaleJobs?: boolean; notify?: boolean } = {}
+  ): Promise<void> {
+    const store = this.getStore(category);
+    let initialization = this.initializationPromises.get(category);
+    if (!initialization) {
+      initialization = store.ensure();
+      this.initializationPromises.set(category, initialization);
+      void initialization.catch(() => {
+        if (this.initializationPromises.get(category) === initialization) {
+          this.initializationPromises.delete(category);
+        }
+      });
+    }
+    await initialization;
+
+    if (options.recoverStaleJobs !== false) {
+      let recovery = this.recoveryPromises.get(category);
+      if (!recovery) {
+        recovery = store.recoverStaleJobs();
+        this.recoveryPromises.set(category, recovery);
+        void recovery.catch(() => {
+          if (this.recoveryPromises.get(category) === recovery) {
+            this.recoveryPromises.delete(category);
+          }
+        });
+      }
+      await recovery;
+    }
+
+    if (options.notify !== false && !this.notifiedCategories.has(category)) {
+      this.notifiedCategories.add(category);
+      this.onStoreInitialized?.(category, store);
     }
   }
+
 }

@@ -50,7 +50,7 @@ export function loadConfig(): ServerConfig {
     fetchTimeoutMs: Number(process.env.KNOWLEDGE_FETCH_TIMEOUT_MS ?? 15000),
     maxHtmlBytes: Number(process.env.KNOWLEDGE_MAX_HTML_BYTES ?? 10 * 1024 * 1024),
     maxImportBytes: Number(process.env.KNOWLEDGE_MAX_IMPORT_BYTES ?? 100 * 1024 * 1024),
-    githubToken: process.env.KNOWLEDGE_GITHUB_TOKEN || process.env.GITHUB_TOKEN || undefined,
+    githubToken: process.env.KNOWLEDGE_GITHUB_TOKEN || undefined,
     githubApiUrl: process.env.GITHUB_API_URL ?? "https://api.github.com",
     maxGithubFiles: Number(process.env.KNOWLEDGE_MAX_GITHUB_FILES ?? 100),
     maxGithubMarkdownBytes: Number(process.env.KNOWLEDGE_MAX_GITHUB_MARKDOWN_BYTES ?? 5 * 1024 * 1024),

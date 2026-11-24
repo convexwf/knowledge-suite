@@ -45,6 +45,7 @@ Priority labels:
 | Add TypeScript site adapter registry | Config adapters with URL matching and transforms. |
 | Port high-value config adapters | Fern docs, Freedium, Medium, arXiv, Reddit, Meituan, etc. |
 | Add Reddit site adapter | Comment-tree extraction with regression coverage. |
+| Split category storage into main and item-routed search shards | Reader metadata stays in `<category>.main.sqlite3`; chunks, FTS, and vectors use ten `<category>.search.<id>.sqlite3` hash-range shards per category under `index/<category>/`. See [`docs/sqlite-storage-layout.zh-CN.md`](docs/sqlite-storage-layout.zh-CN.md). |
 
 ## TODO
 
