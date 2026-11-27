@@ -14,7 +14,9 @@
     "published_at": null,
     "ingested_at": "2026-11-08T00:00:00.000Z",
     "language": "zh-CN",
-    "tags": [],
+    "tags": [
+      "platform:xiaoheihe"
+    ],
     "parser_version": "knowledge-ingest-server/0.2:site_adapter"
   },
   "sections": [

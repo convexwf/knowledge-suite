@@ -91,7 +91,8 @@ describe("GitHub Markdown import", () => {
     });
     expect(JSON.stringify(detailJson)).not.toContain("image-bytes");
 
-    const assetsDirectory = await readdir(join(storeRoot, "assets"));
+    // Content folders are created lazily, so a proxy-only import leaves no assets folder at all.
+    const assetsDirectory = await readdir(join(storeRoot, "assets")).catch(() => []);
     expect(assetsDirectory).toEqual([]);
 
     const assetRef = detailJson.rawdoc.metadata.assets[0].assetRef as string;
