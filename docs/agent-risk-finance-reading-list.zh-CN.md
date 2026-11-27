@@ -182,6 +182,30 @@ Yuanchaofa 的当前正文由通用 Defuddle 选中，主体可用，但重复�
 
 其余站点按“后台标签读取 → Knowledge 只读预览 → 与页面正文对照”抽样；对同站点重复出现的结构性缺失再新增 adapter。当前会话刷新工具目录后可直接使用 `browser_new_tab`，旧工具目录仍可用已验证的 CDP 后台 target 方式。
 
+### 文章页抓取方式比对
+
+2026-11-27 对清单中的 36 个文章页做了三方比对：用 CDP 驱动的 Chromium 读取渲染后的原文，用 Capture Relay 扩展采集后解析，用服务端 `server_fetch` 抓取后解析。比对在临时 Knowledge Store 上以只读预览完成，Relay 使用放宽了 hostname 白名单的临时副本，仓库中的白名单没有改动。"段落覆盖"指原文主体区域内的段落、列表项和小标题中，能在解析结果里找到的比例。
+
+| 结果 | 页面数 | 说明 |
+| --- | --- | --- |
+| Relay 与 `server_fetch` 的正文一致 | 33 | 字数相差不到 5%，段落覆盖相同，标题与页面标题一致 |
+| 只有 Relay 拿到完整正文 | 1 | `bigquant.com/wiki/doc/Z0tjAS5sWx`：正文由浏览器渲染，Relay 24,927 字，`server_fetch` 11,243 字 |
+| 只有 `server_fetch` 成功 | 1 | `woshipm.com/pd/5701921.html`：Relay 在等待时间内只拿到空页面并报 `empty-page`，`server_fetch` 6,969 字、覆盖 98% |
+| 两种方式都失败 | 1 | `aqr.com` 的工作论文页：测试所在网络无法解析该域名，未能判断页面本身是否可抓 |
+
+段落覆盖低于 90% 的页面逐个核对过，缺失的都不是正文：
+
+| 页面 | 覆盖 | 未进入解析结果的内容 |
+| --- | --- | --- |
+| `qoppac.blogspot.com` Start here | 43% | 80 条读者评论和侧边栏 |
+| `hamel.dev` AI Evals FAQ | 61% | 页首的问题目录；各问题的正文都在 |
+| `twosigma.com` Regime Modeling | 76% | 文末的相关文章列表 |
+| `stripe.dev` Radar | 83% | 作者简介和文末的推广链接 |
+
+标题方面有三处小问题，与抓取方式无关：`bigquant.com` 取到正文第一个小标题而不是页面标题"量化回测指南"；`ricequant.com` 的标题末尾带一个零宽空格；`tech.meituan.com` 的标题带站点名后缀。
+
+结论：这批文章页绝大多数是静态页面，`server_fetch` 已经足够，不需要为它们扩大 Relay 白名单。需要浏览器渲染的只有 BigQuant 一个站点。[`scripts/automation/reading-list-runner.mjs`](../scripts/automation/reading-list-runner.mjs) 据此实现：Relay 已连接且允许该站点时用 Relay，否则用 `server_fetch`；对 BigQuant 的 `server_fetch` 结果会给出"正文不完整"的警告。50 个站点入口页（博客首页、归档、标签页）没有纳入比对，runner 默认也跳过它们。
+
 ### Relay 与 CDP 的区别
 
 Knowledge Capture Relay 与 MCP Gateway 的 CDP Bridge 是两条连接：Relay 扩展以 WebSocket 自动注册到 Knowledge Ingest Server 的 `/agent`，读取受允许的页面并将快照交给服务端；CDP Bridge 由 Gateway 暴露浏览器工具，适合 Agent 在同一 Chrome 中读取网页。本轮样本由 CDP 读取后交给 Knowledge 的只读 preview 接口解析；Relay 保持连接，但其 hostname 白名单不允许直接采集这些站点。CDP 侧新增的 `browser_new_tab` 始终以后台标签打开目标 URL。预览只生成解析结果，本次没有调用保存接口。
