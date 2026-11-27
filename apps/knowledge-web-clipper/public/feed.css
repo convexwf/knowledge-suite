@@ -1,0 +1,391 @@
+@import url("./styles/tokens.css");
+@import url("./styles/base.css");
+@import url("./styles/components.css");
+
+body {
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.feed-shell {
+  margin: 0 auto;
+  max-width: 980px;
+  padding: 24px;
+}
+
+h1,
+h2,
+h3,
+p {
+  margin: 0;
+}
+
+.page-header,
+.header-actions,
+.briefing-toolbar,
+.entries-toolbar,
+.hint-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.page-header {
+  justify-content: space-between;
+}
+
+.page-header h1 {
+  font-size: 26px;
+}
+
+.page-header p,
+.briefing-meta,
+.run-status {
+  color: var(--text-muted);
+}
+
+.feed-tabs {
+  border-bottom: 1px solid var(--border-subtle);
+  display: flex;
+  gap: 4px;
+  margin: 20px 0 16px;
+}
+
+.feed-tab {
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  color: var(--text-muted);
+  min-height: 38px;
+}
+
+.feed-tab:hover {
+  box-shadow: none;
+  color: var(--text-strong);
+  transform: none;
+}
+
+.feed-tab[aria-selected="true"] {
+  border-bottom-color: var(--accent-primary);
+  color: var(--text-strong);
+  font-weight: 650;
+}
+
+.feed-notice {
+  background: var(--bg-warning);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  margin-bottom: 16px;
+  padding: 10px 14px;
+}
+
+.feed-notice[data-tone="danger"] {
+  background: var(--bg-danger);
+  border-color: var(--state-danger-border);
+  color: var(--state-danger-fg);
+}
+
+.feed-view {
+  display: grid;
+  gap: 16px;
+}
+
+.feed-view[hidden] {
+  display: none;
+}
+
+.toggle {
+  align-items: center;
+  display: inline-flex;
+  gap: 6px;
+}
+
+.briefing-toolbar .toggle {
+  margin-left: auto;
+}
+
+.badge {
+  background: var(--bg-accent-soft);
+  border-radius: 999px;
+  color: var(--state-success-fg);
+  font-size: 12px;
+  font-weight: 650;
+  padding: 2px 10px;
+}
+
+.badge:empty {
+  display: none;
+}
+
+.badge[data-tone="warm"] {
+  background: var(--accent-warm-soft);
+  color: var(--accent-warm);
+}
+
+.badge[data-tone="muted"] {
+  background: var(--bg-soft);
+  color: var(--text-muted);
+}
+
+.briefing-body,
+.entries-list,
+.sources-list {
+  display: grid;
+  gap: 14px;
+}
+
+.briefing-summary {
+  background: var(--bg-accent-soft);
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+  white-space: pre-wrap;
+}
+
+.topic,
+.candidate,
+.panel,
+.entry-row,
+.source-row {
+  background: var(--bg-panel-strong);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 16px 18px;
+}
+
+.topic,
+.candidate,
+.panel {
+  display: grid;
+  gap: 12px;
+}
+
+.topic h2,
+.panel h2 {
+  font-size: 18px;
+}
+
+.topic-overview {
+  color: var(--text-muted);
+}
+
+.briefing-item {
+  border-top: 1px solid var(--border-subtle);
+  display: grid;
+  gap: 8px;
+  padding-top: 12px;
+}
+
+.briefing-item:first-of-type {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.item-text {
+  color: var(--text-strong);
+  font-size: 15px;
+}
+
+.item-text .badge {
+  margin-left: 8px;
+  vertical-align: middle;
+}
+
+.ref {
+  background: var(--bg-soft);
+  border-radius: var(--radius-sm);
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+}
+
+.ref[data-dismissed="true"] {
+  opacity: 0.55;
+}
+
+.ref-quote {
+  border-left: 3px solid var(--border-strong);
+  color: var(--text-body);
+  font-family: var(--font-reading);
+  margin: 0;
+  padding-left: 10px;
+}
+
+.ref-source {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  justify-content: space-between;
+}
+
+.ref-title {
+  color: var(--text-muted);
+  font-size: 13px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.ref-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ref-actions a,
+.ref-actions button {
+  font-size: 13px;
+  min-height: 30px;
+  padding: 4px 10px;
+}
+
+.ref-actions a,
+a.link-button {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--accent-link);
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+}
+
+.ref-actions a:hover,
+a.link-button:hover {
+  border-color: var(--accent-primary);
+}
+
+.candidate-header {
+  display: grid;
+  gap: 4px;
+}
+
+.candidate-title {
+  font-size: 16px;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
+.candidate-meta,
+.entry-meta,
+.source-meta {
+  color: var(--text-muted);
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 13px;
+  gap: 4px 12px;
+}
+
+.candidate-point {
+  display: grid;
+  gap: 6px;
+}
+
+.candidate-point[data-used="false"] .item-text {
+  color: var(--text-body);
+}
+
+.entry-row,
+.source-row {
+  display: grid;
+  gap: 6px;
+}
+
+.entry-title {
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
+.entry-reason,
+.source-error {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.source-error {
+  color: var(--state-danger-fg);
+}
+
+.source-controls {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.source-controls input[type="number"] {
+  width: 76px;
+}
+
+.source-url {
+  color: var(--text-muted);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.source-form {
+  border-top: 1px solid var(--border-subtle);
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  padding-top: 14px;
+}
+
+.source-form h3,
+.source-form button {
+  grid-column: 1 / -1;
+  justify-self: start;
+}
+
+.source-form label,
+.briefing-toolbar label,
+.entries-toolbar label {
+  color: var(--text-muted);
+  display: grid;
+  font-size: 13px;
+  gap: 4px;
+}
+
+.briefing-toolbar label.toggle {
+  display: inline-flex;
+}
+
+textarea {
+  resize: vertical;
+  width: 100%;
+}
+
+.hint-actions {
+  justify-content: space-between;
+}
+
+.run-detail {
+  display: grid;
+  gap: 4px 16px;
+  grid-template-columns: max-content 1fr;
+  margin: 0;
+}
+
+.run-detail dt {
+  color: var(--text-muted);
+}
+
+.run-detail dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+:root[data-theme="dark"] .empty-state {
+  background: var(--bg-soft);
+}
+
+@media (max-width: 640px) {
+  .feed-shell {
+    padding: 16px;
+  }
+
+  .briefing-toolbar .toggle {
+    margin-left: 0;
+  }
+}

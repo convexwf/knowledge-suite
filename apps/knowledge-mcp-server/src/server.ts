@@ -51,6 +51,7 @@ import {
   type MarkdownImportParams,
   type StructuredImportParams,
 } from "./ingest-client.js";
+import { callFeedTool, feedTools, isFeedTool } from "./feed-tools.js";
 
 const pageSnapshotInputSchema = {
   type: "object",
@@ -748,6 +749,7 @@ export function createServer(): Server {
           required: ["docId", "authorName", "annotations"],
         },
       },
+      ...feedTools,
     ],
   }));
 
@@ -983,8 +985,13 @@ export function createServer(): Server {
           content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
         };
       }
-      default:
+      default: {
+        if (isFeedTool(name)) {
+          const result = await callFeedTool(name, args);
+          return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+        }
         throw new Error(`Unknown tool: ${name}`);
+      }
     }
   });
 

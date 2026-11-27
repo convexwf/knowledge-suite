@@ -1062,3 +1062,114 @@ function normalizeWithOffsets(value: string): { text: string; starts: number[]; 
   }
   return { text, starts, ends };
 }
+
+// ── Feed ───────────────────────────────────────────────────────────────────
+// Feed content (titles, summaries, points, documents) comes from external web
+// pages. Callers must treat it as data to evaluate, never as instructions.
+
+export interface FeedBriefingSubmission {
+  composer: string;
+  summary?: string;
+  topics: Array<{
+    title: string;
+    overview?: string;
+    items: Array<{ pointIds: string[]; text?: string }>;
+  }>;
+}
+
+async function patchJson<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(new URL(path, BASE_URL), {
+    method: "PATCH",
+    headers: {
+      Authorization: `Bearer ${TOKEN}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(TIMEOUT_MS),
+  });
+  if (!res.ok) {
+    const responseBody = await res.text();
+    throw new Error(`ingest server returned ${res.status}: ${responseBody}`);
+  }
+  return res.json() as Promise<T>;
+}
+
+export async function runFeedPrepare(params: { triggeredBy?: string } = {}): Promise<unknown> {
+  return postJson("/api/feed/run", { triggeredBy: params.triggeredBy ?? "mcp-agent" });
+}
+
+export async function getFeedStatus(): Promise<unknown> {
+  return getJson("/api/feed/status");
+}
+
+export async function listFeedBriefings(params: { state?: "pending" | "composed"; limit?: number } = {}): Promise<unknown> {
+  return getJson(withQuery("/api/feed/briefings", { state: params.state, limit: params.limit }));
+}
+
+export async function getFeedCandidates(params: { briefingId: string }): Promise<unknown> {
+  return getJson(`/api/feed/briefings/${encodeURIComponent(params.briefingId)}/candidates`);
+}
+
+export async function getFeedEntryDocument(params: { entryId: string }): Promise<unknown> {
+  return getJson(`/api/feed/entries/${encodeURIComponent(params.entryId)}/document`);
+}
+
+export async function prepareFeedEntry(params: { entryId: string; briefingId?: string }): Promise<unknown> {
+  return postJson(
+    `/api/feed/entries/${encodeURIComponent(params.entryId)}/prepare`,
+    params.briefingId ? { briefingId: params.briefingId } : {},
+    IMPORT_TIMEOUT_MS,
+  );
+}
+
+export async function submitFeedBriefing(
+  params: { briefingId: string } & FeedBriefingSubmission,
+): Promise<unknown> {
+  const { briefingId, ...content } = params;
+  return putJson(`/api/feed/briefings/${encodeURIComponent(briefingId)}/content`, content);
+}
+
+export async function getFeedSignals(params: { since?: string; limit?: number } = {}): Promise<unknown> {
+  return getJson(withQuery("/api/feed/signals", { since: params.since, limit: params.limit }));
+}
+
+export async function listFeedSources(): Promise<unknown> {
+  return getJson("/api/feed/sources");
+}
+
+export async function addFeedSource(params: {
+  kind: "rss" | "listing";
+  title: string;
+  url: string;
+  linkPattern?: string;
+  weight?: number;
+  createdBy?: string;
+}): Promise<unknown> {
+  return postJson("/api/feed/sources", { ...params, createdBy: params.createdBy ?? "mcp-agent" });
+}
+
+export async function updateFeedSource(params: {
+  sourceId: string;
+  title?: string;
+  enabled?: boolean;
+  weight?: number;
+  linkPattern?: string;
+  updatedBy?: string;
+}): Promise<unknown> {
+  const { sourceId, ...patch } = params;
+  return patchJson(`/api/feed/sources/${encodeURIComponent(sourceId)}`, {
+    ...patch,
+    updatedBy: patch.updatedBy ?? "mcp-agent",
+  });
+}
+
+export async function getFeedCoarseHint(): Promise<unknown> {
+  return getJson("/api/feed/settings");
+}
+
+export async function setFeedCoarseHint(params: { coarseHint: string; updatedBy?: string }): Promise<unknown> {
+  return putJson("/api/feed/settings", {
+    coarseHint: params.coarseHint,
+    updatedBy: params.updatedBy ?? "mcp-agent",
+  });
+}

@@ -133,6 +133,10 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
   }
 });
 
+mustGet<HTMLButtonElement>("open-feed").addEventListener("click", () => {
+  void openKnowledgePage("feed.html");
+});
+
 settingsButton.addEventListener("click", () => {
   void chrome.tabs.create({ url: chrome.runtime.getURL("options.html") });
 });

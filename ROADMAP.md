@@ -47,6 +47,12 @@ Priority labels:
 | Add Reddit site adapter | Comment-tree extraction with regression coverage. |
 | Split category storage into main and item-routed search shards | Reader metadata stays in `<category>.main.sqlite3`; chunks, FTS, and vectors use ten `<category>.search.<id>.sqlite3` hash-range shards per category under `index/<category>/`. See [`docs/sqlite-storage-layout.zh-CN.md`](docs/sqlite-storage-layout.zh-CN.md). |
 
+### Feed
+
+| Done | Notes |
+| --- | --- |
+| Add Feed with agent-composed briefings | RSS/Atom and listing sources, coarse filter and cited points by a summary model, briefing composed by an external agent over MCP, expiry with tombstones, save-to-library promotion. Stored under `<storeRoot>/feed/`, separate from the knowledge base. See [`docs/feed-agent.zh-CN.md`](docs/feed-agent.zh-CN.md). |
+
 ## TODO
 
 ### MVP Completion
@@ -107,7 +113,7 @@ Priority labels:
 
 | Priority | TODO | Notes |
 | --- | --- | --- |
-| P4 | Add RSS import | Batch ingest feed entries. |
+| P4 | Render JavaScript listing pages for Feed sources | Feed `listing` sources use server fetch only; pages that need a browser are not supported yet. |
 | P4 | Add reading-list import | Browser or exported reading-list source. |
 | P4 | Add URL file import | Newline-delimited URLs. |
 | P4 | Add bookmark import | Browser bookmarks or exported HTML. |

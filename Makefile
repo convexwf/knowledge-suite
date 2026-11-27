@@ -2,7 +2,7 @@
         dev dev-ai down logs rebuild rebuild-ai smoke e2e fixtures fixtures-update \
         import-calibre import-calibre-dry import-calibre-docker import-calibre-docker-dry \
         import-html import-html-dry import-urls import-urls-dry \
-        ai-pull-model
+        ai-pull-model feed-run
 
 # ── Variables ──────────────────────────────────────────────────────────────
 
@@ -41,6 +41,9 @@ help: ## Show all targets
 	@echo "  logs                   Tail server logs"
 	@echo "  rebuild                Rebuild extension + Docker image, then start"
 	@echo "  rebuild-ai             rebuild + start with AI enabled"
+	@echo ""
+	@echo "── Feed ──"
+	@echo "  feed-run               Trigger a feed fetch and wait (needs KNOWLEDGE_FEED_ENABLED=true)"
 	@echo ""
 	@echo "── AI Summary (experimental) ──"
 	@echo "  ai-pull-model          Pull AI model via Ollama"
@@ -146,6 +149,11 @@ rebuild-ai: build-extension ## rebuild + start with AI enabled
 	@echo "Rebuilding with AI..."
 	KNOWLEDGE_TOKEN=$(SERVER_TOKEN) docker compose up -d --build
 	@echo "Server at http://$(SERVER_HOST):$(SERVER_PORT)"
+
+# ── Feed ───────────────────────────────────────────────────────────────────
+
+feed-run: ## Trigger the feed prepare stage and wait for it (for cron or manual use)
+	KNOWLEDGE_BASE_URL=http://$(SERVER_HOST):$(SERVER_PORT) KNOWLEDGE_TOKEN=$(SERVER_TOKEN) node scripts/feed-run.mjs $(ARGS)
 
 # ── AI Summary (experimental) ──────────────────────────────────────────────
 

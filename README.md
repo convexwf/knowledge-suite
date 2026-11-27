@@ -176,6 +176,39 @@ once a day. The remote instance is the read-only source; the local store
 rebuilds its own chunks, FTS rows, and embeddings. See
 [docs/knowledge-sync.zh-CN.md](docs/knowledge-sync.zh-CN.md).
 
+### Feed and Briefings
+
+Feed holds short-lived material (news, daily reading) outside the knowledge
+base. Entries are fetched in bulk, filtered, summarised into a briefing with
+citations, and removed when they expire. Only entries you save reach the
+knowledge base; feed entries never appear in search, context retrieval or sync.
+
+```bash
+KNOWLEDGE_FEED_ENABLED=true make rebuild-ai   # the summary model needs Ollama or another endpoint
+make feed-run                                 # fetch once and wait for the result
+```
+
+Open **Feed** from the Items page to add sources (RSS/Atom, or a listing page
+with a link pattern), read briefings and save entries.
+
+A day runs in two stages:
+
+1. **Prepare** — the server discovers and dedupes entries, a small summary
+   model drops the obvious noise, the selected pages are fetched, and one to
+   three points are extracted per article. Every point cites a passage, and the
+   quote is checked against the fetched text before it is stored.
+2. **Compose** — an agent that knows your interests pulls the candidate points
+   through the MCP server, picks and regroups them, and submits the briefing.
+   It submits point IDs and optional wording; links are attached by the server.
+
+The server has no schedule of its own. A fetch starts when someone asks for
+one: `make feed-run` from cron, the **Fetch now** button, or the agent calling
+`run_feed_prepare`. Until an agent composes a briefing, the Feed page shows its
+candidates ordered by score, so the feed is usable without an agent.
+
+Agent setup, the tool list and the submission format:
+[docs/feed-agent.zh-CN.md](docs/feed-agent.zh-CN.md).
+
 ### Batch Import
 
 Import existing content in bulk:
@@ -218,6 +251,20 @@ Open the extension options page (`chrome://extensions` → **Details** →
 | `TZ` | `Asia/Shanghai` | Container timezone used to interpret `KNOWLEDGE_SYNC_AT` |
 | `KNOWLEDGE_AI_ENABLED` | `false` | Enable AI summary endpoints |
 | `KNOWLEDGE_AI_OLLAMA_MODEL` | `qwen2.5:7b` | Ollama model name |
+| `KNOWLEDGE_FEED_ENABLED` | `false` | Enable the feed module and `/api/feed/*` |
+| `KNOWLEDGE_FEED_MAX_DISCOVER_PER_SOURCE` | `50` | Newest entries taken from one source per run |
+| `KNOWLEDGE_FEED_MAX_FULLTEXT_PER_RUN` | `40` | Entries fetched in full per run (a tenth is an exploration quota) |
+| `KNOWLEDGE_FEED_MAX_RESCUE_PER_BRIEFING` | `10` | Skipped entries the composing agent may ask to prepare per briefing |
+| `KNOWLEDGE_FEED_MIN_SCORE` | `40` | Lowest coarse score (after source weight) that is fetched |
+| `KNOWLEDGE_FEED_RETENTION_DAYS` | `14` | Days a fetched entry is kept unless saved |
+| `KNOWLEDGE_FEED_SKIPPED_RETENTION_DAYS` | `3` | Days an entry that was not fetched is kept |
+| `KNOWLEDGE_FEED_BRIEFING_RETENTION_DAYS` | `90` | Days a briefing and its points are kept |
+| `KNOWLEDGE_FEED_TOMBSTONE_DAYS` | `180` | Days an expired URL is remembered; never shorter than briefing retention |
+| `KNOWLEDGE_FEED_OUTPUT_LANGUAGE` | `简体中文` | Language the summary model writes points in |
+| `KNOWLEDGE_FEED_AI_BASE_URL` | `KNOWLEDGE_AI_OLLAMA_BASE_URL` | OpenAI-compatible endpoint of the summary model |
+| `KNOWLEDGE_FEED_AI_MODEL` | `KNOWLEDGE_AI_OLLAMA_MODEL` | Summary model name |
+| `KNOWLEDGE_FEED_AI_API_KEY` | `KNOWLEDGE_AI_OLLAMA_API_KEY` | API key for the summary model endpoint |
+| `KNOWLEDGE_FEED_AI_TIMEOUT_MS` | `KNOWLEDGE_AI_OLLAMA_TIMEOUT_MS` | Timeout of one summary model call |
 | `KNOWLEDGE_FETCH_TIMEOUT_MS` | `15000` | Server fetch timeout |
 | `KNOWLEDGE_MAX_HTML_BYTES` | `10485760` | Max HTML payload size |
 | `KNOWLEDGE_GITHUB_TOKEN` | unset | Optional runtime-injected GitHub token for private repository Markdown |

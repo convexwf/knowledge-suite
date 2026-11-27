@@ -61,6 +61,10 @@ import { CategoryItemConflictError, CategoryStoreRegistry } from "./category-sto
 import { RemoteSuiteClient } from "./sync/remote.js";
 import { DailySyncScheduler, SyncBusyError, SyncRunner } from "./sync/runner.js";
 import { buildZipArchive } from "./zip.js";
+import { OpenAiCompatibleFeedLlm, type FeedLlm } from "./feed/llm.js";
+import { registerFeedDisabledRoutes, registerFeedRoutes } from "./feed/routes.js";
+import { FeedRunner } from "./feed/runner.js";
+import { FeedStore } from "./feed/store.js";
 
 function matchesEtag(header: string | string[] | undefined, etag: string): boolean {
   const value = Array.isArray(header) ? header.join(",") : header;
@@ -81,6 +85,8 @@ type RuntimeServerConfig = Omit<ServerConfig, "maxImportBytes" | "categories"> &
   maxImportBytes?: number;
   categories?: string[];
   epubPandocRunner?: PandocRunner;
+  /** Test seam: replaces the HTTP summary-model client used by the feed module. */
+  feedLlm?: FeedLlm;
 };
 
 export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
@@ -193,9 +199,14 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
     done(null, body);
   });
 
+  let feedStore: FeedStore | undefined;
+  let feedRunner: FeedRunner | undefined;
+
   app.addHook("onClose", async () => {
     shuttingDown = true;
     syncScheduler?.stop();
+    await feedRunner?.stop();
+    feedStore?.close();
     await Promise.allSettled([...activeBatchRuns]);
     await stores.close();
   });
@@ -299,6 +310,39 @@ export async function buildServer(config: RuntimeServerConfig = loadConfig()) {
   }));
 
   // ── Ingest routes ──────────────────────────────────────────────────────
+
+  if (config.feed?.enabled) {
+    const feedConfig = config.feed;
+    const feedLlm = config.feedLlm ?? new OpenAiCompatibleFeedLlm(feedConfig.ai);
+    feedStore = new FeedStore(config.storeRoot);
+    feedRunner = new FeedRunner({
+      store: feedStore,
+      config: feedConfig,
+      serverConfig: effectiveConfig,
+      llm: feedLlm,
+      knowledgeHasUrl: async (url) => {
+        for (const category of categories) {
+          if (await stores.withCategory(category, () => store.status(url))) return true;
+        }
+        return false;
+      },
+      log: app.log
+    });
+    registerFeedRoutes(app, {
+      store: feedStore,
+      runner: feedRunner,
+      config: feedConfig,
+      summaryModel: feedLlm.model,
+      // Promotion always lands in `default`, whatever category the request carried.
+      saveToKnowledge: (input) => stores.withCategory("default", async () => {
+        const result = await runSave({ ...input, category: "default" });
+        return result.status.itemId;
+      })
+    });
+    app.log.info({ summaryModel: feedLlm.model }, "feed module enabled");
+  } else {
+    registerFeedDisabledRoutes(app);
+  }
 
   function itemStatus(item: KnowledgeItem | null, fallbackUrl: string) {
     if (!item) return {

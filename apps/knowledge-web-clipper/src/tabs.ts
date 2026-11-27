@@ -1,7 +1,8 @@
 const READER_PAGE = "reader.html";
 const ITEMS_PAGE = "items.html";
 const ANNOTATIONS_PAGE = "annotations.html";
-const REUSABLE_PAGES = [READER_PAGE, ITEMS_PAGE, ANNOTATIONS_PAGE];
+const FEED_PAGE = "feed.html";
+const REUSABLE_PAGES = [READER_PAGE, ITEMS_PAGE, ANNOTATIONS_PAGE, FEED_PAGE];
 
 export async function openKnowledgePage(path: string): Promise<void> {
   const url = chrome.runtime.getURL(path);

@@ -20,6 +20,27 @@ export interface SyncConfig {
   timeoutMs: number;
 }
 
+export interface FeedAiConfig {
+  baseUrl: string;
+  model: string;
+  apiKey?: string;
+  timeoutMs: number;
+}
+
+export interface FeedConfig {
+  enabled: boolean;
+  maxDiscoverPerSource: number;
+  maxFulltextPerRun: number;
+  maxRescuePerBriefing: number;
+  minScore: number;
+  retentionDays: number;
+  skippedRetentionDays: number;
+  briefingRetentionDays: number;
+  tombstoneDays: number;
+  outputLanguage: string;
+  ai: FeedAiConfig;
+}
+
 export interface ServerConfig {
   categories: string[];
   host: string;
@@ -38,6 +59,7 @@ export interface ServerConfig {
   search?: SearchMode;
   embeddings?: EmbeddingConfig;
   sync?: SyncConfig;
+  feed?: FeedConfig;
 }
 
 export function loadConfig(): ServerConfig {
@@ -58,7 +80,8 @@ export function loadConfig(): ServerConfig {
     maxGithubAssetBytes: Number(process.env.KNOWLEDGE_MAX_GITHUB_ASSET_BYTES ?? 20 * 1024 * 1024),
     search: parseSearchMode(process.env.KNOWLEDGE_SEARCH),
     embeddings: parseEmbeddingConfig(),
-    sync: parseSyncConfig()
+    sync: parseSyncConfig(),
+    feed: parseFeedConfig()
   };
 }
 
@@ -116,4 +139,59 @@ function parseSyncConfig(): SyncConfig | undefined {
 function parseSyncAt(value: string | undefined): string {
   const match = /^([01]\d|2[0-3]):([0-5]\d)$/.exec((value ?? "").trim());
   return match ? `${match[1]}:${match[2]}` : "19:00";
+}
+
+export function defaultFeedConfig(overrides: Partial<FeedConfig> = {}): FeedConfig {
+  return {
+    enabled: false,
+    maxDiscoverPerSource: 50,
+    maxFulltextPerRun: 40,
+    maxRescuePerBriefing: 10,
+    minScore: 40,
+    retentionDays: 14,
+    skippedRetentionDays: 3,
+    briefingRetentionDays: 90,
+    tombstoneDays: 180,
+    outputLanguage: "简体中文",
+    ai: {
+      baseUrl: "http://localhost:11434",
+      model: "qwen2.5:7b",
+      timeoutMs: 120000
+    },
+    ...overrides
+  };
+}
+
+function parseFeedConfig(): FeedConfig {
+  const defaults = defaultFeedConfig();
+  const briefingRetentionDays = positiveInt(process.env.KNOWLEDGE_FEED_BRIEFING_RETENTION_DAYS, defaults.briefingRetentionDays);
+  return {
+    enabled: process.env.KNOWLEDGE_FEED_ENABLED === "true",
+    maxDiscoverPerSource: positiveInt(process.env.KNOWLEDGE_FEED_MAX_DISCOVER_PER_SOURCE, defaults.maxDiscoverPerSource),
+    maxFulltextPerRun: positiveInt(process.env.KNOWLEDGE_FEED_MAX_FULLTEXT_PER_RUN, defaults.maxFulltextPerRun),
+    maxRescuePerBriefing: positiveInt(process.env.KNOWLEDGE_FEED_MAX_RESCUE_PER_BRIEFING, defaults.maxRescuePerBriefing),
+    minScore: positiveInt(process.env.KNOWLEDGE_FEED_MIN_SCORE, defaults.minScore),
+    retentionDays: positiveInt(process.env.KNOWLEDGE_FEED_RETENTION_DAYS, defaults.retentionDays),
+    skippedRetentionDays: positiveInt(process.env.KNOWLEDGE_FEED_SKIPPED_RETENTION_DAYS, defaults.skippedRetentionDays),
+    briefingRetentionDays,
+    // Tombstones resolve old briefing links, so they must outlive briefings.
+    tombstoneDays: Math.max(
+      briefingRetentionDays,
+      positiveInt(process.env.KNOWLEDGE_FEED_TOMBSTONE_DAYS, defaults.tombstoneDays)
+    ),
+    outputLanguage: (process.env.KNOWLEDGE_FEED_OUTPUT_LANGUAGE ?? "").trim() || defaults.outputLanguage,
+    ai: {
+      baseUrl: process.env.KNOWLEDGE_FEED_AI_BASE_URL
+        || process.env.KNOWLEDGE_AI_OLLAMA_BASE_URL
+        || defaults.ai.baseUrl,
+      model: process.env.KNOWLEDGE_FEED_AI_MODEL
+        || process.env.KNOWLEDGE_AI_OLLAMA_MODEL
+        || defaults.ai.model,
+      apiKey: process.env.KNOWLEDGE_FEED_AI_API_KEY || process.env.KNOWLEDGE_AI_OLLAMA_API_KEY || undefined,
+      timeoutMs: positiveInt(
+        process.env.KNOWLEDGE_FEED_AI_TIMEOUT_MS ?? process.env.KNOWLEDGE_AI_OLLAMA_TIMEOUT_MS,
+        defaults.ai.timeoutMs
+      )
+    }
+  };
 }

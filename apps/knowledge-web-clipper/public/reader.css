@@ -1705,3 +1705,9 @@ h2 {
 :root[data-theme="dark"] .reader-content .math-display {
   color: var(--text-strong);
 }
+
+.feed-cited-section {
+  background: var(--accent-warm-soft);
+  border-radius: var(--radius-sm);
+  box-shadow: -6px 0 0 var(--accent-warm-soft), 6px 0 0 var(--accent-warm-soft);
+}

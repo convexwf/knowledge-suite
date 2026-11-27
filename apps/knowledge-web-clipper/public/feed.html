@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Knowledge Feed</title>
+    <link rel="stylesheet" href="feed.css" />
+  </head>
+  <body>
+    <main class="feed-shell">
+      <header class="page-header">
+        <div>
+          <h1>Feed</h1>
+          <p>Daily briefings with sources. Save what is worth keeping; the rest expires on its own.</p>
+        </div>
+        <div class="header-actions">
+          <span id="run-status" class="run-status" role="status"></span>
+          <button id="run-now" type="button" class="primary-button">Fetch now</button>
+          <button id="open-items" type="button">Items</button>
+        </div>
+      </header>
+
+      <nav class="feed-tabs" role="tablist" aria-label="Feed views">
+        <button type="button" role="tab" class="feed-tab" data-view="briefing" aria-selected="true">Briefing</button>
+        <button type="button" role="tab" class="feed-tab" data-view="entries" aria-selected="false">Entries</button>
+        <button type="button" role="tab" class="feed-tab" data-view="settings" aria-selected="false">Sources &amp; settings</button>
+      </nav>
+
+      <div id="feed-notice" class="feed-notice" role="status" hidden></div>
+
+      <section id="view-briefing" class="feed-view" role="tabpanel">
+        <div class="briefing-toolbar">
+          <label>
+            Briefing
+            <select id="briefing-select" aria-label="Briefing date"></select>
+          </label>
+          <span id="briefing-state" class="badge"></span>
+          <span id="briefing-meta" class="briefing-meta"></span>
+          <label class="toggle">
+            <input id="show-candidates" type="checkbox" />
+            Show all candidates
+          </label>
+        </div>
+        <div id="briefing-body" class="briefing-body" aria-live="polite"></div>
+      </section>
+
+      <section id="view-entries" class="feed-view" role="tabpanel" hidden>
+        <div class="entries-toolbar">
+          <label>
+            Source
+            <select id="entries-source"><option value="">All sources</option></select>
+          </label>
+          <label>
+            Filter
+            <select id="entries-selected">
+              <option value="">All entries</option>
+              <option value="true">Selected for full text</option>
+              <option value="false">Not selected</option>
+            </select>
+          </label>
+          <span id="entries-count" class="briefing-meta"></span>
+        </div>
+        <div id="entries-list" class="entries-list" aria-live="polite"></div>
+        <button id="entries-more" type="button" hidden>Load more</button>
+      </section>
+
+      <section id="view-settings" class="feed-view" role="tabpanel" hidden>
+        <section class="panel">
+          <h2>Sources</h2>
+          <p class="panel-description">
+            Weight multiplies the coarse score (0–2). At 0 a source is still discovered but never fetched.
+            Statistics cover the last 30 days.
+          </p>
+          <div id="sources-list" class="sources-list"></div>
+          <form id="source-form" class="source-form">
+            <h3>Add source</h3>
+            <label>
+              Type
+              <select id="source-kind">
+                <option value="rss">RSS / Atom</option>
+                <option value="listing">Listing page</option>
+              </select>
+            </label>
+            <label>
+              Title
+              <input id="source-title" type="text" required maxlength="200" autocomplete="off" />
+            </label>
+            <label>
+              URL
+              <input id="source-url" type="url" required autocomplete="off" placeholder="https://example.com/feed.xml" />
+            </label>
+            <label id="source-pattern-row" hidden>
+              Link pattern
+              <input id="source-pattern" type="text" autocomplete="off" placeholder="/blog/[^/]+$" />
+            </label>
+            <button type="submit" class="primary-button">Add source</button>
+          </form>
+        </section>
+
+        <section class="panel">
+          <h2>Coarse filter hint</h2>
+          <p class="panel-description">
+            Tells the summary model which directions to keep when deciding what to fetch.
+            The composing agent may update it; the final selection is made by that agent, not by this hint.
+          </p>
+          <textarea id="coarse-hint" rows="5" maxlength="4000"></textarea>
+          <div class="hint-actions">
+            <span id="coarse-hint-meta" class="briefing-meta"></span>
+            <button id="coarse-hint-save" type="button" class="primary-button">Save hint</button>
+          </div>
+        </section>
+
+        <section class="panel">
+          <h2>Last run</h2>
+          <dl id="run-detail" class="run-detail"></dl>
+        </section>
+      </section>
+    </main>
+    <script type="module" src="feed.js"></script>
+  </body>
+</html>

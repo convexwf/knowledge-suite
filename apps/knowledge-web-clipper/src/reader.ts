@@ -1,4 +1,5 @@
 import { createKnowledgeApiClient, ReadingProgressConflictError } from "./api-client.js";
+import { createFeedApiClient, FeedApiError, safeExternalUrl, type FeedEntry } from "./feed-client.js";
 import { applyCascadeSelection, normalizeHeadingSelections } from "./heading-cascade.js";
 import { stripSectionAnchors } from "./markdown-utils.js";
 import { renderDocument } from "./reader-renderer.js";
@@ -60,6 +61,9 @@ const query = new URLSearchParams(globalThis.location.search);
 const category = query.get("category") || "default";
 let client = createKnowledgeApiClient(settings, category);
 const itemId = query.get("itemId") || undefined;
+// Feed mode: a read-only view of a feed entry, opened from a briefing citation.
+const feedEntryId = query.get("feedEntryId") || undefined;
+const feedSectionId = query.get("sectionId") || undefined;
 let currentItemId = itemId || "";
 let currentMarkdown = "";
 let currentDocument: KnowledgeDocument | undefined;
@@ -172,6 +176,7 @@ reparseButton.addEventListener("click", () => {
 });
 
 contentOutput.addEventListener("mouseup", () => {
+  if (feedEntryId) return;
   globalThis.setTimeout(() => {
     const selection = globalThis.getSelection();
     if (!selection || selection.isCollapsed || !selection.toString().trim()) {
@@ -239,6 +244,10 @@ async function reloadServerProfile(): Promise<void> {
 }
 
 async function loadReader(): Promise<void> {
+  if (feedEntryId) {
+    await loadFeedReader(feedEntryId);
+    return;
+  }
   readingProgressReady = false;
   showReaderPlaceholder("Loading document...");
   reparseButton.disabled = !itemId;
@@ -289,6 +298,165 @@ async function loadReader(): Promise<void> {
     readingProgressReady = false;
     showReaderPlaceholder(error instanceof Error ? error.message : String(error));
     copyButton.disabled = true;
+  }
+}
+
+/**
+ * Feed mode shows the parsed full text of a feed entry. The entry is not a
+ * knowledge item, so annotations, AI summaries, reparse and reading progress
+ * are switched off and never requested.
+ */
+async function loadFeedReader(entryId: string): Promise<void> {
+  const feedClient = createFeedApiClient(settings);
+  for (const control of [copyButton, reparseButton, aiSummarizeBtn, annotationPanel, collectionNav]) {
+    control.hidden = true;
+  }
+  backButton.textContent = "Feed";
+  bottomBackButton.textContent = "Feed";
+  kickerOutput.textContent = "FEED reader";
+  readerCollectionOutput.textContent = "-";
+  readerAnnotationCountOutput.textContent = "-";
+  showReaderPlaceholder("Loading feed entry...");
+
+  let entry: FeedEntry;
+  let documentModel: KnowledgeDocument;
+  try {
+    ({ entry, document: documentModel } = await feedClient.entryDocument(entryId));
+  } catch (error) {
+    if (error instanceof FeedApiError && error.status === 410) {
+      const promotedItemId = typeof error.body.promotedItemId === "string" ? error.body.promotedItemId : undefined;
+      if (promotedItemId) {
+        globalThis.location.replace(`reader.html?itemId=${encodeURIComponent(promotedItemId)}`);
+        return;
+      }
+      showFeedUnavailable("This feed entry has expired.", error.body.url);
+      return;
+    }
+    if (error instanceof FeedApiError && error.code === "feed_document_not_found") {
+      showFeedUnavailable("The full text of this entry was not fetched.", error.body.url);
+      return;
+    }
+    showReaderPlaceholder(error instanceof Error ? error.message : String(error));
+    return;
+  }
+
+  titleOutput.textContent = documentModel.meta.title || entry.title;
+  metaOutput.replaceChildren();
+  for (const value of [
+    documentModel.meta.authors?.join(", "),
+    entry.publishedAt ? `Published ${formatDate(entry.publishedAt)}` : undefined,
+    `Expires ${formatDate(entry.expiresAt)}`
+  ]) {
+    if (value) metaOutput.append(documentCreate("span", value));
+  }
+  readerSourceOutput.textContent = entry.sourceTitle ?? new URL(entry.url).hostname;
+  readerStateOutput.textContent = entry.promotedItemId ? "Saved to library" : "Feed entry";
+  renderFeedActions(feedClient, entry);
+
+  await renderReaderDocument(documentModel);
+  renderOutline({
+    formatVersion: 1,
+    docId: documentModel.doc_id,
+    entries: documentModel.sections
+      .filter((section) => section.type === "heading" && section.section_id && section.content?.trim())
+      .map((section) => ({
+        title: section.content!.trim(),
+        level: section.level ?? 1,
+        target: section.section_id!,
+        targetAvailable: true
+      })),
+    diagnostics: []
+  });
+
+  const target = feedSectionId ? sectionElementIndex.get(feedSectionId) : undefined;
+  if (target) {
+    await new Promise<void>((resolve) => globalThis.requestAnimationFrame(() => resolve()));
+    const targetTop = target.getBoundingClientRect().top + globalThis.scrollY - 140;
+    globalThis.scrollTo({ top: Math.max(0, targetTop), behavior: "instant" });
+    target.classList.add("feed-cited-section");
+  }
+  void feedClient.signal(entryId, "open").catch(() => undefined);
+}
+
+function showFeedUnavailable(message: string, originalUrl: unknown): void {
+  titleOutput.textContent = "Feed entry";
+  const node = messageNode(message);
+  const href = safeExternalUrl(typeof originalUrl === "string" ? originalUrl : undefined);
+  if (href) {
+    const link = document.createElement("a");
+    link.href = href;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.textContent = "Open the original page";
+    node.append(document.createTextNode(" "), link);
+  }
+  contentOutput.replaceChildren(node);
+  outlineOutput.replaceChildren();
+}
+
+function renderFeedActions(feedClient: ReturnType<typeof createFeedApiClient>, entry: FeedEntry): void {
+  const actions = backButton.parentElement;
+  if (!actions) return;
+  for (const stale of Array.from(actions.querySelectorAll(".feed-action"))) stale.remove();
+
+  const originalUrl = safeExternalUrl(entry.url);
+  if (originalUrl) {
+    const original = document.createElement("button");
+    original.type = "button";
+    original.className = "feed-action";
+    original.textContent = "Open original";
+    original.addEventListener("click", () => {
+      void feedClient.signal(entry.entryId, "open_original").catch(() => undefined);
+      globalThis.open(originalUrl, "_blank", "noopener,noreferrer");
+    });
+    actions.append(original);
+  }
+
+  if (entry.promotedItemId) {
+    const saved = document.createElement("button");
+    saved.type = "button";
+    saved.className = "feed-action";
+    saved.textContent = "Open in library";
+    saved.addEventListener("click", () => {
+      globalThis.location.assign(`reader.html?itemId=${encodeURIComponent(entry.promotedItemId!)}`);
+    });
+    actions.append(saved);
+    return;
+  }
+
+  const save = document.createElement("button");
+  save.type = "button";
+  save.className = "feed-action primary-button";
+  save.textContent = "Save to library";
+  save.addEventListener("click", () => {
+    save.disabled = true;
+    save.textContent = "Saving...";
+    feedClient.star(entry.entryId)
+      .then(({ itemId: savedItemId }) => {
+        globalThis.location.assign(`reader.html?itemId=${encodeURIComponent(savedItemId)}`);
+      })
+      .catch((error: unknown) => {
+        save.disabled = false;
+        save.textContent = "Save to library";
+        showToast(error instanceof Error ? error.message : String(error), "danger");
+      });
+  });
+  actions.append(save);
+
+  if (!entry.dismissedAt) {
+    const dismiss = document.createElement("button");
+    dismiss.type = "button";
+    dismiss.className = "feed-action";
+    dismiss.textContent = "Dismiss";
+    dismiss.addEventListener("click", () => {
+      feedClient.dismiss(entry.entryId)
+        .then(() => {
+          dismiss.remove();
+          showToast("Dismissed. It will not be suggested again.", "success");
+        })
+        .catch((error: unknown) => showToast(error instanceof Error ? error.message : String(error), "danger"));
+    });
+    actions.append(dismiss);
   }
 }
 
@@ -1679,5 +1847,6 @@ async function navigateInCollection(direction: "prev" | "next"): Promise<void> {
 }
 
 function itemsPagePath(): string {
+  if (feedEntryId) return "feed.html";
   return category === "default" ? "items.html" : `items.html?category=${encodeURIComponent(category)}`;
 }
